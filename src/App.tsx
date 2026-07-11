@@ -435,7 +435,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeFile, currentFile, completionText, completionId, activeView, handleSaveFile, handleDismissCompletion, closeFile]);
+  }, [activeFile, currentFile, completionText, completionId, activeView, handleSaveFile, handleDismissCompletion, closeFile, showTerminal]);
 
   return (
     <div className="app-container">
