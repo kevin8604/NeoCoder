@@ -24,6 +24,7 @@ function App() {
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [llmConnected, setLlmConnected] = useState(false);
   const [showExplorer, setShowExplorer] = useState(true);
+  const [showTerminal, setShowTerminal] = useState(false);
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{
