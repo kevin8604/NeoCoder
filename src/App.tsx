@@ -636,6 +636,11 @@ function App() {
         </div>
       </div>
 
+      {/* Terminal Panel */}
+      <div className={`terminal-wrapper ${showTerminal ? "terminal-open" : ""}`}>
+        <TerminalPanel />
+      </div>
+
       {/* Status Bar */}
       <StatusBar
         llmConnected={llmConnected}
