@@ -18,6 +18,7 @@ use std::time::Duration;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
+use commands::pty::{PtyState, PtyStdin};
 use lsp::LspManager;
 use rag::CodeIndexer;
 use fs_watcher::FileWatcher;
@@ -136,6 +137,9 @@ pub fn run() {
             let cloud_task_manager = Arc::new(agent::cloud::CloudTaskManager::new());
             app.manage::<commands::cloud::CloudTaskState>(cloud_task_manager);
 
+            // Initialize PTY (terminal) state
+            app.manage(PtyState::new());
+
             // Spawn background task to connect to configured MCP servers
             let mcp_registry_bg = mcp_registry.clone();
             let mcp_tools_bg = mcp_tools.clone();
@@ -207,73 +211,50 @@ pub fn run() {
             // Spawn background auto-reindex loop
             let watcher_for_reindex = app.state::<Arc<std::sync::Mutex<FileWatcher>>>().inner().clone();
             let indexer_for_reindex = app.state::<Arc<CodeIndexer>>().inner().clone();
-            let settings_for_reindex = app.state::<Arc<RwLock<config::AppSettings>>>().inner().clone();
-            let db_path_for_save = config_path.join("code_index.db").to_string_lossy().to_string();
-
-            // Start watching project paths
-            {
-                let settings = settings_for_reindex.blocking_read();
-                for path_str in &settings.project_paths {
-                    let path = std::path::Path::new(path_str);
-                    if path.exists() {
-                        let mut watcher = watcher_for_reindex.lock().unwrap_or_else(|e| e.into_inner());
-                        let _ = watcher.start_watch(path, true);
-                    }
-                }
-            }
-
+            let config_path_clone = config_path.clone();
             tauri::async_runtime::spawn(async move {
+                let db_path = config_path_clone.join("code_index.db");
+                let db_path_str = db_path.to_string_lossy().to_string();
                 loop {
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    tokio::time::sleep(Duration::from_secs(10)).await;
 
                     let events = {
-                        let watcher = watcher_for_reindex.lock().unwrap_or_else(|e| e.into_inner());
-                        watcher.poll_events(2000)
+                        let watcher = watcher_for_reindex.lock().unwrap();
+                        watcher.drain_events()
                     };
 
                     for event in events {
-                        let ext = event.path.extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("")
-                            .to_lowercase();
-                        // Only auto-reindex common source files
-                        if !matches!(ext.as_str(), "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "go" | "java" | "rb" | "c" | "cpp" | "h" | "hpp" | "cs" | "swift" | "kt" | "scala" | "php" | "vue" | "svelte" | "css" | "scss" | "less" | "html" | "xml" | "json" | "yaml" | "toml" | "md") {
-                            continue;
-                        }
-
-                        let indexer = indexer_for_reindex.clone();
-                        let path_clone = event.path.clone();
-                        let db_path_clone = db_path_for_save.clone();
-                        tokio::spawn(async move {
-                            let mut should_save = false;
-                            match event.kind {
-                                FileChangeKind::Modified | FileChangeKind::Created => {
-                                    match tokio::fs::read_to_string(&path_clone).await {
+                        let (path, kind) = event;
+                        let indexer = &indexer_for_reindex;
+                        let should_save = {
+                            match kind {
+                                FileChangeKind::Created | FileChangeKind::Modified => {
+                                    match tokio::fs::read_to_string(&path).await {
                                         Ok(content) => {
-                                            let path_str = path_clone.to_string_lossy().to_string();
+                                            let path_str = path.to_string_lossy().to_string();
                                             match indexer.index_file(&path_str, &content).await {
                                                 Ok(n) => log::info!("Auto-reindexed {} ({} chunks)", path_str, n),
                                                 Err(e) => log::warn!("Failed to reindex {}: {}", path_str, e),
                                             }
-                                            should_save = true;
+                                            true
                                         }
-                                        Err(_) => {} // Binary file or non-UTF-8, skip
+                                        Err(_) => false, // Binary file or non-UTF-8, skip
                                     }
                                 }
                                 FileChangeKind::Deleted => {
-                                    let path_str = path_clone.to_string_lossy().to_string();
+                                    let path_str = path.to_string_lossy().to_string();
                                     indexer.remove_file(&path_str).await;
                                     log::info!("Removed from index: {}", path_str);
-                                    should_save = true;
+                                    true
                                 }
                             }
-                            // Persist index changes to DB
-                            if should_save {
-                                if let Err(e) = indexer.save_to_db(&db_path_clone).await {
-                                    log::warn!("Failed to save index to DB: {}", e);
-                                }
+                        };
+                        // Persist index changes to DB
+                        if should_save {
+                            if let Err(e) = indexer.save_to_db(&db_path_str).await {
+                                log::warn!("Failed to save index to DB: {}", e);
                             }
-                        });
+                        }
                     }
                 }
             });
@@ -349,6 +330,10 @@ pub fn run() {
             commands::cloud::get_cloud_task,
             commands::cloud::list_cloud_tasks,
             commands::cloud::cancel_cloud_task,
+            commands::commands::pty::start_terminal,
+            commands::commands::pty::write_stdin,
+            commands::commands::pty::stop_terminal,
+            commands::commands::pty::resize_terminal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
