@@ -424,6 +424,13 @@ function App() {
         setActiveView("settings");
         return;
       }
+
+      // Ctrl+`: Toggle terminal panel
+      if (mod && e.key === "`") {
+        e.preventDefault();
+        setShowTerminal((prev) => !prev);
+        return;
+      }
     }
 
     window.addEventListener("keydown", handleKeyDown);
