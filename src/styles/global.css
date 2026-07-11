@@ -3122,6 +3122,114 @@ body {
   background: rgba(137, 180, 250, 0.1);
 }
 
+/* ── Terminal Panel ──────────────────────────────────── */
+
+.terminal-wrapper {
+  flex-shrink: 0;
+  height: 0;
+  overflow: hidden;
+  transition: height 0.2s ease;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-wrapper.terminal-open {
+  height: 280px;
+  min-height: 100px;
+}
+
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.terminal-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.terminal-icon {
+  font-size: 14px;
+}
+
+.terminal-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.terminal-status {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.terminal-status.running {
+  background: rgba(166, 227, 161, 0.15);
+  color: var(--success);
+}
+
+.terminal-status.stopped {
+  background: rgba(243, 139, 168, 0.15);
+  color: var(--error);
+}
+
+.terminal-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.terminal-toolbar-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.terminal-toolbar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.terminal-body {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+  background: var(--bg-primary);
+}
+
+.terminal-body .xterm {
+  height: 100%;
+  padding: 4px 8px;
+}
+
+.terminal-body .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
 /* ── Cloud Agent Panel ───────────────────────────────── */
 
 .cloud-agent-panel {
