@@ -330,10 +330,10 @@ pub fn run() {
             commands::cloud::get_cloud_task,
             commands::cloud::list_cloud_tasks,
             commands::cloud::cancel_cloud_task,
-            commands::commands::pty::start_terminal,
-            commands::commands::pty::write_stdin,
-            commands::commands::pty::stop_terminal,
-            commands::commands::pty::resize_terminal,
+            commands::pty::start_terminal,
+            commands::pty::write_stdin,
+            commands::pty::stop_terminal,
+            commands::pty::resize_terminal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
