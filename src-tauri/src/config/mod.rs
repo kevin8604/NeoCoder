@@ -175,7 +175,7 @@ impl Default for AppSettings {
             embedding_model: "text-embedding-3-small".to_string(),
             fast_model: "deepseek-chat".to_string(),
             model_routing_enabled: false,
-            api_key: "sk-a14a4f6e19f84b5998f6178d8283eaf8".to_string(),
+            api_key: String::new(),
             api_key_encrypted: None,
             completion_enabled: true,
             trigger_debounce_ms: 300,
@@ -200,7 +200,7 @@ impl Default for AppSettings {
             session_expiry_days: 0,
             thinking_enabled: false,
             thinking_budget: default_thinking_budget(),
-            tavily_api_key: "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".to_string(),
+            tavily_api_key: String::new(),
         }
     }
 }

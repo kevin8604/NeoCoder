@@ -60,7 +60,7 @@ export default function Settings() {
     model_routing_enabled: false,
     thinking_enabled: false,
     thinking_budget: 1024,
-    api_key: "sk-a14a4f6e19f84b5998f6178d8283eaf8",
+    api_key: "",
     completion_enabled: true,
     trigger_debounce_ms: 300,
     max_context_tokens: 8192,
