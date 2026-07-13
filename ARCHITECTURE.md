@@ -1,69 +1,86 @@
 # NeeCoder 项目架构文档
 
-> NeeCoder 是一款基于 **Tauri 2.0 + React + Rust** 构建的 AI 编程助手桌面应用，集成了代码编辑器、AI 对话面板、智能代码补全、RAG 代码搜索、多 Agent 协作和 LSP 语言服务器协议等功能。
+> NeeCoder 是一款基于 **Tauri 2.0 + React + Rust** 构建的 AI 编程助手桌面应用，集成了代码编辑器、AI 对话面板、智能代码补全、RAG 代码搜索、多 Agent 协作、MCP 协议桥接、沙箱安全、Skill 系统、终端 PTY 和 LSP 语言服务器等功能。
 
 ---
 
 ## 目录
 
-1. [总体架构](#1-总体架构)
-2. [技术栈](#2-技术栈)
-3. [目录结构](#3-目录结构)
-4. [后端架构 (Rust)](#4-后端架构-rust)
-   - 4.1 [应用入口与生命周期](#41-应用入口与生命周期-librs)
-   - 4.2 [LLM 通信层](#42-llm-通信层-llmmodrs)
-   - 4.3 [Agent 系统](#43-agent-系统-agentmodrs)
-   - 4.4 [Agent 工具集](#44-agent-工具集-agenttoolsmodrs)
-   - 4.5 [子 Agent 调度](#45-子-agent-调度-agentsub_agentrs)
-   - 4.6 [Agent 定义与注册](#46-agent-定义与注册-agentdefinitionrs)
-   - 4.7 [对话管理](#47-对话管理-chatmodrs)
-   - 4.8 [记忆系统](#48-记忆系统-memorymodrs)
-   - 4.9 [代码补全](#49-代码补全-completionmodrs)
-   - 4.10 [RAG 代码索引与搜索](#410-rag-代码索引与搜索-ragmodrs)
-   - 4.11 [LSP 语言服务器](#411-lsp-语言服务器-lspmodrs)
-   - 4.12 [文件系统监听](#412-文件系统监听-fs_watchermodrs)
-   - 4.13 [配置管理](#413-配置管理-configmodrs)
-   - 4.14 [日志系统](#414-日志系统-loggingmodrs)
-   - 4.15 [命令层 (Tauri Commands)](#415-命令层-tauri-commands-commands)
-5. [前端架构 (React + TypeScript)](#5-前端架构-react--typescript)
-   - 5.1 [入口与根组件](#51-入口与根组件)
-   - 5.2 [核心组件](#52-核心组件)
-   - 5.3 [Tauri API 抽象层](#53-tauri-api-抽象层)
-   - 5.4 [主题与样式系统](#54-主题与样式系统)
-6. [前后端通信协议](#6-前后端通信协议)
-7. [数据流与关键路径](#7-数据流与关键路径)
-8. [安全机制](#8-安全机制)
-9. [测试覆盖](#9-测试覆盖)
-10. [依赖清单](#10-依赖清单)
+- [NeeCoder 项目架构文档](#neecoder-项目架构文档)
+  - [目录](#目录)
+  - [1. 总体架构](#1-总体架构)
+  - [2. 技术栈](#2-技术栈)
+  - [3. 目录结构](#3-目录结构)
+  - [4. 后端架构 (Rust)](#4-后端架构-rust)
+    - [4.1 应用入口与生命周期 (lib.rs)](#41-应用入口与生命周期-librs)
+    - [4.2 LLM 通信层 (llm/mod.rs)](#42-llm-通信层-llmmodrs)
+    - [4.3 Agent 系统 (agent/mod.rs)](#43-agent-系统-agentmodrs)
+    - [4.4 Agent Hook 系统 (agent/hooks.rs)](#44-agent-hook-系统-agenthooksrs)
+    - [4.5 循环检测器 (agent/loop\_detector.rs)](#45-循环检测器-agentloop_detectorrs)
+    - [4.6 上下文压缩 (agent/context.rs)](#46-上下文压缩-agentcontextrs)
+    - [4.7 Checkpoint 机制 (agent/checkpoint.rs)](#47-checkpoint-机制-agentcheckpointrs)
+    - [4.8 Cloud Agent (agent/cloud.rs)](#48-cloud-agent-agentcloudrs)
+    - [4.9 Agent 工具集 (agent/tools/mod.rs)](#49-agent-工具集-agenttoolsmodrs)
+    - [4.10 子 Agent 调度 (agent/sub\_agent.rs)](#410-子-agent-调度-agentsub_agentrs)
+    - [4.11 Agent 定义与注册 (agent/definition.rs)](#411-agent-定义与注册-agentdefinitionrs)
+    - [4.12 对话管理 (chat/mod.rs)](#412-对话管理-chatmodrs)
+    - [4.13 记忆系统 (memory/mod.rs)](#413-记忆系统-memorymodrs)
+    - [4.14 代码补全 (completion/mod.rs)](#414-代码补全-completionmodrs)
+    - [4.15 RAG 代码索引与搜索 (rag/mod.rs)](#415-rag-代码索引与搜索-ragmodrs)
+    - [4.16 LSP 语言服务器 (lsp/mod.rs)](#416-lsp-语言服务器-lspmodrs)
+    - [4.17 MCP 协议客户端 (mcp/mod.rs)](#417-mcp-协议客户端-mcpmodrs)
+    - [4.18 沙箱安全 (sandbox/mod.rs)](#418-沙箱安全-sandboxmodrs)
+    - [4.19 Skill 系统 (skill/mod.rs)](#419-skill-系统-skillmodrs)
+    - [4.20 遥测系统 (telemetry/mod.rs)](#420-遥测系统-telemetrymodrs)
+    - [4.21 文件系统监听 (fs\_watcher/mod.rs)](#421-文件系统监听-fs_watchermodrs)
+    - [4.22 配置管理 (config/mod.rs)](#422-配置管理-configmodrs)
+    - [4.23 日志系统 (logging/mod.rs)](#423-日志系统-loggingmodrs)
+    - [4.24 命令层 (Tauri Commands)](#424-命令层-tauri-commands)
+  - [5. 前端架构 (React + TypeScript)](#5-前端架构-react--typescript)
+    - [5.1 入口与根组件](#51-入口与根组件)
+    - [5.2 核心组件](#52-核心组件)
+    - [5.3 Tauri API 抽象层](#53-tauri-api-抽象层)
+    - [5.4 主题与样式系统](#54-主题与样式系统)
+  - [6. 前后端通信协议](#6-前后端通信协议)
+    - [invoke 命令（请求/响应）](#invoke-命令请求响应)
+    - [Tauri Events（推送）](#tauri-events推送)
+  - [7. 数据流与关键路径](#7-数据流与关键路径)
+    - [Agent 消息完整流程](#agent-消息完整流程)
+  - [8. 安全机制](#8-安全机制)
+    - [多层安全防护](#多层安全防护)
+  - [9. 测试覆盖](#9-测试覆盖)
+  - [10. 依赖清单](#10-依赖清单)
+    - [Rust 后端](#rust-后端)
+    - [前端](#前端)
 
 ---
 
 ## 1. 总体架构
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    Tauri 2.0 桌面应用                      │
-├────────────────────────┬─────────────────────────────────┤
-│    前端 (React + TS)    │         后端 (Rust)              │
-│  ┌──────────────────┐  │  ┌────────────────────────────┐ │
-│  │ App.tsx (根组件)  │  │  │ Commands (Tauri invoke)    │ │
-│  ├──────────────────┤  │  ├────────────────────────────┤ │
-│  │ ChatPanel        │  │  │ Agent 系统 (19 工具)       │ │
-│  │ CodeEditor       │◄─┼─►│ LLM 通信层 (多 Provider)   │ │
-│  │ FileExplorer     │  │  │ RAG 代码索引 (BM25+向量)   │ │
-│  │ SearchPanel      │  │  │ 记忆系统 (会话/长期/笔记)   │ │
-│  │ Settings         │  │  │ LSP 语言服务器              │ │
-│  │ StatusBar        │  │  │ 代码补全 (FIM)              │ │
-│  └──────────────────┘  │  │ 文件监听 (notify)           │ │
-│  useTauri.ts (API 层)  │  │ 配置管理 (XOR 加密)         │ │
-├────────────────────────┤  └────────────────────────────┘ │
-│  Tauri Event System    │  Tauri State + Invoke Handler    │
-└────────────────────────┴─────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                      Tauri 2.0 桌面应用                        │
+├──────────────────────────┬───────────────────────────────────┤
+│    前端 (React + TS)       │         后端 (Rust)                │
+│  ┌──────────────────────┐ │  ┌──────────────────────────────┐ │
+│  │ App.tsx (根组件)      │ │  │ Commands (Tauri invoke)      │ │
+│  ├──────────────────────┤ │  ├──────────────────────────────┤ │
+│  │ ChatPanel            │ │  │ Agent 系统 (30 工具 + Hook)  │ │
+│  │ CodeEditor           │◄┼─►│ LLM 通信层 (多 Provider)     │ │
+│  │ FileExplorer         │ │  │ RAG 代码索引 (BM25+向量)     │ │
+│  │ TerminalPanel (xterm)│ │  │ 记忆系统 (会话/长期/艾宾浩斯) │ │
+│  │ InlineEdit           │ │  │ MCP 协议客户端               │ │
+│  │ SearchPanel/Settings │ │  │ 沙箱安全 / Skill 系统        │ │
+│  │ CloudAgentPanel      │ │  │ 遥测 / LSP / 文件监听        │ │
+│  └──────────────────────┘ │  └──────────────────────────────┘ │
+│  useTauri.ts (API 层)    │  Tauri State + Invoke Handler      │
+├──────────────────────────┤  Tauri Event System                │
+└──────────────────────────┴───────────────────────────────────┘
 ```
 
 **核心通信方式：**
 - **invoke (请求/响应)**：前端调用后端命令（如 `send_message`, `read_file`）
-- **Tauri Events (推送)**：后端向前端推送流式事件（如 `chat-event`, `completion-event`）
+- **Tauri Events (推送)**：后端向前端推送流式事件（如 `chat-event`, `completion-event`, `pty-output`）
 - **Tauri State (共享状态)**：后端通过 `app.manage()` 注册全局状态，命令通过 `State<'_, T>` 访问
 
 ---
@@ -77,9 +94,11 @@
 | 前端框架 | React 19 + TypeScript | UI 组件、状态管理 |
 | 构建工具 | Vite | 前端打包与开发服务器 |
 | 编辑器 | CodeMirror 6 | 代码编辑、语法高亮、幽灵文本补全 |
+| 终端 | xterm.js + portable-pty | 真实 PTY 终端模拟 |
 | 异步运行时 | Tokio | Rust 异步任务、流式处理 |
 | HTTP 客户端 | reqwest | LLM API 调用（流式 SSE） |
 | 数据库 | SQLite (rusqlite) | RAG 代码索引持久化存储 |
+| Token 计数 | tiktoken-rs | 精确 token 计数 (o200k_base) |
 | 文件监听 | notify | 文件系统变更检测与自动重索引 |
 | 序列化 | serde + serde_json + serde_yaml | JSON/YAML 序列化 |
 | 日志 | log + 自定义 DualLogger | 双输出日志（控制台 + 文件轮转） |
@@ -90,92 +109,114 @@
 
 ```
 NeeCoder/
-├── src/                          # 前端源码
-│   ├── main.tsx                  # React 入口
-│   ├── App.tsx                   # 根组件（布局、文件标签页管理）
+├── src/                              # 前端源码
+│   ├── main.tsx                      # React 入口
+│   ├── App.tsx                       # 根组件（布局、文件标签页管理）
 │   ├── components/
-│   │   ├── ChatPanel.tsx         # AI 对话面板（~1796 行，最复杂组件）
-│   │   ├── CodeEditor.tsx        # CodeMirror 6 编辑器封装
-│   │   ├── FileExplorer.tsx      # 文件树浏览器
-│   │   ├── SearchPanel.tsx       # 代码搜索面板
-│   │   ├── Settings.tsx          # 设置界面
-│   │   ├── StatusBar.tsx         # 底部状态栏
-│   │   ├── ContextMenu.tsx       # 右键菜单
-│   │   ├── MentionMenu.tsx       # @ 文件提及菜单
-│   │   ├── Overlay.tsx           # 全局遮罩层（Agent 提问/确认）
-│   │   ├── CloudAgentPanel.tsx   # 云 Agent 后台任务管理面板
-│   │   └── SyntaxHighlighterWrapper.tsx  # 语法高亮封装
-│   ├── hooks/
-│   │   └── useTauri.ts           # Tauri API 统一抽象层（~500 行）
-│   └── styles/
-│       └── global.css            # Catppuccin Mocha 暗色主题
-├── src-tauri/                    # 后端源码
+│   │   ├── ChatPanel.tsx             # AI 对话面板（最复杂组件）
+│   │   ├── CodeEditor.tsx            # CodeMirror 6 编辑器封装
+│   │   ├── FileExplorer.tsx          # 文件树浏览器
+│   │   ├── TerminalPanel.tsx         # xterm.js 终端面板（PTY 前端）
+│   │   ├── InlineEdit.tsx            # 内联编辑（LLM 驱动的代码修改）
+│   │   ├── SearchPanel.tsx           # 代码搜索面板
+│   │   ├── Settings.tsx              # 设置界面 + MCP 管理
+│   │   ├── StatusBar.tsx             # 底部状态栏
+│   │   ├── CloudAgentPanel.tsx       # 云 Agent 后台任务管理
+│   │   ├── ContextMenu.tsx           # 右键菜单
+│   │   ├── MentionMenu.tsx           # @ 文件提及菜单
+│   │   ├── Overlay.tsx               # 全局遮罩层（Agent 提问/确认）
+│   │   └── SyntaxHighlighterWrapper.tsx
+│   ├── hooks/useTauri.ts             # Tauri API 统一抽象层
+│   └── styles/global.css             # Catppuccin Mocha 暗色主题
+├── src-tauri/                        # 后端源码
 │   ├── src/
-│   │   ├── main.rs               # 二进制入口
-│   │   ├── lib.rs                # Tauri 应用构建器、State 注册、命令注册
-│   │   ├── agent/                # Agent 系统
-│   │   │   ├── mod.rs            # Agent 主循环（1249 行）
-│   │   │   ├── tools/            # 19 个 Agent 工具实现
-│   │   │   ├── definition.rs     # Agent 定义与注册表
-│   │   │   ├── sub_agent.rs      # 子 Agent 调度
-│   │   │   └── utils.rs          # 辅助函数
-│   │   ├── chat/mod.rs           # 对话消息模型与事件定义
-│   │   ├── commands/             # Tauri 命令（前端可调用的 API）
-│   │   │   ├── chat.rs           # 对话相关命令
-│   │   │   ├── config.rs         # 配置相关命令
-│   │   │   ├── completion.rs     # 补全相关命令
-│   │   │   ├── project.rs        # 项目/文件操作命令
-│   │   │   ├── lsp.rs            # LSP 相关命令
-│   │   │   └── search.rs         # 搜索/索引命令
-│   │   ├── completion/mod.rs     # FIM 补全 prompt 构建
-│   │   ├── config/mod.rs         # 配置管理（XOR 加密 API Key）
-│   │   ├── fs_watcher/mod.rs     # 文件系统监听
-│   │   ├── llm/mod.rs            # LLM API 通信（808 行）
-│   │   ├── logging/mod.rs        # 双输出日志系统
-│   │   ├── lsp/mod.rs            # LSP 协议实现（650 行）
-│   │   ├── memory/               # 记忆系统
-│   │   │   ├── mod.rs            # MemoryManager 统一接口
-│   │   │   ├── session_store.rs  # Markdown 会话存储
-│   │   │   ├── long_term.rs      # 长期记忆（MEMORY.md）
-│   │   │   ├── notes.rs          # 每日笔记
-│   │   │   ├── search.rs         # 记忆搜索
-│   │   │   └── tools.rs          # 记忆工具（供 Agent 使用）
-│   │   └── rag/mod.rs            # RAG 代码索引（776 行）
-│   ├── tools.json                # Agent 工具 JSON Schema 定义
-│   └── Cargo.toml                # Rust 依赖清单
+│   │   ├── main.rs / lib.rs          # 入口 / Tauri 应用构建器
+│   │   ├── agent/                    # Agent 系统
+│   │   │   ├── mod.rs                # Agent 主循环
+│   │   │   ├── hooks.rs              # Lifecycle Hook 框架（7 个 Hook）
+│   │   │   ├── loop_detector.rs      # 循环检测（4 策略 + 2 级裁决）
+│   │   │   ├── context.rs            # 上下文压缩（token 预算制）
+│   │   │   ├── checkpoint.rs         # Git Checkpoint 机制
+│   │   │   ├── cloud.rs              # Cloud Agent 后台执行
+│   │   │   ├── token_count.rs        # tiktoken 精确 token 计数
+│   │   │   ├── definition.rs         # Agent 定义与注册表
+│   │   │   ├── sub_agent.rs          # 子 Agent 调度
+│   │   │   ├── tools/                # 30 个 Agent 工具
+│   │   │   └── utils.rs              # 辅助函数
+│   │   ├── chat/mod.rs               # 对话消息模型与事件
+│   │   ├── commands/                  # Tauri 命令（10 个模块）
+│   │   │   ├── agent.rs / chat.rs / cloud.rs / completion.rs
+│   │   │   ├── config.rs / edit_inline.rs / lsp.rs / mcp.rs
+│   │   │   ├── project.rs / pty.rs / search.rs / skill.rs
+│   │   ├── completion/               # 代码补全
+│   │   │   ├── mod.rs                # FIM 补全核心
+│   │   │   └── multi_file.rs         # 多文件上下文采集
+│   │   ├── config/mod.rs             # 配置管理（XOR 加密 API Key）
+│   │   ├── fs_watcher/mod.rs         # 文件系统监听
+│   │   ├── llm/mod.rs                # LLM API 通信（多 Provider）
+│   │   ├── logging/mod.rs            # 双输出日志系统
+│   │   ├── lsp/mod.rs                # LSP 协议实现
+│   │   ├── mcp/                      # MCP 协议客户端
+│   │   │   ├── mod.rs                # JSON-RPC 2.0 类型定义
+│   │   │   ├── client.rs             # MCP 客户端（stdio 传输）
+│   │   │   └── tool_bridge.rs        # MCP 工具桥接到 Agent
+│   │   ├── memory/                   # 记忆系统
+│   │   │   ├── mod.rs                # MemoryManager 统一接口
+│   │   │   ├── session_store.rs      # Markdown 会话存储
+│   │   │   ├── long_term.rs          # 长期记忆（MEMORY.md）
+│   │   │   ├── ebbinghaus.rs         # 艾宾浩斯遗忘曲线记忆
+│   │   │   ├── preferences.rs        # 用户偏好追踪
+│   │   │   ├── agent_log.rs          # Agent JSONL 审计日志
+│   │   │   ├── notes.rs              # 每日笔记
+│   │   │   ├── search.rs             # 记忆搜索
+│   │   │   └── tools.rs              # 记忆工具（供 Agent 使用）
+│   │   ├── rag/mod.rs                # RAG 代码索引（混合搜索）
+│   │   ├── sandbox/mod.rs            # 沙箱安全系统
+│   │   ├── skill/                    # Skill 系统
+│   │   │   ├── mod.rs                # SkillManager + 模板引擎
+│   │   │   └── builtin.rs            # 内置 Skill 定义
+│   │   └── telemetry/mod.rs          # 遥测/使用分析系统
+│   ├── tools.json                    # Agent 工具 JSON Schema
+│   └── Cargo.toml                    # Rust 依赖清单
 ```
 
 ---
 
 ## 4. 后端架构 (Rust)
 
-### 4.1 应用入口与生命周期 ([lib.rs](file:///d:/workspace/NeeCoder/src-tauri/src/lib.rs))
+### 4.1 应用入口与生命周期 ([lib.rs](src-tauri/src/lib.rs))
 
 `lib.rs` 是整个后端的核心入口，负责：
 
 1. **初始化日志系统** — 调用 `logging::init()` 设置双输出日志
 2. **注册 Tauri 插件** — shell、dialog、fs、process、clipboard
 3. **初始化全局 State** — 通过 `app.manage()` 注册以下共享状态：
-   - `ConfigState` — 配置管理器（`Arc<RwLock<ConfigManager>>`）
-   - `AppSettings` — 当前设置（`Arc<RwLock<AppSettings>>`）
-   - `ChatState` — 对话记忆（`Arc<RwLock<ConversationMemory>>`）
+   - `ConfigState` — 配置管理器 (`Arc<RwLock<ConfigManager>>`)
+   - `AppSettings` — 当前设置 (`Arc<RwLock<AppSettings>>`)
+   - `ChatState` — 对话记忆 (`Arc<RwLock<ConversationMemory>>`)
    - `CompletionCache` — 补全 LRU 缓存（最大 200 条）
-   - `CancelMap` — 补全取消标志
-   - `AgentCancelMap` — Agent 取消标志
-   - `FileSnapshots` — 编辑快照（用于 accept/reject）
+   - `CancelMap` / `AgentCancelMap` — 补全/Agent 取消标志
+   - `CheckpointStore` — Git checkpoint 存储
+   - `FileSnapshots` / `FileSnapshotStore` — 编辑快照与文件 undo
    - `LspManager` — LSP 管理器
    - `CodeIndexer` — RAG 代码索引器（启动时从 SQLite 加载）
-   - `QuestionAwaiters` — Agent 提问等待通道
-   - `ConfirmAwaiters` — 危险操作确认等待通道
+   - `QuestionAwaiters` / `ConfirmAwaiters` — Agent 交互等待通道
    - `ToolRegistry` — 工具定义注册表（从 `tools.json` 加载）
    - `AgentRegistry` — Agent 定义注册表（从 `agents.json` 加载）
+   - `McpRegistry` + MCP 工具定义 — MCP 服务器注册表
+   - `CloudTaskState` — 云 Agent 任务管理器
+   - `PtyState` — 终端 PTY 状态
+   - `TelemetryCollector` — 遥测数据收集器
+   - `SkillState` — Skill 管理器
    - `FileWatcher` — 文件系统监听器
-4. **启动后台任务** — 2 秒轮询文件变更事件，自动重索引修改的源码文件并持久化到 SQLite
-5. **注册 invoke_handler** — 暴露 40+ 个 Tauri 命令供前端调用
+4. **启动后台任务**：
+   - MCP 服务器自动连接（启动后 1 秒）
+   - 文件变更自动重索引（10 秒轮询）
+5. **注册 invoke_handler** — 暴露 50+ 个 Tauri 命令
 
-**关键设计决策：** 所有全局状态使用 `Arc<RwLock<T>>` 或 `Arc<Mutex<T>>` 包装，支持并发读写。`RwLock`（Tokio）用于读多写少的场景（如 Settings），`std::sync::Mutex` 用于简单的互斥场景。
+**关键设计决策：** 所有全局状态使用 `Arc<RwLock<T>>` 或 `Arc<Mutex<T>>` 包装。`RwLock`（Tokio）用于读多写少且临界区跨 `.await` 的场景，`std::sync::Mutex` 用于简单互斥且临界区不跨 `.await` 的场景。
 
-### 4.2 LLM 通信层 ([llm/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/llm/mod.rs))
+### 4.2 LLM 通信层 ([llm/mod.rs](src-tauri/src/llm/mod.rs))
 
 提供统一的 LLM API 调用接口，支持 **4 种 Provider**：
 
@@ -187,37 +228,20 @@ NeeCoder/
 | Ollama | 本地部署 | `localhost:11434` |
 
 **两种调用模式：**
-- **`stream_fim`** — Fill-in-the-Middle 补全模式，用于代码补全
+- **`stream_fim`** — Fill-in-the-Middle 补全模式
 - **`stream_chat`** — 对话模式，支持工具调用（function calling）
 
-**核心数据类型：**
-- `ChatMessage` — 包含 `role`、`content`、可选 `tool_calls`、可选 `tool_call_id`
-- `FimRequest` — FIM 补全请求
-- `ChatRequestParams` — 对话请求参数（model、messages、system、max_tokens、temperature）
-- `CancelFlag` — `Arc<AtomicBool>` 用于取消流式请求
+**核心功能：**
+- SSE 流式读取 + `on_token` 回调
+- `sanitize_messages` — 消息格式净化（确保 tool/tool_calls 配对正确）
+- `CancelFlag` (`Arc<AtomicBool>`) 支持取消流式请求
 
-**流式处理：** 使用 `reqwest` 的 SSE（Server-Sent Events）流式读取，每收到一个 token 就通过回调函数 `on_token` 传递给调用方，调用方再通过 Tauri Event 推送到前端。
-
-### 4.3 Agent 系统 ([agent/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/agent/mod.rs))
+### 4.3 Agent 系统 ([agent/mod.rs](src-tauri/src/agent/mod.rs))
 
 Agent 是 NeeCoder 的核心 AI 执行引擎，采用**迭代循环**模式：
 
 ```
-用户消息 → LLM 推理 → 工具调用 → 工具结果反馈 → LLM 再推理 → ... → 完成
-```
-
-**AgentInstance 结构：**
-```
-AgentInstance
-├── messages: Vec<ChatMessage>      # 对话历史
-├── provider/api_key/base_url       # LLM 配置
-├── chat_model                      # 使用的模型
-├── project_path                    # 当前项目路径
-├── custom_instructions             # 自定义指令
-├── cancelled: AtomicBool           # 取消标志
-├── question_awaiters               # 提问等待通道
-├── confirm_awaiters                # 确认等待通道
-└── iteration: u32                  # 当前迭代次数
+用户消息 → LLM 推理 → 工具调用 → Hook 链处理 → 工具结果反馈 → LLM 再推理 → ... → 完成
 ```
 
 **主循环流程 (`run_agent` → `run_no_dispatch`)：**
@@ -225,30 +249,106 @@ AgentInstance
 2. 调用 `stream_chat` 向 LLM 发送请求
 3. 解析 LLM 响应中的 `tool_calls`
 4. 对每个工具调用：
-   - **危险操作确认** — `delete_file`/`delete_directory`/`run_terminal_command` 需要用户确认
-   - 通过 `ToolExecutor` 执行工具
+   - **Pre-tool Hook 链** — SnapshotHook 快照、ConfirmHook 确认等
+   - 通过 `ToolExecutor` 执行工具（2 分钟超时保护）
+   - **Post-tool Hook 链** — OutputTruncateHook 截断、AutoDiagnoseHook 诊断等
    - 检查 `PostExecuteAction`（更新 Todo、提问用户、调度子 Agent）
-   - 将工具结果作为 `Tool` 角色消息追加到历史
-5. 将完整的工具调用 + 结果发射给前端（`ToolCall`/`ToolResult` 事件）
-6. 重复步骤 2-5，直到 LLM 不再调用工具或达到最大迭代次数
+5. **Post-tool-batch Hook 链** — AuditLogHook 审计等
+6. **循环检测** — LoopDetector 检查是否有非进展模式
+7. **Checkpoint** — 自动创建 git checkpoint
+8. 重复直到 LLM 不再调用工具或达到最大迭代次数
 
-**关键安全机制：**
-- **危险操作确认** — 3 种工具（删除文件/目录、执行终端命令）需要用户在前端弹窗中点击 "Allow" 才能执行
-- **超时自动拒绝** — 确认请求 60 秒无响应自动拒绝
-- **取消支持** — 通过 `AtomicBool` 标志支持用户中途取消
+**Agent 可观测性事件（通过 Tauri Events 发射）：**
+`AgentThinking` / `AgentStatus` / `ToolCall` / `ToolResult` / `ToolRetry` / `TodoUpdate` / `AskUserQuestion` / `ConfirmRequest` / `ContextTrimmed` / `AgentLog` / `EditDiff`
 
-**Agent 可观测性事件（全部通过 Tauri Events 发射到前端）：**
-- `AgentThinking` — LLM 的思考过程
-- `AgentStatus` — 迭代进度 + Token 用量估算
-- `ToolCall` / `ToolResult` — 工具调用与结果（含执行耗时 `duration_ms`）
-- `ToolRetry` — 工具失败后自动重试通知
-- `TodoUpdate` — 任务列表更新
-- `AskUserQuestion` — Agent 向用户提问
-- `ConfirmRequest` — 危险操作确认请求
-- `ContextTrimmed` — 上下文裁剪通知
-- `AgentLog` — Agent 运行日志
+### 4.4 Agent Hook 系统 ([agent/hooks.rs](src-tauri/src/agent/hooks.rs))
 
-### 4.4 Agent 工具集 ([agent/tools/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/agent/tools/mod.rs))
+可插拔的有序 Hook 链，替代硬编码逻辑。提供三级钩子：
+
+**`LifecycleHook` trait：**
+```rust
+#[async_trait]
+pub trait LifecycleHook: Send + Sync {
+    fn name(&self) -> &str;
+    async fn pre_tool(...) -> HookResult;        // Continue | Deny | ModifyArgs
+    async fn post_tool(...) -> PostHookResult;    // 修改结果 / 注入消息
+    async fn post_tool_batch(...) -> BatchHookResult; // 批次完成后注入消息
+}
+```
+
+**7 个内置 Hook：**
+
+| Hook | 级别 | 功能 |
+|------|------|------|
+| `SnapshotHook` | pre_tool | 文件修改前快照（支持 undo/rollback） |
+| `ConfirmHook` | pre_tool | 危险操作确认（delete/terminal） |
+| `OutputTruncateHook` | post_tool | 超长工具输出安全截断 |
+| `SensitiveDataFilterHook` | post_tool | 过滤敏感信息（API Key 等） |
+| `ErrorPatternHook` | post_tool | 检测工具输出中的错误模式 |
+| `AutoDiagnoseHook` | post_tool_batch | 文件修改后自动诊断并注入修复提示 |
+| `AuditLogHook` | post_tool_batch | 记录工具调用审计日志 |
+
+**执行机制：** `post_tool_batch_chain` 遍历所有 Hook，但仅对覆写了相应方法的 Hook 执行实际逻辑；其余 Hook 因默认空实现不产生副作用。
+
+### 4.5 循环检测器 ([agent/loop_detector.rs](src-tauri/src/agent/loop_detector.rs))
+
+检测四种非进展模式，采用两级裁决状态机：
+
+```
+Continue ──(detected)──> InjectWarning ──(detected again)──> HardStop
+```
+
+**四种检测策略：**
+
+| 策略 | 描述 | 默认阈值 |
+|------|------|---------|
+| No-Progress Repeat | 相同 (tool + args + output_hash) 重复 N 次 | 5 |
+| Ping-Pong | 两个工具交替 A→B→A→B | 3 周期 |
+| Consecutive Failure | 同一工具连续失败 N 次 | 5 |
+| Read-Only Streak | 连续只读操作（去重后重复读同一目标） | 15 次 / 3 次重复 |
+
+**读写隔离：** 12 种只读工具（`read_file`、`grep`、`glob` 等）单独追踪，读不同文件视为有效探索。
+
+### 4.6 上下文压缩 ([agent/context.rs](src-tauri/src/agent/context.rs))
+
+基于 token 预算的分级压缩策略：
+
+**参数：**
+- `COMPACT_THRESHOLD = 0.80` — 达到 80% token 预算时触发
+- `PRESERVE_RECENT = 6` — 始终保留最近 6 条消息
+- `MIN_MESSAGES_FOR_COMPACT = 8` — 至少 8 条消息才考虑压缩
+
+**压缩流程：**
+1. 使用 tiktoken 精确计算总 token 数
+2. 若未超阈值 → 返回不变
+3. 保留：首条用户消息 + 最近 6 条消息
+4. **Tool-call 安全边界**：确保不拆分 `assistant(tool_calls) → tool` 消息对
+5. 中间部分 → LLM 摘要 → 注入为压缩消息
+6. 压缩前执行 **Pre-compaction Flush**：提取最多 8 条持久事实注入长期记忆
+
+### 4.7 Checkpoint 机制 ([agent/checkpoint.rs](src-tauri/src/agent/checkpoint.rs))
+
+基于 Git 的项目状态快照：
+
+- 每次 Agent 迭代修改文件后自动创建 checkpoint
+- 通过 `git add` + `git commit` 实现（commit message: `checkpoint: iteration N - description`）
+- `CheckpointStore` 按 session_id 分组管理
+- 支持回滚到任意 checkpoint（`git checkout`）
+
+### 4.8 Cloud Agent ([agent/cloud.rs](src-tauri/src/agent/cloud.rs))
+
+后台异步 Agent 执行系统：
+
+**`CloudTask` 结构：**
+- `id` / `session_id` / `status` (Pending/Running/Completed/Failed/Cancelled)
+- `message` — 任务描述
+- `pr_config` — 可选的自动 PR 配置
+
+**PR 自动创建：** 完成后可自动执行 `git push` + 创建 GitHub Pull Request
+
+**`CloudTaskManager`：** 管理所有云任务的生命周期，支持并发执行
+
+### 4.9 Agent 工具集 ([agent/tools/mod.rs](src-tauri/src/agent/tools/mod.rs))
 
 每个工具实现 `Tool` trait：
 
@@ -262,342 +362,269 @@ pub trait Tool: Send + Sync {
 ```
 
 **`ToolContext`** — 工具运行时共享环境：
-- `project_path` — 项目根目录
-- `indexer` — 代码索引器（供 `search_codebase` 使用）
+- `project_path` / `indexer` / `sandbox` / `app_handle` / `session_id`
+- `tavily_api_key` / `llm_provider` / `llm_api_key` / `llm_model`
 
-**`PostExecuteAction`** — 工具执行后的特殊动作（避免字符串匹配）：
-- `None` — 无特殊动作
-- `UpdateTodos` — 更新 Todo 列表
-- `AskUser` — 向用户提问
-- `DispatchAgent` — 调度单个子 Agent
-- `DispatchAgents` — 调度多个子 Agent
+**`ToolExecutor`** — 带超时保护的工具调度器：
+- `execute()` — 2 分钟超时 (`DEFAULT_TOOL_TIMEOUT_MS = 120_000`)
+- `register_raw()` — 支持动态注册 MCP 桥接工具
 
-**19 个工具一览：**
+**30 个工具一览：**
 
-| 工具 | 功能 | 需要确认 |
-|------|------|---------|
-| `read_file` | 读取文件内容 | 否 |
-| `write_file` | 写入/创建文件 | 否 |
-| `append_file` | 追加内容到文件末尾 | 否 |
-| `delete_file` | 删除文件 | **是** |
-| `list_directory` | 列出目录内容 | 否 |
-| `create_directory` | 创建目录（含父目录） | 否 |
-| `delete_directory` | 递归删除目录 | **是** |
-| `get_symbols` | 提取文件中的符号定义 | 否 |
-| `search_codebase` | RAG 语义代码搜索 | 否 |
-| `grep` | 文本模式搜索（大小写不敏感） | 否 |
-| `run_terminal_command` | 执行 shell 命令 | **是** |
-| `glob` | glob 模式文件查找 | 否 |
-| `edit` | 精确字符串替换（首选编辑方式） | 否 |
-| `todo_write` | 创建/更新任务列表 | 否 |
-| `web_search` | DuckDuckGo 网页搜索 | 否 |
-| `web_fetch` | 获取网页内容（HTML 转纯文本） | 否 |
-| `ask_user_question` | 向用户提问并阻塞等待回答 | 否 |
-| `get_diagnostics` | 获取编译器/linter 诊断信息 | 否 |
-| `dispatch_agent` / `dispatch_agents` | 调度子 Agent | 否 |
+| 分类 | 工具 | 功能 | 确认 |
+|------|------|------|:---:|
+| **文件** | `read_file` | 读取文件内容 | |
+| | `write_file` | 写入/创建文件 | |
+| | `append_file` | 追加内容到文件末尾 | |
+| | `delete_file` | 删除文件 | **是** |
+| | `edit` | 精确字符串替换（首选编辑方式） | |
+| **目录** | `list_directory` | 列出目录内容 | |
+| | `create_directory` | 创建目录（含父目录） | |
+| | `delete_directory` | 递归删除目录 | **是** |
+| **搜索** | `search_codebase` | RAG 语义代码搜索 | |
+| | `grep` | 文本模式搜索 | |
+| | `glob` | glob 模式文件查找 | |
+| | `get_symbols` | 提取文件中的符号定义 | |
+| | `get_diagnostics` | 获取编译器/linter 诊断 | |
+| | `memory_search` | 记忆系统语义搜索 | |
+| **终端** | `run_terminal_command` | 执行 shell 命令 | **是** |
+| **Git** | `git_status` | 查看 Git 仓库状态 | |
+| | `git_diff` | 查看文件差异 | |
+| | `git_commit` | 提交变更 | |
+| | `git_log` | 查看提交历史 | |
+| | `git_blame` | 查看文件逐行修改历史 | |
+| | `git_branch` | 管理分支 | |
+| | `git_push` | 推送到远程 | |
+| | `git_checkout` | 切换分支/恢复文件 | |
+| | `git_stash` | 暂存/恢复工作区 | |
+| **网络** | `web_search` | Tavily 网页搜索（降级 DuckDuckGo） | |
+| | `web_fetch` | 获取网页内容（HTML 转纯文本） | |
+| **交互** | `ask_user_question` | 向用户提问并阻塞等待回答 | |
+| | `todo_write` | 创建/更新任务列表 | |
+| | `generate_diagram` | 生成 Mermaid 图表 | |
+| **调度** | `dispatch_agent` / `dispatch_agents` | 调度子 Agent | |
 
-**`ToolExecutor`** — 工具注册表与调度器：
-- `register()` — 注册工具实例到 `HashMap<String, Arc<dyn Tool>>`
-- `get()` — 按名称查找工具
-- `post_execute_action()` — 获取工具执行后需要的特殊动作
-- `build_executor()` — 工厂函数，注册全部 19 个工具
-
-### 4.5 子 Agent 调度 ([agent/sub_agent.rs](file:///d:/workspace/NeeCoder/src-tauri/src/agent/sub_agent.rs))
+### 4.10 子 Agent 调度 ([agent/sub_agent.rs](src-tauri/src/agent/sub_agent.rs))
 
 支持两种调度模式：
 
-- **`run_sub_agent`** — 串行执行单个子 Agent，调用 `run_no_dispatch()`（不支持嵌套调度，避免类型循环）
-- **`run_sub_agents_parallel`** — 多 Agent 调度，包含**文件冲突检测**（同一文件被多个 Agent 修改时发出警告），然后串行执行
+- **`run_sub_agent`** — 串行执行单个子 Agent，调用 `run_no_dispatch()`（不支持嵌套调度）
+- **`run_sub_agents_parallel`** — 多 Agent 调度，包含**文件冲突检测** + **依赖关系解析**（`depends_on`），然后串行执行
 
-**子 Agent 结果格式：**
-- 成功：`[SUB_AGENT_RESULT:{agent_id}]\n{result}`
-- 失败：`[SUB_AGENT_ERROR:{agent_id}]\n{error}`
+**结果格式：** 成功 `[SUB_AGENT_RESULT:{id}]\n{result}` / 失败 `[SUB_AGENT_ERROR:{id}]\n{error}`
 
-### 4.6 Agent 定义与注册 ([agent/definition.rs](file:///d:/workspace/NeeCoder/src-tauri/src/agent/definition.rs))
-
-`AgentDefinition` 描述一个 Agent 的完整配置：
+### 4.11 Agent 定义与注册 ([agent/definition.rs](src-tauri/src/agent/definition.rs))
 
 ```rust
 pub struct AgentDefinition {
-    pub id: String,              // 唯一标识
-    pub name: String,            // 显示名称
-    pub description: String,     // 描述
-    pub system_prompt: String,   // 系统提示词
-    pub tool_names: Vec<String>, // 可用工具列表
-    pub model: Option<String>,   // 可选自定义模型
-    pub temperature: Option<f32>,// 可选自定义温度
-    pub max_iterations: Option<usize>, // 最大迭代次数
-    pub max_tokens: Option<u32>, // 最大 token 数
+    pub id: String, pub name: String, pub description: String,
+    pub system_prompt: String, pub tool_names: Vec<String>,
+    pub model: Option<String>, pub temperature: Option<f32>,
+    pub max_iterations: Option<usize>, pub max_tokens: Option<u32>,
 }
 ```
 
 **4 个内置 Agent：**
 
-| Agent | 角色 | 可用工具 | 迭代上限 |
-|-------|------|---------|---------|
-| `orchestrator` | 主 Agent / 调度器 | 全部 19 个工具 + dispatch | 15 |
-| `code_writer` | 代码编写专家 | 文件读写 + 编辑 + 搜索 | 10 |
-| `debugger` | 调试专家 | 读文件 + 搜索 + 终端 + 诊断 | 8 |
-| `reviewer` | 代码审查（只读） | 读文件 + 搜索 + 诊断 | 5 |
+| Agent | 角色 | 迭代上限 |
+|-------|------|:-:|
+| `orchestrator` | 主 Agent / 调度器 | 15 |
+| `code_writer` | 代码编写专家 | 10 |
+| `debugger` | 调试专家 | 8 |
+| `reviewer` | 代码审查（只读） | 5 |
 
-**加载优先级：** `agents.json` 文件（运行时可修改）→ 内嵌默认定义
+**加载优先级：** `agents.json` 文件 → 内嵌默认定义。支持通过 `save_agent` 命令自定义。
 
-### 4.7 对话管理 ([chat/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/chat/mod.rs))
+### 4.12 对话管理 ([chat/mod.rs](src-tauri/src/chat/mod.rs))
 
-定义对话的核心数据模型：
+**消息模型：** `ChatMessage { role, content, tool_calls, tool_call_id, images }`
 
-**消息模型：**
-- `ChatMessage` — `{ role, content, tool_calls }`
-- `Role` — `User` / `Assistant` / `System` / `Tool`
-- `ToolCall` — `{ id, tool_name, arguments, timestamp }`
+**对话请求：** `ChatRequest { messages, context, mode }`
+- `ChatContext` — `active_file`、`selected_code`、`file_mentions`、`symbol_mentions`、`images`
+- `ChatMode` — `Ask` / `Edit` / `Agent`
 
-**对话请求：**
-- `ChatRequest` — `{ messages, context, mode }`
-- `ChatContext` — 包含 `active_file`、`selected_code`、`file_mentions`（@文件）、`symbol_mentions`
-- `ChatMode` — `Ask`（问答）/ `Edit`（编辑建议）/ `Agent`（自主执行）
+**事件枚举 `ChatEvent`（16 种变体）：**
+`Started` → `Delta` → `Finished` → `ToolCall` → `ToolResult` → `ToolRetry` → `TodoUpdate` → `AskUserQuestion` → `ConfirmRequest` → `AgentThinking` → `AgentStatus` → `AgentLog` → `ContextTrimmed` → `EditDiff` → `Error` / `Cancelled`
 
-**事件枚举 `ChatEvent`（14 种变体）：**
-`Started` → `Delta`（流式 token）→ `Finished` → `ToolCall` → `ToolResult` → `ToolRetry` → `TodoUpdate` → `AskUserQuestion` → `ConfirmRequest` → `AgentThinking` → `AgentStatus` → `AgentLog` → `ContextTrimmed` → `Error` / `Cancelled`
+**三种模式：**
+- **Ask** — 直接 `stream_chat`，流式返回
+- **Edit** — 专用 `EDIT_SYSTEM_PROMPT`，返回代码变更建议（带 diff 预览）
+- **Agent** — `tokio::spawn` 后台任务 → 完整工具循环 → 持久化 → Dreaming
 
-**三种模式的处理逻辑（在 [commands/chat.rs](file:///d:/workspace/NeeCoder/src-tauri/src/commands/chat.rs) 中）：**
+### 4.13 记忆系统 ([memory/mod.rs](src-tauri/src/memory/mod.rs))
 
-- **Ask 模式** — 直接调用 `stream_chat`，流式返回答案
-- **Edit 模式** — 使用专用 `EDIT_SYSTEM_PROMPT`，返回代码变更建议
-- **Agent 模式** — `tokio::spawn` 后台任务，调用 `agent::run_agent` 执行完整工具循环。完成后执行：
-  1. 持久化对话消息到 Memory
-  2. 追加笔记（Agent 完成摘要）
-  3. 触发 **Dreaming**（LLM 摘要 → 写入 `MEMORY.md`）
+`MemoryManager` 统一接口，包含 **6 个子系统**：
 
-**消息净化 `sanitize_messages`：** 确保发送给 LLM 的消息格式合法：
-- 非 Agent 模式：移除所有 tool/tool_calls 消息
-- Agent 模式：确保 tool_calls → tool 消息配对正确，处理孤立消息
+| 子系统 | 文件 | 功能 |
+|--------|------|------|
+| 会话存储 | `session_store.rs` | Markdown 文件持久化，每会话一个目录 |
+| 长期记忆 | `long_term.rs` | `MEMORY.md` 文件，Dreaming 自动追加 |
+| 艾宾浩斯记忆 | `ebbinghaus.rs` | 10 种分类（Core/Pattern/Decision/Lesson/BugFix/Api/Perf/Coding/General/Custom），时间衰减 |
+| 用户偏好 | `preferences.rs` | 工具使用统计、文件类型分布、任务模式追踪 |
+| Agent 审计日志 | `agent_log.rs` | JSONL 格式，记录每个 Agent 会话的完整事件流 |
+| 记忆搜索 | `search.rs` | 递归搜索 `.md` 文件，相关性评分 |
 
-### 4.8 记忆系统 ([memory/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/memory/mod.rs))
+**艾宾浩斯遗忘曲线 (`ebbinghaus.rs`)：**
+- 10 种 `MemoryCategory`，Core 类不衰减，General 类激进衰减
+- 每条记忆含 `strength`（强度）、`last_review`（上次复习时间）、`review_count`（复习次数）
+- 支持 Dreaming 自动提取和分类记忆
 
-`MemoryManager` 是统一的记忆管理接口，包含 4 个子系统：
+**记忆注入：** `inject_memory_context()` 在 Agent 启动前注入 MEMORY.md + 近期笔记 + 高权重艾宾浩斯记忆
 
-**1. 会话存储 (`session_store.rs`)**
-- 基于 **Markdown 文件**的持久化方案
-- 每个会话 = 一个目录：`sessions/{uuid}/session.md` + `sessions/{uuid}/messages/00000001.md`
-- 消息文件使用 YAML frontmatter 存储 `role` 和 `tool_calls`
-- 支持创建/加载/清理/删除会话
+### 4.14 代码补全 ([completion/mod.rs](src-tauri/src/completion/mod.rs))
 
-**2. 长期记忆 (`long_term.rs`)**
-- 单一文件 `MEMORY.md`
-- 支持读取、覆写、按章节追加
-- 在 Agent 模式启动时注入到系统提示词中
-- Agent 完成后通过 **Dreaming** 自动由 LLM 生成摘要并追加
-
-**3. 每日笔记 (`notes.rs`)**
-- 按日期存储：`notes/YYYY-MM-DD.md`
-- 每条笔记带时间戳前缀：`- [HH:MM:SS] 内容`
-- Agent 完成后自动追加摘要到当天笔记
-
-**4. 记忆搜索 (`search.rs`)**
-- 递归搜索所有 `.md` 文件
-- 简单的相关性评分：精确匹配(10分) > 前缀匹配(5分) > 包含(1分)
-- 跳过会话消息文件（`messages/` 目录）
-
-**记忆注入机制：**
-- `inject_memory_context()` — 在 Agent 启动前，将 `MEMORY.md` 和近期笔记注入到 `custom_instructions` 中
-- `dreaming()` — Agent 完成后，用 LLM 对整个会话生成摘要，追加到 `MEMORY.md`
-
-### 4.9 代码补全 ([completion/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/completion/mod.rs))
-
-采用 **FIM (Fill-in-the-Middle)** 范式进行代码补全：
+采用 **FIM (Fill-in-the-Middle)** 范式：
 
 **上下文采集 (`CompletionContext`)：**
-- `prefix` / `suffix` — 光标前后的代码
-- `imports` — 文件中的 import 语句
-- `enclosing_fn` — 光标所在函数的签名
-- `cursor_line` / `cursor_column` — 光标位置
+- `prefix` / `suffix` — 光标前后代码
+- `imports` — import 语句
+- `enclosing_fn` — 当前函数签名
+- `related_context` — **多文件上下文**（`multi_file.rs` 采集同目录相关文件的公共符号）
 
-**FIM Prompt 构建 (`build_fim_prompt`)：**
-```
-Language: rust
---- Imports ---
-use std::sync::Arc;
---- End Imports ---
---- Context: fn main() ---
---- Code ---
-<PRE>
-{prefix}
-<SUF>
-{suffix}
-<MID>
-```
+**LRU 缓存：** 基于 `(file_path, prefix_tail, suffix_head)` 哈希键，最多 200 条
 
-**后处理 (`post_process_completion`)：** 清理 LLM 生成的补全文本 — 去除前导空白行、尾随空白、修正缩进
+**后处理：** 清理 LLM 生成文本 — 去除前导空白行、尾随空白、修正缩进
 
-**LRU 缓存 (`CompletionCache`)：** 基于 `(file_path, prefix_tail_80, suffix_head_40)` 的哈希键缓存补全结果，最多 200 条
+### 4.15 RAG 代码索引与搜索 ([rag/mod.rs](src-tauri/src/rag/mod.rs))
 
-**流式事件：** `Started` → `Delta`（逐 token）→ `Finished` / `Error` / `Cancelled`
+`CodeIndexer` 实现**混合搜索**：
 
-### 4.10 RAG 代码索引与搜索 ([rag/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/rag/mod.rs))
-
-`CodeIndexer` 是 RAG 搜索引擎的核心，实现**混合搜索**（向量相似度 + BM25 关键词）：
-
-**代码分块 (`CodeChunk`)：**
-```rust
-pub struct CodeChunk {
-    pub id: String,
-    pub file_path: String,
-    pub start_line: usize,
-    pub end_line: usize,
-    pub language: String,
-    pub chunk_type: ChunkType,  // File/Function/Class/Module/Block
-    pub content: String,
-    pub summary: String,
-}
-```
-
-**索引流程：**
-1. 遍历项目目录，过滤支持的文件扩展名（30+ 种）
-2. 对每个文件调用 `chunk_code()` 按函数/类/模块进行结构化分块
-3. 对每个 chunk 调用 LLM 生成 embedding 向量
-4. 存储在内存中（`Vec<IndexedChunk>`）+ 文件索引映射（`file_map`）
-
-**持久化：**
-- `save_to_db()` — 将全部 chunks 序列化后存入 SQLite
-- `load_from_db()` — 启动时从 SQLite 加载已索引数据
+**代码分块：** 按函数/类/模块结构化分块，支持 30+ 种文件扩展名
 
 **搜索模式：**
-- `search()` — 向量相似度搜索（embedding 余弦相似度）
-- `bm25_search()` — BM25 关键词搜索（预计算 df_map 优化性能）
-- `hybrid_search()` — 混合搜索（向量 60% + BM25 40% 加权融合）
+- `search()` — 向量余弦相似度
+- `bm25_search()` — BM25 关键词（预计算 df_map）
+- `hybrid_search()` — 向量 60% + BM25 40% 加权融合
 
-**自动重索引：** `lib.rs` 中的后台循环每 2 秒轮询文件变更，自动对修改的源码文件重新索引并持久化
+**持久化：** SQLite (`save_to_db` / `load_from_db`)，启动时自动加载
 
-### 4.11 LSP 语言服务器 ([lsp/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/lsp/mod.rs))
+**自动重索引：** 后台循环每 10 秒轮询文件变更，自动重索引
 
-`LspManager` 管理多个语言的 LSP 客户端实例：
+### 4.16 LSP 语言服务器 ([lsp/mod.rs](src-tauri/src/lsp/mod.rs))
 
-**支持的 10 种语言：**
-Rust（rust-analyzer）、TypeScript/JavaScript（typescript-language-server）、Python（pylsp）、Go（gopls）、Java（jdtls）、C/C++（clangd）、Ruby（solargraph）、PHP（intelephense）、C#（omnisharp）、Kotlin（kotlin-language-server）
+`LspManager` 管理 10 种语言服务器（Rust/TS/Python/Go/Java/C/Ruby/PHP/C#/Kotlin）
 
-**实现的 LSP 协议方法：**
-- `start_lsp` — 启动语言服务器进程（stdin/stdout 通信）
-- `did_open` / `did_change` / `did_close` — 文档生命周期通知
-- `get_symbols` — 获取文件中的符号定义（Document Symbols）
-- `get_hover` — 获取悬停信息（Hover）
-- `shutdown_all` — 关闭所有 LSP 客户端
+**实现方法：** `start_lsp` / `did_open` / `did_change` / `did_close` / `get_symbols` / `get_hover` / `shutdown_all`
 
-**内部通信：** 使用 JSON-RPC 2.0 over stdin/stdout，`AtomicU64` 请求 ID 计数器
+**通信：** JSON-RPC 2.0 over stdin/stdout
 
-### 4.12 文件系统监听 ([fs_watcher/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/fs_watcher/mod.rs))
+### 4.17 MCP 协议客户端 ([mcp/mod.rs](src-tauri/src/mcp/mod.rs))
 
-基于 `notify` crate 实现的文件系统监听器：
+实现 Model Context Protocol 客户端，JSON-RPC 2.0 over stdio：
 
-**核心功能：**
-- `start_watch()` — 启动对指定路径的递归/非递归监听
-- `stop_watch()` — 停止监听特定路径
-- `poll_events()` — 轮询式获取变更事件（带防抖）
-- `on_change()` — 注册变更回调
+```
+Agent Loop → ToolExecutor → McpToolBridge → McpClient ──stdin──► MCP Server Process
+                                                     ◄─stdout── (node/python binary)
+```
 
-**防抖机制：** 同一文件的多次变更合并为一次事件，默认 2000ms 防抖窗口。使用 `DebouncedEvent` 跟踪每个文件的最新变更类型和时间戳。
+**核心组件：**
+- `McpClient` — 生成子进程，通过 stdin/stdout 通信
+- `McpToolBridge` — 将 MCP 工具桥接为 NeeCoder 的 `Tool` trait 实现
+- `McpRegistry` — 管理多个 MCP 服务器连接
 
-**变更类型：** `Created` / `Modified` / `Deleted`
+**工具发现：** 启动时自动连接配置的 MCP 服务器，发现工具后注入 Agent 工具注册表
 
-**用途：** 在 `lib.rs` 中被后台循环调用，自动触发代码重索引。
+### 4.18 沙箱安全 ([sandbox/mod.rs](src-tauri/src/sandbox/mod.rs))
 
-### 4.13 配置管理 ([config/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/config/mod.rs))
+三种沙箱模式：
 
-**`AppSettings`** 核心配置结构：
+| 模式 | 读权限 | 写权限 |
+|------|--------|--------|
+| `Strict` | 仅项目路径 + allowed_paths | 仅项目路径 |
+| `Permissive` | 无限制 | 仅项目路径 |
+| `Disabled` | 无限制 | 无限制 |
+
+**`SandboxChecker` 提供：**
+- 路径检查（读/写分离，blocked_paths 最高优先级）
+- 命令安全检查（内置黑名单 + 自定义 blocked_commands）
+- 文件大小限制（`max_file_size_mb`）
+- 域名过滤（`allowed_domains`）
+- 细粒度权限（`confirm_write_paths` / `auto_allow_paths` / `auto_allow_commands`）
+
+### 4.19 Skill 系统 ([skill/mod.rs](src-tauri/src/skill/mod.rs))
+
+基于 Markdown 文件的可扩展 Skill 系统：
+
+**Skill 定义：** YAML frontmatter + 模板体
+```yaml
+---
+name: "review-pr"
+description: "Review a pull request"
+trigger: "/review-pr"
+mode: "agent"
+agent: "reviewer"
+tools: ["read_file", "get_diagnostics"]
+---
+Review the following PR: $SELECTION
+```
+
+**模板变量：** `$SELECTION` / `$FILE_PATH` / `$FILE_CONTENT` / `$PROJECT_PATH` / `$ARGUMENTS` / `$LANGUAGE`
+
+**加载路径：** 全局 `skills/` 目录 + 项目 `.neecoder/skills/` 目录
+
+### 4.20 遥测系统 ([telemetry/mod.rs](src-tauri/src/telemetry/mod.rs))
+
+JSONL 格式的使用分析系统：
+
+**事件类型：** `SessionStart` / `SessionEnd` / `ToolCall` / `Error` / `Compaction`
+
+**存储：** `{app_data}/telemetry/telemetry.jsonl`（独立于日志文件）
+
+**内存计数器：** `AtomicU64` 线程安全实时统计
+
+**查询 API：** `get_summary()` 返回聚合快照
+
+### 4.21 文件系统监听 ([fs_watcher/mod.rs](src-tauri/src/fs_watcher/mod.rs))
+
+基于 `notify` crate，2000ms 防抖窗口，变更类型：`Created` / `Modified` / `Deleted`
+
+### 4.22 配置管理 ([config/mod.rs](src-tauri/src/config/mod.rs))
+
+**`AppSettings`** 核心配置（关键字段）：
 ```rust
 pub struct AppSettings {
-    pub llm_provider: LlmProvider,    // Provider 选择
-    pub completion_model: String,      // 补全模型
-    pub chat_model: String,            // 对话模型
-    pub embedding_model: String,       // Embedding 模型
-    pub api_key: String,               // 运行时 API Key（不落盘）
-    pub api_key_encrypted: Option<String>, // 加密 API Key（持久化）
-    pub completion_enabled: bool,      // 是否启用补全
-    pub trigger_debounce_ms: u64,      // 补全触发防抖
-    pub max_context_tokens: u32,       // 最大上下文 token
-    pub custom_instructions: String,   // 自定义指令
-    pub project_paths: Vec<String>,    // 项目路径列表
-    pub theme: Theme,                  // Light/Dark
+    pub llm_provider: LlmProvider,     // Provider 选择
+    pub completion_model: String,       // 补全模型
+    pub chat_model: String,             // 对话模型
+    pub fast_model: String,             // 轻量模型（Ask/摘要）
+    pub model_routing_enabled: bool,    // 自动模型路由
+    pub api_key: String,                // 运行时 API Key（不落盘）
+    pub api_key_encrypted: Option<String>,
+    pub sandbox: SandboxConfig,         // 沙箱安全配置
+    pub max_api_calls_per_session: u32, // 会话 API 调用上限
+    pub loop_no_progress_threshold: u32,
+    pub loop_ping_pong_cycles: u32,
+    pub loop_failure_streak_threshold: u32,
+    pub thinking_enabled: bool,         // Claude Extended Thinking
+    pub thinking_budget: u32,
+    pub tavily_api_key: String,         // Tavily 搜索 API Key
+    // ... 其他字段
 }
 ```
 
-**API Key 加密方案：** XOR 混淆 + hex 编码
-- `xor_obfuscate()` — 加密：逐字节 XOR + hex 编码
-- `xor_deobfuscate()` — 解密：hex 解码 + 逐字节 XOR
-- `api_key` 使用 `#[serde(skip_serializing)]` 阻止明文落盘
-- 启动时自动迁移旧配置（检测明文 → 加密 → 保存）
+**API Key 加密：** XOR 混淆 + hex 编码，`#[serde(skip_serializing)]` 阻止明文落盘
 
-**`ConfigManager`** — 配置的加载/保存管理器，使用 JSON 格式存储到应用配置目录
+### 4.23 日志系统 ([logging/mod.rs](src-tauri/src/logging/mod.rs))
 
-### 4.14 日志系统 ([logging/mod.rs](file:///d:/workspace/NeeCoder/src-tauri/src/logging/mod.rs))
+`DualLogger` 双输出：控制台（`RUST_LOG` 控制，彩色）+ 文件（`{app_data}/logs/neecoder.log`，自动轮转，保留 5 个历史文件）
 
-自定义 `DualLogger` 实现双输出日志：
+### 4.24 命令层 (Tauri Commands)
 
-**控制台输出：**
-- 受 `RUST_LOG` 环境变量控制（默认 `info` 级别）
-- 彩色输出（Error=红、Warn=黄、Info=青、Debug=白、Trace=灰）
+**10 个命令模块，50+ 个 Tauri 命令：**
 
-**文件输出：**
-- 路径：`{app_data}/logs/neecoder.log`
-- 始终记录 `debug` 及以上级别
-- 启动时自动轮转：当前日志 → `neecoder.{timestamp}.log`
-- 最多保留 5 个历史日志文件
-
-**外部接口：**
-- `get_app_logs` 命令 — 读取最近 N 行日志供前端显示
-- `get_log_path` 命令 — 返回日志文件路径
-
-### 4.15 命令层 (Tauri Commands) ([commands/](file:///d:/workspace/NeeCoder/src-tauri/src/commands))
-
-**6 个命令模块**，共 **40+ 个 Tauri 命令**：
-
-| 模块 | 命令 | 功能 |
-|------|------|------|
-| **config** | `get_settings` | 获取当前设置 |
-| | `update_settings` | 更新设置 |
-| | `get_app_logs` | 读取应用日志 |
-| | `get_log_path` | 获取日志文件路径 |
-| **completion** | `request_completion` | 请求 FIM 补全（流式） |
-| | `cancel_completion` | 取消正在进行的补全 |
-| **chat** | `send_message` | 发送消息（Ask/Edit/Agent 三种模式） |
-| | `send_message`（扩展） | 支持 `images` 参数（多模态图片输入） |
-| | `new_session` | 创建新会话 |
-| | `list_sessions` | 列出所有会话 |
-| | `delete_session` | 删除会话 |
-| | `get_session_messages` | 获取会话消息历史 |
-| | `clear_session` | 清空会话 |
-| | `cancel_agent` | 取消正在运行的 Agent |
-| | `get_agents` | 获取 Agent 定义列表 |
-| | `answer_agent_question` | 回答 Agent 提问 |
-| | `answer_confirm` | 确认/拒绝危险操作 |
-| | `get_terminal_history` | 获取终端命令历史 |
-| | `get_error_summary` | 获取最近错误摘要 |
-| | `start_cloud_agent` | 启动后台云 Agent 任务 |
-| | `list_cloud_tasks` | 列出所有云 Agent 任务 |
-| | `get_cloud_task` | 获取单个云 Agent 任务状态 |
-| | `cancel_cloud_task` | 取消云 Agent 任务 |
-| **project** | `open_project` | 打开项目 |
-| | `get_file_tree` | 获取文件树 |
-| | `read_file` | 读取文件 |
-| | `write_file` | 写入文件 |
-| | `create_file` | 创建文件 |
-| | `create_directory` | 创建目录 |
-| | `delete_file` | 删除文件/目录 |
-| | `rename_file` | 重命名文件 |
-| | `accept_change` | 接受 Agent 编辑 |
-| | `reject_change` | 拒绝 Agent 编辑（恢复快照） |
-| **lsp** | `start_lsp` | 启动语言服务器 |
-| | `get_symbols` | 获取文件符号 |
-| | `get_hover_info` | 获取悬停信息 |
-| | `lsp_did_open/change/close` | LSP 文档生命周期 |
-| | `shutdown_lsp` | 关闭所有 LSP |
-| **search** | `search_codebase` | 语义搜索代码库 |
-| | `reindex_project` | 重新索引项目 |
-| | `index_file` | 索引单个文件 |
-| | `remove_from_index` | 从索引中移除文件 |
-| | `get_index_stats` | 获取索引统计 |
-| **mcp** | `list_mcp_servers` | 列出所有 MCP 服务器 |
-| | `connect_mcp_server` | 连接 MCP 服务器 |
-| | `disconnect_mcp_server` | 断开 MCP 服务器 |
+| 模块 | 关键命令 | 功能 |
+|------|---------|------|
+| **config** | `get_settings` / `update_settings` / `get_app_logs` | 配置与日志 |
+| **completion** | `request_completion` / `cancel_completion` | FIM 补全 |
+| **chat** | `send_message` / `new_session` / `list_sessions` / `cancel_agent` / `answer_agent_question` / `answer_confirm` / `start_cloud_agent` | 对话与 Agent |
+| **agent** | `save_agent` / `delete_agent` | 自定义 Agent 管理 |
+| **project** | `open_project` / `get_file_tree` / `read_file` / `write_file` / `accept_change` / `reject_change` | 文件操作 |
+| **edit_inline** | `edit_inline` | 内联代码编辑（LLM 驱动） |
+| **pty** | `start_terminal` / `write_stdin` / `resize_terminal` / `stop_terminal` | PTY 终端 |
+| **lsp** | `start_lsp` / `get_symbols` / `get_hover_info` | LSP |
+| **search** | `search_codebase` / `reindex_project` / `get_index_stats` | RAG 搜索 |
+| **mcp** | `list_mcp_servers` / `connect_mcp_server` / `disconnect_mcp_server` | MCP 管理 |
+| **skill** | `list_skills` / `execute_skill` | Skill 执行 |
 
 ---
 
@@ -605,314 +632,175 @@ pub struct AppSettings {
 
 ### 5.1 入口与根组件
 
-**[main.tsx](file:///d:/workspace/NeeCoder/src/main.tsx)** — React 入口，挂载 `App` 组件，导入全局样式
-
-**[App.tsx](file:///d:/workspace/NeeCoder/src/App.tsx)** — 根组件，管理全局状态：
-
-**核心状态：**
-- `activeView` — 当前活动视图（`editor` / `chat` / `settings` / `search` / `cloud`）
-- `projectPath` — 当前项目路径
-- `openFiles` — 打开的文件列表（标签页）
-- `activeFile` — 当前活动文件
-- `completionId` / `completionText` — 代码补全状态
-- `showOutline` / `outlineSymbols` — 编辑器大纲面板状态
+**[App.tsx](src/App.tsx)** — 根组件，管理全局状态：
+- `activeView` — `editor` / `chat` / `settings` / `search` / `cloud` / `terminal`
+- `projectPath` / `openFiles` / `activeFile`
+- `completionId` / `completionText` — 补全状态
+- `showOutline` / `outlineSymbols` — 大纲面板
 
 **布局结构：**
 ```
-┌──────────────────────────────────────────┐
-│ [Explorer] [Editor Tabs]         [🔍Find] [📑Outline] │
-├────────────┬──────────────┬──────────────┤
-│ File       │ CodeEditor   │ Side Panel   │
-│ Explorer   │              │ (Chat/       │
-│            │              │  Search/     │
-│            │              │  Settings)   │
-├────────────┴──────────────┴──────────────┤
-│ StatusBar [Explorer|Files|...│Cloud|Chat|LLM|Settings] │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│ [Explorer] [Editor Tabs]        [🔍Find] [📑Outline] │
+├────────────┬──────────────────┬──────────────────┤
+│ File       │ CodeEditor       │ Side Panel       │
+│ Explorer   │                  │ (Chat/Search/    │
+│            │                  │  Settings)       │
+├────────────┴──────────────────┴──────────────────┤
+│ Terminal Panel (xterm.js PTY)                    │
+├──────────────────────────────────────────────────┤
+│ StatusBar [Explorer|Files|...|Cloud|Chat|LLM|Settings] │
+└──────────────────────────────────────────────────┘
 ```
-
-**补全事件处理：** 通过 `listen("completion-event")` 监听后端推送的流式 token，累积显示幽灵文本（Ghost Text），用户按 `Tab` 接受，`Esc` 拒绝。
-
-**编辑器工具栏：** 编辑器头部新增 🔍 查找按钮（调用 CodeMirror `openSearchPanel`）和 📑 大纲按钮（调用 LSP `get_symbols` 获取文件符号列表，点击跳转到对应行）。
-
-**大纲面板：** 当打开文件时，可在编辑器右侧展开大纲面板，通过 LSP 获取函数/类/接口等符号定义，按类型显示图标，点击导航到符号所在行。
 
 ### 5.2 核心组件
 
-**[ChatPanel.tsx](file:///d:/workspace/NeeCoder/src/components/ChatPanel.tsx)**（~1796 行，最复杂的前端组件）
-- 三种聊天模式切换（Ask / Edit / Agent）
-- Agent 选择器（从 `agents.json` 加载）
+**[ChatPanel.tsx](src/components/ChatPanel.tsx)** — 最复杂的前端组件
+- 三种模式（Ask / Edit / Agent）+ Agent 选择器
 - 会话管理（创建/切换/删除/加载历史）
-- Markdown 渲染（`react-markdown` + 语法高亮）
-- 代码块 "一键复制" 和 "应用更改" 按钮
-- 工具调用卡片（展示执行状态、耗时）
-- Todo 列表实时显示
-- `@文件` 提及菜单（MentionMenu）
-- Agent 提问对话框（AskQuestionOverlay）
-- 危险操作确认对话框（ConfirmDangerDialog）
-- 流式 token 累积显示
-- 日志面板
-- **🖼️ 图片输入**：支持粘贴（Ctrl+V）、拖拽、文件选择器三种方式添加图片，base64 编码传递
-- **📎 文件拖拽**：从文件管理器拖拽代码文件到 Chat 面板，自动匹配项目文件列表并附加为上下文
-- **✏️ 消息编辑**：hover 用户消息可编辑，修改后重新发送（Ctrl+Enter 提交）
-- **🔄 重新生成**：最后一条助手回复支持一键重新生成
+- Markdown 渲染 + 代码块 diff 预览（EditCodeBlock 组件）
+- 工具调用卡片 + Todo 列表 + 日志面板
+- 图片输入（粘贴/拖拽/选择器）+ 文件拖拽上下文
+- 消息编辑 + 重新生成
 
-**[CodeEditor.tsx](file:///d:/workspace/NeeCoder/src/components/CodeEditor.tsx)**
-- 基于 CodeMirror 6 构建
-- 动态语言扩展（根据文件后缀选择语法高亮）
-- 幽灵文本装饰器（Ghost Text Widget）
-- 键盘事件拦截（`Tab` 接受、`Esc` 拒绝、`Alt+]` 下一个候选）
-- 文件内搜索（`Ctrl+F`，集成 CodeMirror `searchKeymap`）
-- 通过 `window.__neecoder_editor` 暴露 `getCursor` / `getContext` / `openFind` / `goToLine` / `getFilePath` / `insertCompletion` 给外部调用
+**[CodeEditor.tsx](src/components/CodeEditor.tsx)** — CodeMirror 6
+- 动态语言扩展 + 幽灵文本补全
+- `Tab` 接受 / `Esc` 拒绝 / `Alt+]` 下一候选
+- 通过 `window.__neecoder_editor` 暴露 API
 
-**[FileExplorer.tsx](file:///d:/workspace/NeeCoder/src/components/FileExplorer.tsx)**
-- 懒加载文件树（展开目录时请求子节点）
-- 文件图标映射（按扩展名显示 emoji）
-- **右键上下文菜单**：新建文件/文件夹、重命名、删除（带确认对话框）
-- **双击重命名**：双击文件名直接进入内联重命名模式
-- **头部操作按钮**：📄+ 新建文件 / 📁+ 新建文件夹 / ↻ 刷新
-- **错误提示**：操作失败时显示红色错误横幅
+**[TerminalPanel.tsx](src/components/TerminalPanel.tsx)** — xterm.js + PTY
+- 连接后端 `portable-pty` 的真实终端
+- 支持 resize、颜色、交互式程序
 
-**[StatusBar.tsx](file:///d:/workspace/NeeCoder/src/components/StatusBar.tsx)**
-- 底部导航栏：Explorer | 文件数 | 项目名 | Search | ☁️ Cloud | Chat | LLM 状态 | Settings
+**[InlineEdit.tsx](src/components/InlineEdit.tsx)** — LLM 内联编辑
+- 选中代码 → 输入指令 → LLM 生成修改 → diff 预览 → Accept/Reject
 
-**[Settings.tsx](file:///d:/workspace/NeeCoder/src/components/Settings.tsx)**
-- LLM Provider 配置（OpenAI / DeepSeek / Anthropic / Ollama）
-- 模型参数设置（补全模型、对话模型、Embedding 模型）
-- API Key 管理与加密
-- 代码补全开关与防抖时间
-- 自定义指令（Custom Instructions）
-- **🔌 MCP 服务器管理面板**：
-  - 已连接服务器列表（含连接状态指示灯）
-  - 添加新服务器（名称 + JSON-RPC 2.0 URL）
-  - 一键断开/重连
-  - 服务器状态实时检测
+**[FileExplorer.tsx](src/components/FileExplorer.tsx)** — 懒加载文件树
+- 右键菜单 + 双击重命名 + 头部操作按钮
 
-**[CloudAgentPanel.tsx](file:///d:/workspace/NeeCoder/src/components/CloudAgentPanel.tsx)**
-- 云 Agent 后台任务管理面板（通过状态栏 ☁️ Cloud 按钮进入）
-- 任务列表展示：状态（Pending/Running/Completed/Failed）、消息预览、时间戳
-- 自动刷新：运行中的任务每 3 秒轮询更新状态
-- 事件监听：通过 `cloud-agent-event` 实时接收任务完成/失败通知
-- 支持取消运行中的任务
-- 结果查看：展开查看已完成任务的输出摘要
+**[Settings.tsx](src/components/Settings.tsx)** — 完整设置界面
+- LLM Provider / 模型 / API Key / 补全 / 自定义指令
+- MCP 服务器管理面板 + 沙箱配置
 
-**[Overlay.tsx](file:///d:/workspace/NeeCoder/src/components/Overlay.tsx)**
-- Agent 提问浮层（AskQuestionOverlay）
-- 危险操作确认浮层（ConfirmDangerDialog）
+**[CloudAgentPanel.tsx](src/components/CloudAgentPanel.tsx)** — 云 Agent 任务管理
 
 ### 5.3 Tauri API 抽象层
 
-**[useTauri.ts](file:///d:/workspace/NeeCoder/src/hooks/useTauri.ts)**（339 行）
-
-统一的 API 封装层，核心设计：
-- **`isTauri()`** — 检测是否在 Tauri 环境中运行
-- **`tryInvoke()`** — 封装 invoke 调用，异常时返回 `null` 而非抛出
-- **浏览器兼容** — 非 Tauri 环境返回 Mock 数据（开发调试用）
-- **`listenToEvent()`** — 封装事件监听，返回 `UnlistenFn` 用于清理
-
-导出 **30+ 个 API 函数**：文件操作（含 CRUD）、对话、补全、LSP、搜索、配置、会话管理、MCP 服务器管理、云 Agent 任务管理等
+**[useTauri.ts](src/hooks/useTauri.ts)** — 30+ 个 API 函数封装
+- `isTauri()` 环境检测 + `tryInvoke()` 安全调用
+- 非 Tauri 环境返回 Mock 数据
 
 ### 5.4 主题与样式系统
 
-**[global.css](file:///d:/workspace/NeeCoder/src/styles/global.css)** — Catppuccin Mocha 暗色主题
-
-**设计令牌：**
-```css
-:root {
-  --bg-primary: #1e1e2e;     /* 主背景 */
-  --bg-secondary: #181825;   /* 侧边栏/状态栏 */
-  --bg-surface: #252536;     /* 卡片/悬浮层 */
-  --bg-hover: #313244;       /* 交互悬停 */
-  --text-primary: #cdd6f4;   /* 主要文本 */
-  --text-secondary: #a6adc8; /* 次要文本 */
-  --accent: #89b4fa;         /* 强调色 */
-  --success: #a6e3a1;        /* 成功 */
-  --warning: #f9e2af;        /* 警告 */
-  --error: #f38ba8;          /* 错误 */
-}
-```
-
-**技术方案：** 原生 CSS + BEM 命名 + CSS 变量，未使用 Tailwind 或 CSS-in-JS
+**[global.css](src/styles/global.css)** — Catppuccin Mocha 暗色主题，原生 CSS + BEM + CSS 变量
 
 ---
 
 ## 6. 前后端通信协议
 
 ### invoke 命令（请求/响应）
-
-前端通过 `invoke("command_name", { params })` 调用后端，后端返回 `Result<T, String>`。
+前端 `invoke("command_name", { params })` → 后端 `Result<T, String>`
 
 ### Tauri Events（推送）
 
-后端通过 `app.emit("event-name", payload)` 推送到前端：
-
-| 事件名 | 方向 | 用途 |
-|--------|------|------|
-| `chat-event` | 后端→前端 | 对话流式事件（14 种变体） |
-| `completion-event` | 后端→前端 | 代码补全流式事件 |
-| `cloud-agent-event` | 后端→前端 | 云 Agent 任务状态变更通知 |
-
-### 状态同步机制
-
-| 场景 | 机制 |
-|------|------|
-| 对话消息持久化 | 后端写入 Markdown 文件，前端通过 `get_session_messages` 加载 |
-| 代码索引持久化 | 后端写入 SQLite，启动时自动加载 |
-| 配置持久化 | 后端写入 JSON 文件，启动时自动加载 |
-| Agent 状态 | 实时通过 Events 推送，不持久化 |
+| 事件名 | 用途 |
+|--------|------|
+| `chat-event` | 对话流式事件（16 种变体） |
+| `completion-event` | 代码补全流式事件 |
+| `cloud-agent-event` | 云 Agent 任务状态变更 |
+| `pty-output` | 终端输出数据 |
+| `pty-exit` | 终端进程退出 |
+| `edit-inline-event` | 内联编辑流式事件 |
 
 ---
 
 ## 7. 数据流与关键路径
 
-### 用户发送 Agent 消息
+### Agent 消息完整流程
 
 ```
-用户输入
-  → ChatPanel.tsx: sendChatMessage()
-    → invoke("send_message", { mode: "Agent" })
-      → commands/chat.rs: send_message()
-        → sanitize_messages() 净化历史
-        → inject_memory_context() 注入记忆
-        → #codebase 检测 → RAG 搜索注入上下文
-        → tokio::spawn → agent::run_agent()
-          → 循环: stream_chat → parse tool_calls → execute tools
-            → needs_confirmation? → emit ConfirmRequest → 等待前端回答
-            → execute_and_handle_special → post_execute_action
-            → emit ToolCall/ToolResult/ToolRetry/TodoUpdate...
-          → 循环结束
-        → 持久化消息到 Session
-        → append_note() 追加笔记
-        → tokio::spawn → dreaming() LLM 摘要 → MEMORY.md
-  ← Events: chat-event (Started → Delta... → ToolCall → ToolResult... → Finished)
-  ← ChatPanel.tsx: 实时渲染消息流
-```
-
-### 代码补全请求
-
-```
-用户输入代码
-  → CodeEditor.tsx: updateListener 检测变更
-    → requestCompletion({ prefix, suffix, cursor })
-      → invoke("request_completion", { context })
-        → commands/completion.rs:
-          → build_cache_key() → 检查 LRU 缓存
-            → 命中: 直接 emit Finished
-            → 未命中: build_fim_prompt() → stream_fim()
-              → 逐 token emit Delta
-              → 完成后 post_process_completion()
-              → 存入缓存
-              → emit Finished
-  ← Events: completion-event (Started → Delta... → Finished)
-  ← App.tsx: 累积 completionText
-  ← CodeEditor.tsx: 渲染幽灵文本装饰器
-  → 用户按 Tab → insertCompletion()
-```
-
-### 文件变更自动重索引
-
-```
-用户保存文件
-  → OS 文件系统事件
-    → notify crate 捕获
-      → FileWatcher: poll_events() 防抖合并
-        → lib.rs 后台循环 (每 2 秒)
-          → 检查文件扩展名
-          → tokio::spawn:
-            → read_to_string() 读取文件
-            → indexer.index_file() 重新分块 + embedding
-            → indexer.save_to_db() 持久化到 SQLite
+用户输入 → ChatPanel.sendChatMessage()
+  → invoke("send_message", { mode: "Agent" })
+    → sanitize_messages() 净化历史
+    → inject_memory_context() 注入记忆（MEMORY.md + 笔记 + 艾宾浩斯）
+    → tokio::spawn → agent::run_agent()
+      → 循环:
+        → stream_chat → parse tool_calls
+        → pre_tool_hook_chain (Snapshot/Confirm)
+        → ToolExecutor.execute() [2min timeout]
+        → post_tool_hook_chain (Truncate/Filter/ErrorPattern)
+        → post_tool_batch_chain (AutoDiagnose/AuditLog)
+        → loop_detector.check() → InjectWarning / HardStop
+        → checkpoint.create()
+        → emit ToolCall/ToolResult/EditDiff...
+      → 循环结束
+    → 持久化消息 + append_note + dreaming
+← Events → ChatPanel 实时渲染
 ```
 
 ---
 
 ## 8. 安全机制
 
-### 终端命令安全检查 ([run_terminal_command.rs](file:///d:/workspace/NeeCoder/src-tauri/src/agent/tools/run_terminal_command.rs))
+### 多层安全防护
 
-`is_dangerous()` 函数拦截以下危险模式：
-- `rm -rf /`、`rm -rf /*`
-- `format`、`del /s`（Windows）
-- `chmod -R 777`
-- `curl | sh`、`wget | bash`（管道到 shell）
-- `sudo` 提权命令
-
-### 危险操作确认
-
-3 种工具（`delete_file`、`delete_directory`、`run_terminal_command`）在执行前：
-1. 后端发射 `ConfirmRequest` 事件
-2. 前端弹出确认对话框
-3. 用户点击 "Allow" → `invoke("answer_confirm")` → oneshot channel 通知 Agent 继续
-4. 用户点击 "Deny" → Agent 收到 `[USER_DENIED]` 消息
-5. 60 秒超时自动拒绝
-
-### API Key 保护
-
-- 运行时 `api_key` 使用 `#[serde(skip_serializing)]` 阻止序列化到磁盘
-- 持久化使用 `api_key_encrypted`（XOR 混淆 + hex 编码）
-- 启动时自动检测并迁移旧明文配置
-
-### 文件树安全
-
-`should_ignore()` 过滤 `.git`、`node_modules`、`target`、`dist` 等敏感/大型目录
+| 层级 | 机制 | 描述 |
+|------|------|------|
+| **沙箱** | `SandboxChecker` | 路径读写限制、命令黑名单、文件大小限制、域名过滤 |
+| **Hook** | `ConfirmHook` | 危险操作前端确认（60s 超时自动拒绝） |
+| **Hook** | `SensitiveDataFilterHook` | 工具输出中的 API Key 自动脱敏 |
+| **终端** | `is_dangerous()` | 拦截 `rm -rf /`、`format`、`curl\|sh` 等 |
+| **API Key** | XOR + skip_serializing | 运行时明文不落盘，持久化加密 |
+| **工具超时** | 2 分钟硬限制 | `tokio::time::timeout` 防止工具挂起 |
+| **循环检测** | 4 策略 + 2 级裁决 | 防止 Agent 无限循环 |
+| **API 上限** | `max_api_calls_per_session` | 限制单会话 API 调用次数 |
 
 ---
 
 ## 9. 测试覆盖
 
-共 **98 个测试**，分布在 4 个模块：
-
-| 模块 | 测试数 | 覆盖范围 |
-|------|--------|---------|
-| Agent Tools | 20 | 工具注册、危险命令检测、工具执行 |
-| RAG | 51 | 代码分块、BM25 搜索、向量搜索、混合搜索、SQLite 持久化 |
-| Memory | 14 | 会话 CRUD、消息存取、长期记忆、笔记、搜索 |
-| Completion | 13 | FIM prompt 构建、后处理、系统提示词 |
+| 模块 | 覆盖范围 |
+|------|---------|
+| Agent Tools | 工具注册、危险命令检测、工具执行 |
+| RAG | 代码分块、BM25/向量/混合搜索、SQLite 持久化 |
+| Memory | 会话 CRUD、消息存取、长期记忆、笔记、搜索 |
+| Completion | FIM prompt 构建、后处理、系统提示词 |
+| Sandbox | 路径检查、命令拦截、沙箱模式切换 |
+| Skill | 模板渲染、Skill 加载、变量替换 |
 
 ---
 
 ## 10. 依赖清单
 
-### Rust 后端 (Cargo.toml)
+### Rust 后端
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
 | tauri | 2 | 桌面应用框架 |
-| tauri-plugin-shell | 2 | Shell 插件 |
-| tauri-plugin-dialog | 2 | 对话框插件 |
-| tauri-plugin-fs | 2 | 文件系统插件 |
-| tauri-plugin-process | 2 | 进程插件 |
-| tauri-plugin-clipboard-manager | 2 | 剪贴板插件 |
-| serde | 1 | 序列化/反序列化 |
-| serde_json | 1 | JSON 序列化 |
-| serde_yaml | 0.9 | YAML 序列化（会话存储） |
+| tauri-plugin-* | 2 | shell/dialog/fs/process/clipboard |
+| serde / serde_json / serde_yaml | 1 / 1 / 0.9 | 序列化 |
 | tokio | 1 | 异步运行时 |
-| reqwest | 0.12 | HTTP 客户端（LLM API） |
-| futures-util | 0.3 | 流式处理辅助 |
-| tokio-stream | 0.1 | Tokio 流 |
+| reqwest | 0.12 | HTTP 客户端（SSE 流式） |
+| rusqlite | 0.32 | SQLite（RAG 索引） |
+| tiktoken-rs | 0.5 | 精确 token 计数 |
+| portable-pty | 0.8 | 跨平台 PTY 终端 |
 | notify | 7 | 文件系统监听 |
-| regex | 1 | 正则表达式 |
-| glob | 0.3 | 文件 glob 匹配 |
-| rusqlite | 0.32 | SQLite（RAG 索引持久化） |
-| uuid | 1 | UUID 生成 |
-| chrono | 0.4 | 日期时间处理 |
-| log | 0.4 | 日志 facade |
-| anyhow | 1 | 错误处理 |
-| thiserror | 2 | 自定义错误类型 |
-| async-trait | 0.1 | 异步 trait 支持 |
-| directories | 6 | 系统目录路径 |
-| urlencoding | 2 | URL 编码 |
+| regex / glob | 1 / 0.3 | 模式匹配 |
+| uuid / chrono | 1 / 0.4 | UUID / 日期时间 |
+| strsim | 0.11 | 字符串相似度 |
+| clap | 4 | CLI 参数解析 |
+| async-trait | 0.1 | 异步 trait |
+| anyhow / thiserror | 1 / 2 | 错误处理 |
 
-### 前端 (package.json)
+### 前端
 
 | 依赖 | 用途 |
 |------|------|
-| react | UI 框架 |
-| react-dom | DOM 渲染 |
+| react / react-dom | UI 框架 |
 | react-markdown | Markdown 渲染 |
 | @codemirror/* | 代码编辑器 |
-| @tauri-apps/api | Tauri 前端 API |
-| @tauri-apps/plugin-* | Tauri 插件前端 API |
-| react-syntax-highlighter | 代码语法高亮 |
-| vite | 构建工具 |
-| typescript | 类型检查 |
+| @xterm/xterm + addon-fit | 终端模拟 |
+| @tauri-apps/api + plugin-* | Tauri 前端 API |
+| react-syntax-highlighter | 语法高亮 |
+| lucide-react | 图标库 |
+| vite / typescript | 构建 / 类型检查 |
