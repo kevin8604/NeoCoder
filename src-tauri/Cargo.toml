@@ -1,0 +1,63 @@
+[package]
+name = "neecoder-tauri"
+version = "0.1.0"
+edition = "2024"
+description = "NeeCoder - AI Coding Assistant"
+
+[package.metadata]
+tauri-dev-url = "http://localhost:1420"
+
+[lib]
+name = "neecoder_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "neecoder-tauri"
+path = "src/main.rs"
+
+[[bin]]
+name = "neecoder-cli"
+path = "src/bin/cli.rs"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-process = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+directories = "6"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+futures-util = "0.3"
+tokio-stream = "0.1"
+notify = "7"
+regex = "1"
+glob = "0.3"
+urlencoding = "2"
+async-trait = "0.1"
+tiktoken-rs = "0.5"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_yaml = "0.9.34"
+strsim = "0.11"
+portable-pty = "0.8"
+clap = { version = "4", features = ["derive"] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

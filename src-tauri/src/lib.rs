@@ -12,13 +12,14 @@ pub mod logging;
 pub mod skill;
 pub mod sandbox;
 pub mod mcp;
+pub mod telemetry;
 
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
-use commands::pty::{PtyState, PtyStdin};
+use commands::pty::PtyState;
 use lsp::LspManager;
 use rag::CodeIndexer;
 use fs_watcher::FileWatcher;
@@ -140,6 +141,10 @@ pub fn run() {
             // Initialize PTY (terminal) state
             app.manage(PtyState::new());
 
+            // Initialize Telemetry collector (separate from logging)
+            let telemetry_dir = app.path().app_data_dir().unwrap_or_default();
+            app.manage(telemetry::TelemetryCollector::new(&telemetry_dir));
+
             // Spawn background task to connect to configured MCP servers
             let mcp_registry_bg = mcp_registry.clone();
             let mcp_tools_bg = mcp_tools.clone();
@@ -220,11 +225,12 @@ pub fn run() {
 
                     let events = {
                         let watcher = watcher_for_reindex.lock().unwrap();
-                        watcher.drain_events()
+                        watcher.poll_events(500)
                     };
 
                     for event in events {
-                        let (path, kind) = event;
+                        let path = event.path;
+                        let kind = event.kind;
                         let indexer = &indexer_for_reindex;
                         let should_save = {
                             match kind {
@@ -334,6 +340,8 @@ pub fn run() {
             commands::pty::write_stdin,
             commands::pty::stop_terminal,
             commands::pty::resize_terminal,
+            telemetry::get_telemetry_summary,
+            telemetry::get_telemetry_events,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

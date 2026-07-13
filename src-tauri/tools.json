@@ -1,0 +1,420 @@
+[
+  {
+    "name": "read_file",
+    "description": "Read file contents with optional line range. Supports partial reads via start_line/end_line (1-based, inclusive). Always includes line numbers for reference. For large files (>500 lines), prefer partial reads. Examples: read_file { path: 'src/main.rs' } or read_file { path: 'src/main.rs', start_line: 50, end_line: 100 }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "path to the file to read (relative to project root or absolute)" },
+        "start_line": { "type": "integer", "description": "1-based start line (inclusive). Omit to read from beginning." },
+        "end_line": { "type": "integer", "description": "1-based end line (inclusive). Omit to read to end." }
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "write_file",
+    "description": "Write contents to a file. Detects overwrites and reports diff summary (line count change). Supports create_only mode to prevent accidental overwrites. Creates parent directories automatically. Prefer edit for modifying existing files. IMPORTANT: For large files (>150 lines), consider writing a skeleton first and then using edit to add sections incrementally. Example: write_file { path: 'src/config.json', contents: '{...}', create_only: true }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "path to the file to write (relative to project root or absolute)" },
+        "contents": { "type": "string", "description": "full contents to write to the file" },
+        "create_only": { "type": "boolean", "description": "if true, fail when file already exists (prevents accidental overwrites). Default: false." }
+      },
+      "required": ["path", "contents"]
+    }
+  },
+  {
+    "name": "append_file",
+    "description": "Append contents to the end of a file. Creates the file if it does not exist. Use this for log files, incremental data collection, or adding to configuration files. For modifying existing content in the middle of a file, use Edit instead. Example: append_file { path: 'CHANGELOG.md', contents: '\\n## v1.2.0\\n...' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "path to the file to append to (relative to project root or absolute)" },
+        "contents": { "type": "string", "description": "contents to append to the end of the file" }
+      },
+      "required": ["path", "contents"]
+    }
+  },
+  {
+    "name": "delete_file",
+    "description": "Delete a single file. Use this to remove files that are no longer needed. Does NOT delete directories — use delete_directory for that. This operation cannot be undone. Example: delete_file { path: 'src/deprecated.rs' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "path to the file to delete (relative to project root or absolute)" }
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "list_directory",
+    "description": "List directory contents with file sizes and statistics. Supports recursive listing, depth control, and name filtering. Directories listed first. Skips .git/node_modules/target/dist. Example: list_directory { path: 'src', recursive: true, max_depth: 2, filter: 'test' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "path to the directory to list (relative to project root or absolute, defaults to project root)" },
+        "recursive": { "type": "boolean", "description": "if true, recurse into subdirectories (default: false)" },
+        "max_depth": { "type": "integer", "description": "max recursion depth (default: 1 for non-recursive, 3 for recursive)" },
+        "filter": { "type": "string", "description": "filter entries by name substring (case-insensitive). Directories still recurse even when filtered out." }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "create_directory",
+    "description": "Create a new directory, including any necessary parent directories. Use this to organize files into a directory structure. Safe to call even if the directory already exists. Example: create_directory { path: 'src/components/common' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "path to the directory to create (relative to project root or absolute)" }
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "delete_directory",
+    "description": "Delete a directory and ALL its contents recursively. Use with caution — this operation cannot be undone. For removing a single file, use delete_file instead. Example: delete_directory { path: 'src/old_module' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "path to the directory to delete (relative to project root or absolute)" }
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "get_symbols",
+    "description": "Extract symbol definitions from a source file, categorized by type (Types, Functions, Imports, Constants). Supports Rust, TypeScript/JS, Python, Go, Java, Kotlin, and more. Supports name filtering. Use this for quick file structure overview before reading in detail. Example: get_symbols { scope: 'src/agent/mod.rs', filter: 'execute' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "scope": { "type": "string", "description": "path to the source file to extract symbols from (relative to project root or absolute)" },
+        "filter": { "type": "string", "description": "optional: filter symbols by name substring (case-insensitive)" }
+      },
+      "required": ["scope"]
+    }
+  },
+  {
+    "name": "search_codebase",
+    "description": "Semantically search the codebase using the RAG (Retrieval-Augmented Generation) index. Returns relevant code chunks ranked by similarity score, with file paths and line numbers. Use this for conceptual searches — finding code by meaning and intent rather than exact text. For exact text matching, use grep instead. The project must be indexed first (reindex_project). Example: search_codebase { query: 'authentication middleware', max_results: 5 }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "the search query describing what to find (natural language, not regex)" },
+        "max_results": { "type": "number", "description": "maximum number of results to return (default 10, max 20)" }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "grep",
+    "description": "Search file contents with text or regex pattern matching. Returns matching file paths, line numbers, and context lines. Supports regex mode, context lines (like grep -C), and file type filtering. Results capped at 100 matches. Skips .git, node_modules, target, dist, etc. Examples: grep { pattern: 'async fn', context: 3, file_pattern: '*.rs' } or grep { pattern: 'fn\\s+\\w+\\(', regex: true, path: 'src' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pattern": { "type": "string", "description": "text or regex pattern to search for (case-insensitive by default)" },
+        "path": { "type": "string", "description": "optional subdirectory to limit search scope (relative to project root). Omit to search entire project." },
+        "regex": { "type": "boolean", "description": "if true, treat pattern as regex (default: false, substring match)" },
+        "context": { "type": "integer", "description": "number of context lines before/after each match (like grep -C). Default: 0." },
+        "file_pattern": { "type": "string", "description": "filter files by extension pattern, e.g. '*.rs' or '*.ts,*.tsx'. Comma-separated for multiple." }
+      },
+      "required": ["pattern"]
+    }
+  },
+  {
+    "name": "run_terminal_command",
+    "description": "Execute a shell command in the terminal within the project root directory. Commands have a 30-second timeout and output is truncated at 100KB. Returns stdout, stderr, and exit code. Use this to run builds (cargo build, npm run build), tests (cargo test, npm test), git operations (git status, git diff), or any CLI tool. IMPORTANT: Do NOT run commands that require interactive input, do NOT run destructive commands (rm -rf, force push to main), and prefer non-interactive flags (e.g., --yes for npx). Example: run_terminal_command { command: 'cargo check' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "description": "the shell command to execute (non-interactive, avoiding destructive operations)" }
+      },
+      "required": ["command"]
+    }
+  },
+  {
+    "name": "glob",
+    "description": "Find files matching a glob pattern. Returns up to 200 matching file paths. Supports standard glob syntax with ** for recursive directory matching. Automatically skips .git, node_modules, target, dist, and other build directories. Use this BEFORE reading or searching files to discover what files exist. Example: glob { pattern: 'src/**/*.rs' } finds all Rust files, glob { pattern: '**/test_*.py' } finds Python test files.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pattern": { "type": "string", "description": "glob pattern to match file paths. Examples: 'src/**/*.rs' (all Rust files), '*.tsx' (all TSX files), '**/config/*.json' (config JSON files)" },
+        "path": { "type": "string", "description": "optional base directory to search from (relative to project root). If not provided, uses the project root." }
+      },
+      "required": ["pattern"]
+    }
+  },
+  {
+    "name": "edit",
+    "description": "Perform string replacement in a file — the PREFERRED way to modify existing files. Features: 4-pass matching (exact → line-ending normalized → whitespace-trimmed → Levenshtein fuzzy match), automatic indentation preservation, multi-hunk editing (multiple changes in one call via 'hunks' array), and unified diff preview in results. For new files, use write_file instead.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": { "type": "string", "description": "path to the file to edit (relative to project root or absolute)" },
+        "old_string": { "type": "string", "description": "the exact text to find and replace. Include enough surrounding context (2-3 lines) to ensure uniqueness." },
+        "new_string": { "type": "string", "description": "the text to replace old_string with" },
+        "start_line": { "type": "integer", "description": "Optional: line number where old_string starts (1-based). Used to disambiguate when old_string matches multiple locations." },
+        "end_line": { "type": "integer", "description": "Optional: end line boundary (1-based) for range-bounded search with start_line." },
+        "replace_all": { "type": "boolean", "description": "if true, replace ALL occurrences of old_string (default: false, only first match)." },
+        "hunks": { "type": "array", "description": "Multi-hunk editing: apply multiple replacements in one call. Each element: { old_string, new_string, start_line? }. Use this instead of calling edit multiple times for the same file.", "items": { "type": "object", "properties": { "old_string": { "type": "string" }, "new_string": { "type": "string" }, "start_line": { "type": "integer" } }, "required": ["old_string", "new_string"] } }
+      },
+      "required": ["file_path"]
+    }
+  },
+  {
+    "name": "todo_write",
+    "description": "Create and manage a structured task list for tracking your progress on complex multi-step tasks. Break down your work into individual items with unique IDs. Update status as you progress: pending → in_progress → complete (or cancelled). ALWAYS provide the COMPLETE list of todo items each time you call this tool — do not send partial updates. The todo list is displayed to the user in real-time. Use this for any task requiring 3+ distinct steps. Example: todo_write { todos: [{ id: '1', content: 'Read config file', status: 'in_progress' }, { id: '2', content: 'Update settings', status: 'pending' }] }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "todos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "description": "unique identifier for this todo item (use short alphanumeric strings like 'a1', 'b2')" },
+              "content": { "type": "string", "description": "description of what needs to be done (keep under 70 chars)" },
+              "status": { "type": "string", "description": "current status: valid values are 'pending', 'in_progress', 'complete', or 'cancelled'" }
+            },
+            "required": ["id", "content", "status"]
+          }
+        }
+      },
+      "required": ["todos"]
+    }
+  },
+  {
+    "name": "web_search",
+    "description": "Search the web for real-time information via DuckDuckGo Lite. Returns up to 5 result titles and snippets (configurable via max_results). Use this when you need information beyond your training data cutoff, need to verify current facts, or need to look up API documentation and version-specific features. Note: This performs a basic web search — for reading the full content of a specific page, use web_fetch with the URL from the search results. The query should be concise and keyword-focused. Example: web_search { query: 'Rust edition 2024 new features', max_results: 3 }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "the search query (concise keywords, 1-100 chars)" },
+        "max_results": { "type": "number", "description": "maximum number of results to return (default 5, max 10)" }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "web_fetch",
+    "description": "Fetch and read the full text content of a specific web page. HTML tags are stripped and the result is returned as plain text, truncated at 200KB. Has a 30-second timeout. The URL must start with http:// or https://. Use this to read documentation pages, API references, blog posts, or any online resource in detail. For discovering which pages to read, use web_search first. Example: web_fetch { url: 'https://docs.rs/tokio/latest/tokio/' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "description": "the complete URL to fetch (must start with http:// or https://)" }
+      },
+      "required": ["url"]
+    }
+  },
+  {
+    "name": "ask_user_question",
+    "description": "Ask the user one or more questions when you need clarification, decisions, or input before proceeding. Blocks execution until the user responds. Use this when: (1) requirements are ambiguous, (2) there are multiple valid approaches and you need the user to choose, (3) you need confirmation before a significant action. Each question can include predefined options (with labels and descriptions) for the user to select from. The user's answers will be formatted as Q&A and returned. Limit to 1-4 questions at a time. Example: ask_user_question { questions: [{ header: 'Auth Method', question: 'Which authentication approach should we use?', options: [{ label: 'JWT', description: 'JSON Web Tokens — stateless, good for APIs' }, { label: 'Session', description: 'Server-side sessions — simpler but stateful' }] }] }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "header": { "type": "string", "description": "short label for the question (max 12 chars), shown as a chip/tag" },
+              "question": { "type": "string", "description": "the complete question to ask the user" },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "label": { "type": "string", "description": "concise display text for this option (1-5 words)" },
+                    "description": { "type": "string", "description": "explanation of what choosing this option means or its trade-offs" }
+                  },
+                  "required": ["label", "description"]
+                }
+              }
+            },
+            "required": ["question"]
+          }
+        }
+      },
+      "required": ["questions"]
+    }
+  },
+  {
+    "name": "get_diagnostics",
+    "description": "Get compiler/linter diagnostics for a file. For Rust projects, this runs `cargo check` to find errors and warnings. For other languages, provides guidance on how to run language-specific linters. Use this to understand what's wrong with the code and to verify fixes. Output is truncated to the target file's diagnostics. Example: get_diagnostics { file_path: 'src/main.rs' } returns compilation errors specific to main.rs.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Path to the file to check. Can be absolute or relative to project root."
+        }
+      },
+      "required": ["file_path"]
+    }
+  },
+  {
+    "name": "dispatch_agent",
+    "description": "Dispatch a single sub-agent to handle a specific task. The sub-agent runs autonomously with its own tool set and returns results. Available agents: 'code_writer' (reads/writes/edits code), 'debugger' (debugging & error analysis), 'reviewer' (code review, read-only). Use this for complex subtasks that benefit from focused execution. Example: dispatch_agent { agent_id: 'code_writer', task: 'Add error handling to the login function in src/auth.rs' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "description": "ID of the agent to dispatch. Options: 'code_writer', 'debugger', 'reviewer'",
+          "enum": ["code_writer", "debugger", "reviewer"]
+        },
+        "task": {
+          "type": "string",
+          "description": "Detailed description of the task for the sub-agent to perform"
+        }
+      },
+      "required": ["agent_id", "task"]
+    }
+  },
+  {
+    "name": "dispatch_agents",
+    "description": "Dispatch multiple sub-agents in parallel to handle independent tasks simultaneously. Each agent runs autonomously and results are combined. Use this when you have multiple independent tasks (e.g., editing different files, analyzing different modules). Example: dispatch_agents { tasks: [{ agent_id: 'code_writer', task: 'Add tests for auth module', file_path: 'src/auth.rs' }, { agent_id: 'reviewer', task: 'Review the API handlers', file_path: 'src/api.rs' }] }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "description": "Array of tasks to dispatch in parallel",
+          "items": {
+            "type": "object",
+            "properties": {
+              "agent_id": {
+                "type": "string",
+                "description": "ID of the agent to dispatch",
+                "enum": ["code_writer", "debugger", "reviewer"]
+              },
+              "task": {
+                "type": "string",
+                "description": "Detailed description of the task"
+              },
+              "file_path": {
+                "type": "string",
+                "description": "Optional: primary file the agent should focus on"
+              }
+            },
+            "required": ["agent_id", "task"]
+          }
+        }
+      },
+      "required": ["tasks"]
+    }
+  },
+  {
+    "name": "memory_search",
+    "description": "Search cross-session memory (MEMORY.md, daily notes, session history) for relevant past learnings and decisions. Use this to recall what was done in previous sessions.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "Search query - describe what you want to find from past sessions" },
+        "max_results": { "type": "integer", "description": "Maximum number of results to return (default: 5)" }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "git_status",
+    "description": "Show the working tree status: modified, staged, and untracked files. Use this to see what files have changed before committing.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "git_diff",
+    "description": "Show git diff of unstaged or staged changes. Without a file_path, shows a summary (stat) of all changes.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": { "type": "string", "description": "Optional: specific file to diff. If omitted, shows --stat summary of all changes." },
+        "staged": { "type": "boolean", "description": "If true, show staged (cached) changes instead of unstaged. Default: false." }
+      }
+    }
+  },
+  {
+    "name": "git_commit",
+    "description": "Stage all changes and create a git commit. Use git_status first to review changes before committing.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "message": { "type": "string", "description": "Commit message (required)" },
+        "add_all": { "type": "boolean", "description": "If true (default), run 'git add -A' before committing. Set to false to commit only already-staged changes." }
+      },
+      "required": ["message"]
+    }
+  },
+  {
+    "name": "git_log",
+    "description": "Show recent git commit history. Use this to understand the project's recent changes.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "integer", "description": "Number of commits to show (default: 10)" }
+      }
+    }
+  },
+  {
+    "name": "git_blame",
+    "description": "Show who last modified each line of a file (git blame). Use this to find the author of specific code.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": { "type": "string", "description": "File to blame (required)" }
+      },
+      "required": ["file_path"]
+    }
+  },
+  {
+    "name": "git_branch",
+    "description": "List git branches. Shows local branches by default, use all=true to include remote branches.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "all": { "type": "boolean", "description": "If true, show all branches including remote (default: false)" }
+      }
+    }
+  },
+  {
+    "name": "git_push",
+    "description": "Push commits to the remote repository. Use after git_commit to share changes.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "remote": { "type": "string", "description": "Remote name (default: origin)" },
+        "branch": { "type": "string", "description": "Branch to push (default: current branch)" },
+        "force": { "type": "boolean", "description": "Force push (blocked on main/master for safety). Default: false." },
+        "set_upstream": { "type": "boolean", "description": "Set upstream tracking. Default: false." }
+      }
+    }
+  },
+  {
+    "name": "git_checkout",
+    "description": "Switch branches or restore files. Use to navigate between branches or discard uncommitted changes to a file.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "branch": { "type": "string", "description": "Branch name to switch to" },
+        "create": { "type": "boolean", "description": "Create the branch before switching (-b flag). Default: false." },
+        "file": { "type": "string", "description": "Specific file to restore from HEAD (instead of switching branch)" }
+      }
+    }
+  },
+  {
+    "name": "git_stash",
+    "description": "Save or restore uncommitted changes. Useful for temporarily setting aside work.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "description": "Action: push (save), pop (restore+remove), apply (restore), list, drop, clear. Default: push." },
+        "message": { "type": "string", "description": "Stash message (for push action only)" },
+        "include_untracked": { "type": "boolean", "description": "Include untracked files in stash (push only). Default: true." }
+      }
+    }
+  }
+]
