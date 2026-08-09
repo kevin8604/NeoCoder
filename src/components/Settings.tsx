@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { Search, Plug, Bot, Zap } from "lucide-react";
 import {
   getAppLogs,
   getLogPath,
@@ -12,6 +13,11 @@ import {
   listSkills,
   saveSkill,
   deleteSkill,
+  checkLocalModel,
+  cleanupMemory,
+  runDeepDreaming,
+  exportTrainingData,
+  type LocalModelHealth,
   type McpServerStatus,
   type AgentDefinition,
   type SkillDefinition,
@@ -48,6 +54,34 @@ interface SettingsData {
   max_context_tokens: number;
   custom_instructions: string;
   theme: string;
+  auto_review_on_save: boolean;
+  auto_review_on_commit: boolean;
+  // ── Local model (Ollama) routing ──
+  local_model: {
+    enabled: boolean;
+    base_url: string;
+    dreaming_model: string;
+    inference_model: string;
+    embedding_model: string;
+  };
+  // ── Memory GC / semantic search ──
+  memory_gc: {
+    max_memory_tokens: number;
+    notes_retention_days: number;
+    session_retention_days: number;
+    semantic_search: boolean;
+  };
+  // ── Fine-tune data pipeline ──
+  fine_tune: {
+    enabled: boolean;
+    trigger: string;
+    threshold_count: number;
+    lora_rank: number;
+    lora_alpha: number;
+    epochs: number;
+    learning_rate: number;
+    use_gpu: boolean;
+  };
 }
 
 export default function Settings() {
@@ -66,6 +100,31 @@ export default function Settings() {
     max_context_tokens: 8192,
     custom_instructions: "",
     theme: "Dark",
+    auto_review_on_save: false,
+    auto_review_on_commit: false,
+    local_model: {
+      enabled: false,
+      base_url: "http://localhost:11434",
+      dreaming_model: "qwen2.5:3b",
+      inference_model: "qwen2.5:7b",
+      embedding_model: "nomic-embed-text",
+    },
+    memory_gc: {
+      max_memory_tokens: 2000,
+      notes_retention_days: 30,
+      session_retention_days: 90,
+      semantic_search: false,
+    },
+    fine_tune: {
+      enabled: false,
+      trigger: "manual",
+      threshold_count: 50,
+      lora_rank: 8,
+      lora_alpha: 16,
+      epochs: 3,
+      learning_rate: 0.0002,
+      use_gpu: true,
+    },
   });
 
   const [saved, setSaved] = useState(false);
@@ -119,6 +178,47 @@ export default function Settings() {
   const [skillFormTools, setSkillFormTools] = useState("");
   const [skillFormTemplate, setSkillFormTemplate] = useState("");
   const [skillError, setSkillError] = useState<string | null>(null);
+
+  // ── Local model health + memory ops state ──
+  const [localHealth, setLocalHealth] = useState<LocalModelHealth | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [memoryBusy, setMemoryBusy] = useState(false);
+  const [memoryMsg, setMemoryMsg] = useState<string | null>(null);
+
+  const checkHealth = async () => {
+    setHealthLoading(true);
+    const health = await checkLocalModel();
+    setLocalHealth(health);
+    setHealthLoading(false);
+  };
+
+  const handleCleanupMemory = async () => {
+    setMemoryBusy(true);
+    setMemoryMsg(null);
+    const report = await cleanupMemory();
+    if (report) {
+      setMemoryMsg(`GC 完成: 驱逐 ${report.evicted_entries ?? 0} 条记忆, 过期 ${report.expired_entries ?? 0} 条, 删除 ${report.notes_deleted ?? 0} 个旧笔记, 清理 ${report.sessions_deleted ?? 0} 个旧会话`);
+    } else {
+      setMemoryMsg("GC 失败或未运行在 Tauri 环境");
+    }
+    setMemoryBusy(false);
+  };
+
+  const handleDeepDreaming = async () => {
+    setMemoryBusy(true);
+    setMemoryMsg(null);
+    const result = await runDeepDreaming();
+    setMemoryMsg(result ?? "Deep Dreaming 失败");
+    setMemoryBusy(false);
+  };
+
+  const handleExportData = async () => {
+    setMemoryBusy(true);
+    setMemoryMsg(null);
+    const result = await exportTrainingData();
+    setMemoryMsg(result ?? "导出失败(请先在设置中启用微调数据管道)");
+    setMemoryBusy(false);
+  };
 
   const loadMcpServers = async () => {
     setMcpLoading(true);
@@ -389,8 +489,8 @@ export default function Settings() {
             localStorage.setItem("neecoder-theme", t);
           }}
         >
-          <option value="Dark">🌙 Dark</option>
-          <option value="Light">☀️ Light</option>
+          <option value="Dark">Dark</option>
+          <option value="Light">Light</option>
         </select>
       </div>
 
@@ -460,6 +560,195 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* ── Local Model (Ollama) ── */}
+      <div className="settings-group" style={{ borderTop: "1px solid var(--border, #30363d)", paddingTop: 12, marginTop: 8 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={settings.local_model.enabled}
+            onChange={(e) =>
+              update("local_model", { ...settings.local_model, enabled: e.target.checked })
+            }
+          />
+          Local Model (Ollama) <span className="settings-hint">— 隐私/低成本路由, 自动降级到远程</span>
+        </label>
+
+        {settings.local_model.enabled && (
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                className="settings-input"
+                style={{ flex: 1 }}
+                value={settings.local_model.base_url}
+                onChange={(e) =>
+                  update("local_model", { ...settings.local_model, base_url: e.target.value })
+                }
+                placeholder="http://localhost:11434"
+              />
+              <button className="settings-button" onClick={checkHealth} disabled={healthLoading}>
+                {healthLoading ? "检查中…" : "检查状态"}
+              </button>
+            </div>
+            {localHealth && (
+              <div style={{ fontSize: 12, color: localHealth.running ? "#3fb950" : "#f85149" }}>
+                {localHealth.running
+                  ? `● 运行中 (${localHealth.models.length} 个模型: ${localHealth.models.slice(0, 5).join(", ")}${localHealth.models.length > 5 ? "…" : ""})`
+                  : `● 未运行 — 将自动降级到远程 API${localHealth.error ? ` (${localHealth.error})` : ""}`}
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <input
+                className="settings-input"
+                value={settings.local_model.dreaming_model}
+                onChange={(e) =>
+                  update("local_model", { ...settings.local_model, dreaming_model: e.target.value })
+                }
+                placeholder="Dreaming 模型 (qwen2.5:3b)"
+                title="记忆整理/总结用本地模型"
+              />
+              <input
+                className="settings-input"
+                value={settings.local_model.inference_model}
+                onChange={(e) =>
+                  update("local_model", { ...settings.local_model, inference_model: e.target.value })
+                }
+                placeholder="推理模型 (qwen2.5:7b)"
+                title="简单对话用本地模型"
+              />
+            </div>
+            <input
+              className="settings-input"
+              value={settings.local_model.embedding_model}
+              onChange={(e) =>
+                update("local_model", { ...settings.local_model, embedding_model: e.target.value })
+              }
+              placeholder="Embedding 模型 (nomic-embed-text)"
+              title="记忆语义搜索用本地 embedding 模型"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ── Memory Management ── */}
+      <div className="settings-group" style={{ borderTop: "1px solid var(--border, #30363d)", paddingTop: 12, marginTop: 8 }}>
+        <label>Memory Management</label>
+
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={settings.memory_gc.semantic_search}
+            onChange={(e) =>
+              update("memory_gc", { ...settings.memory_gc, semantic_search: e.target.checked })
+            }
+          />
+          语义搜索 <span className="settings-hint">(embedding, 需本地 Ollama embedding 模型或远程 API)</span>
+        </label>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>记忆 Token 上限</span>
+            <input
+              className="settings-input"
+              type="number"
+              value={settings.memory_gc.max_memory_tokens}
+              onChange={(e) =>
+                update("memory_gc", { ...settings.memory_gc, max_memory_tokens: Number(e.target.value) })
+              }
+            />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>笔记保留(天)</span>
+            <input
+              className="settings-input"
+              type="number"
+              value={settings.memory_gc.notes_retention_days}
+              onChange={(e) =>
+                update("memory_gc", { ...settings.memory_gc, notes_retention_days: Number(e.target.value) })
+              }
+            />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>会话保留(天)</span>
+            <input
+              className="settings-input"
+              type="number"
+              value={settings.memory_gc.session_retention_days}
+              onChange={(e) =>
+                update("memory_gc", { ...settings.memory_gc, session_retention_days: Number(e.target.value) })
+              }
+            />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <button className="settings-button" onClick={handleCleanupMemory} disabled={memoryBusy}>
+            立即 GC
+          </button>
+          <button className="settings-button" onClick={handleDeepDreaming} disabled={memoryBusy}>
+            Deep Dreaming
+          </button>
+          <button className="settings-button" onClick={handleExportData} disabled={memoryBusy}>
+            导出微调数据
+          </button>
+        </div>
+        {memoryMsg && (
+          <div style={{ fontSize: 12, color: "#8b949e", marginTop: 8, whiteSpace: "pre-wrap" }}>
+            {memoryMsg}
+          </div>
+        )}
+      </div>
+
+      {/* ── Fine-tune Pipeline ── */}
+      <div className="settings-group" style={{ borderTop: "1px solid var(--border, #30363d)", paddingTop: 12, marginTop: 8 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={settings.fine_tune.enabled}
+            onChange={(e) =>
+              update("fine_tune", { ...settings.fine_tune, enabled: e.target.checked })
+            }
+          />
+          Fine-Tune 数据管道 <span className="settings-hint">(MEMORY.md → JSONL → LoRA)</span>
+        </label>
+        {settings.fine_tune.enabled && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 11, color: "#8b949e" }}>LoRA Rank</span>
+              <input
+                className="settings-input"
+                type="number"
+                value={settings.fine_tune.lora_rank}
+                onChange={(e) =>
+                  update("fine_tune", { ...settings.fine_tune, lora_rank: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 11, color: "#8b949e" }}>Epochs</span>
+              <input
+                className="settings-input"
+                type="number"
+                value={settings.fine_tune.epochs}
+                onChange={(e) =>
+                  update("fine_tune", { ...settings.fine_tune, epochs: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 11, color: "#8b949e" }}>触发阈值(条)</span>
+              <input
+                className="settings-input"
+                type="number"
+                value={settings.fine_tune.threshold_count}
+                onChange={(e) =>
+                  update("fine_tune", { ...settings.fine_tune, threshold_count: Number(e.target.value) })
+                }
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
       <label className="settings-checkbox">
         <input
           type="checkbox"
@@ -503,6 +792,27 @@ export default function Settings() {
         />
         Enable Code Completion
       </label>
+
+      {/* ── Auto Review Settings ── */}
+      <div style={{ marginTop: 8, padding: "12px 16px", background: "rgba(166,227,161,0.08)", borderRadius: 6, border: "1px solid rgba(166,227,161,0.2)" }}>
+        <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8, color: "#a6e3a1", display: "flex", alignItems: "center", gap: 6 }}><Search size={12} /> Auto Code Review</div>
+        <label className="settings-checkbox" style={{ marginBottom: 8 }}>
+          <input
+            type="checkbox"
+            checked={settings.auto_review_on_save || false}
+            onChange={(e) => update("auto_review_on_save", e.target.checked)}
+          />
+          Review on Save
+        </label>
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={settings.auto_review_on_commit || false}
+            onChange={(e) => update("auto_review_on_commit", e.target.checked)}
+          />
+          Review on Commit
+        </label>
+      </div>
 
       <div className="settings-group">
         <label>Trigger Debounce (ms)</label>
@@ -550,7 +860,7 @@ export default function Settings() {
           onClick={() => { setMcpOpen(!mcpOpen); if (!mcpOpen) loadMcpServers(); }}
         >
           <span>{mcpOpen ? "▼" : "▶"}</span>
-          <span style={{ fontWeight: 600 }}>🔌 MCP Servers</span>
+          <span style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}><Plug size={12} /> MCP Servers</span>
           <span style={{ fontSize: 11, color: "#888" }}>
             {mcpServers.filter((s) => s.connected).length}/{mcpServers.length} connected
           </span>
@@ -719,7 +1029,7 @@ export default function Settings() {
           onClick={() => { setAgentsOpen(!agentsOpen); if (!agentsOpen) { loadAgents(); listAvailableTools().then(setAvailableTools); } }}
         >
           <span>{agentsOpen ? "▼" : "▶"}</span>
-          <span style={{ fontWeight: 600 }}>🤖 Agents</span>
+          <span style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}><Bot size={12} /> Agents</span>
           <span style={{ fontSize: 11, color: "#888" }}>{agents.length} defined</span>
         </div>
         {agentsOpen && (
@@ -823,7 +1133,7 @@ export default function Settings() {
           onClick={() => { setSkillsOpen(!skillsOpen); if (!skillsOpen) loadSkills(); }}
         >
           <span>{skillsOpen ? "▼" : "▶"}</span>
-          <span style={{ fontWeight: 600 }}>⚡ Skills</span>
+          <span style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}><Zap size={12} /> Skills</span>
           <span style={{ fontSize: 11, color: "#888" }}>{skills.length} loaded</span>
         </div>
         {skillsOpen && (

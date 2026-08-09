@@ -1,3 +1,5 @@
+import { Folder, FileText, FolderOpen, Search, Cloud, BarChart3, Brain, TrendingUp, MessageSquare, Settings, Sun, Moon } from "lucide-react";
+
 interface StatusBarProps {
   llmConnected: boolean;
   projectPath: string;
@@ -10,6 +12,11 @@ interface StatusBarProps {
   onSearchClick?: () => void;
   onExplorerClick?: () => void;
   onCloudClick?: () => void;
+  onGraphClick?: () => void;
+  onMemoryClick?: () => void;
+  onInsightsClick?: () => void;
+  /** null = local models disabled; true/false = Ollama health probe result */
+  localModelRunning?: boolean | null;
 }
 
 export default function StatusBar({
@@ -24,6 +31,10 @@ export default function StatusBar({
   onSearchClick,
   onExplorerClick,
   onCloudClick,
+  onGraphClick,
+  onMemoryClick,
+  onInsightsClick,
+  localModelRunning,
 }: StatusBarProps) {
   const projectName = projectPath
     ? projectPath.split("\\").pop() || projectPath.split("/").pop()
@@ -33,12 +44,12 @@ export default function StatusBar({
     <div className="status-bar">
       <div className="status-left">
         <div className="status-item" onClick={onExplorerClick} title="Toggle File Explorer (Ctrl+B)">
-          <span>📁</span>
+          <Folder size={13} />
           <span>Explorer</span>
         </div>
         {fileCount !== undefined && (
           <div className="status-item" title="Open files">
-            <span>📄</span>
+            <FileText size={13} />
             <span>{fileCount} files</span>
           </div>
         )}
@@ -47,7 +58,7 @@ export default function StatusBar({
       <div className="status-center">
         {projectName && (
           <div className="status-item" title={projectPath}>
-            <span>📂</span>
+            <FolderOpen size={13} />
             <span>{projectName}</span>
           </div>
         )}
@@ -55,17 +66,32 @@ export default function StatusBar({
 
       <div className="status-right">
         <div className="status-item" onClick={onSearchClick} title="Search Codebase (Ctrl+Shift+F)">
-          <span>🔍</span>
+          <Search size={13} />
           <span>Search</span>
         </div>
 
         <div className="status-item" onClick={onCloudClick} title="Cloud Agents">
-          <span>☁️</span>
+          <Cloud size={13} />
           <span>Cloud</span>
         </div>
 
+        <div className="status-item" onClick={onGraphClick} title="Dependency Graph">
+          <BarChart3 size={13} />
+          <span>Graph</span>
+        </div>
+
+        <div className="status-item" onClick={onMemoryClick} title="Memory Panel">
+          <Brain size={13} />
+          <span>Memory</span>
+        </div>
+
+        <div className="status-item" onClick={onInsightsClick} title="Insights (Telemetry & Agent Logs)">
+          <TrendingUp size={13} />
+          <span>Insights</span>
+        </div>
+
         <div className="status-item" onClick={onChatClick} title="Toggle Chat (Ctrl+\\)">
-          <span>💬</span>
+          <MessageSquare size={13} />
           <span>Chat</span>
         </div>
 
@@ -76,8 +102,17 @@ export default function StatusBar({
           <span>{llmConnected ? "LLM Connected" : "LLM Offline"}</span>
         </div>
 
+        {localModelRunning !== undefined && localModelRunning !== null && (
+          <div className="status-item" title="Local model (Ollama) status — auto-degrades to remote when offline">
+            <span
+              className={`status-dot ${localModelRunning ? "connected" : "disconnected"}`}
+            />
+            <span>{localModelRunning ? "Ollama" : "Ollama Offline"}</span>
+          </div>
+        )}
+
         <div className="status-item" onClick={onSettingsClick} title="Settings">
-          <span>⚙️</span>
+          <Settings size={13} />
         </div>
 
         <button
@@ -85,7 +120,7 @@ export default function StatusBar({
           onClick={onToggleTheme}
           title={theme === "light" ? "Switch to Dark" : "Switch to Light"}
         >
-          {theme === "light" ? "☀️" : "🌙"}
+          {theme === "light" ? <Sun size={14} /> : <Moon size={14} />}
         </button>
       </div>
     </div>

@@ -10,3 +10,6 @@ pub mod cloud;
 pub mod agent;
 pub mod edit_inline;
 pub mod pty;
+pub mod dependency_graph;
+pub mod review;
+pub mod memory;

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use crate::rag::CodeIndexer;
 use crate::chat::{TodoItem, QuestionItem};
 use crate::sandbox::SandboxChecker;
+use crate::lsp::LspManager;
 
 // 工具模块声明
 pub mod read_file;
@@ -36,6 +37,9 @@ pub mod git_push;
 pub mod git_checkout;
 pub mod git_stash;
 pub mod generate_diagram;
+pub mod run_tests;
+pub mod run_build;
+pub mod run_terminal_session;
 
 #[cfg(test)]
 mod tests;
@@ -47,6 +51,8 @@ pub struct ToolContext {
     pub indexer: Option<Arc<CodeIndexer>>,
     /// Sandbox security checker for path/command/URL validation
     pub sandbox: Arc<SandboxChecker>,
+    /// LSP manager for precise symbol resolution (optional; tools fall back to heuristics)
+    pub lsp_manager: Option<Arc<LspManager>>,
     /// Optional app handle for tools that need to emit events
     pub app_handle: Option<tauri::AppHandle>,
     /// Optional session ID for audit and event correlation
@@ -68,6 +74,9 @@ pub struct DispatchTask {
     pub file_path: Option<String>,
     /// IDs of agents this task depends on (output injected as context)
     pub depends_on: Option<Vec<String>>,
+    /// Run in background (fire-and-forget with completion notification)
+    #[serde(default)]
+    pub background: bool,
 }
 
 /// 工具执行后的特殊动作（避免字符串匹配）
@@ -79,6 +88,8 @@ pub enum PostExecuteAction {
     DispatchAgent {
         agent_id: String,
         task: String,
+        /// Run in background (fire-and-forget with completion notification)
+        background: bool,
     },
     /// Dispatch multiple sub-agents (parallel with conflict detection)
     DispatchAgents(Vec<DispatchTask>),
@@ -125,6 +136,11 @@ impl ToolExecutor {
     /// 按名称查找工具
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.lock().unwrap().get(name).cloned()
+    }
+
+    /// 返回所有已注册工具的名称（用于 schema 一致性校验）
+    pub fn registered_names(&self) -> Vec<String> {
+        self.tools.lock().unwrap().keys().cloned().collect()
     }
 
     /// Execute a tool by name with timeout protection.
@@ -195,5 +211,8 @@ pub fn build_executor() -> ToolExecutor {
     executor.register(git_checkout::GitCheckout);
     executor.register(git_stash::GitStash);
     executor.register(generate_diagram::GenerateDiagram);
+    executor.register(run_tests::RunTests);
+    executor.register(run_build::RunBuild);
+    executor.register(run_terminal_session::RunTerminalSession);
     executor
 }

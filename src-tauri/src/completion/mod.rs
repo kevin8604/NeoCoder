@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+pub mod edit_intent;
 pub mod multi_file;
 pub use multi_file::RelatedContext;
 
@@ -20,6 +21,9 @@ pub struct CompletionContext {
     /// Related file context for multi-file awareness (optional, populated by backend)
     #[serde(default)]
     pub related_context: Option<RelatedContext>,
+    /// Recently edited file paths (edit-intent signal, populated by backend)
+    #[serde(default)]
+    pub recent_edits: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +169,15 @@ pub fn build_fim_prompt(ctx: &CompletionContext, _provider: &str) -> String {
             }
             prompt.push_str("--- End Related ---\n");
         }
+    }
+
+    // Recent edits (edit-intent signal: what the user is currently working on)
+    if !ctx.recent_edits.is_empty() {
+        prompt.push_str("--- Recent Changes ---\n");
+        for path in &ctx.recent_edits {
+            prompt.push_str(&format!("// modified: {}\n", path));
+        }
+        prompt.push_str("--- End Recent Changes ---\n");
     }
 
     // Enclosing function context

@@ -135,6 +135,44 @@
     }
   },
   {
+    "name": "run_tests",
+    "description": "Read-only test runner: detects the project test framework (Cargo.toml -> cargo test, package.json -> npm test, pyproject/pytest.ini -> pytest, go.mod -> go test ./...) and executes it with a 180s timeout, returning exit code, extracted test summary lines, truncated output, and compiler error locations. Use this AFTER editing code to verify the change doesn't break tests — no confirmation needed. Optionally override with a custom `command` or target a subdirectory with `directory`. Example: run_tests { } or run_tests { command: 'cargo test --lib' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "directory": { "type": "string", "description": "directory to run tests in (default: project root)" },
+        "command": { "type": "string", "description": "custom test command to run (overrides auto-detection)" }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "run_build",
+    "description": "Read-only build verifier: detects the project build system (Cargo.toml -> cargo build, package.json -> npm run build, go.mod -> go build ./..., pyproject.toml -> python -m build) and executes it with a 300s timeout, returning exit code, truncated output, and compiler error locations (file:line). Use this AFTER writing/editing code to confirm it compiles — no confirmation needed. Optionally override with a custom `command` or target a subdirectory with `directory`. Example: run_build { } or run_build { command: 'cargo check' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "directory": { "type": "string", "description": "directory to run build in (default: project root)" },
+        "command": { "type": "string", "description": "custom build command to run (overrides auto-detection)" }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "run_terminal_session",
+    "description": "Execute a command in a PERSISTENT interactive shell session (PTY) that stays alive between calls — `cd`, environment variables, and activated virtualenvs persist. Each `session_id` maps to one shell process (default 'default'); pass `reset: true` to restart it. Completion is detected via a marker with exit code; 30s default timeout (max 300s). Prefer this over run_terminal_command when you need to keep shell state across multiple steps. Example: run_terminal_session { command: 'cd src && pwd' } then run_terminal_session { command: 'pwd' } still shows src.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "description": "the shell command to execute in the persistent session (non-interactive, avoiding destructive operations)" },
+        "session_id": { "type": "string", "description": "session identifier; commands with the same id share one shell (default: 'default')" },
+        "reset": { "type": "boolean", "description": "kill and restart the session shell before running (default: false)" },
+        "timeout_seconds": { "type": "integer", "description": "completion timeout in seconds, 5-300 (default: 30)" }
+      },
+      "required": ["command"]
+    }
+  },
+  {
     "name": "glob",
     "description": "Find files matching a glob pattern. Returns up to 200 matching file paths. Supports standard glob syntax with ** for recursive directory matching. Automatically skips .git, node_modules, target, dist, and other build directories. Use this BEFORE reading or searching files to discover what files exist. Example: glob { pattern: 'src/**/*.rs' } finds all Rust files, glob { pattern: '**/test_*.py' } finds Python test files.",
     "parameters": {
@@ -268,6 +306,10 @@
         "task": {
           "type": "string",
           "description": "Detailed description of the task for the sub-agent to perform"
+        },
+        "background": {
+          "type": "boolean",
+          "description": "If true, run the sub-agent in the background (fire-and-forget). The main agent continues immediately and is notified when the background agent completes. Default: false"
         }
       },
       "required": ["agent_id", "task"]
@@ -297,6 +339,15 @@
               "file_path": {
                 "type": "string",
                 "description": "Optional: primary file the agent should focus on"
+              },
+              "depends_on": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional: IDs of other agents this task depends on. Dependencies run first and their results are injected as context."
+              },
+              "background": {
+                "type": "boolean",
+                "description": "If true, run this sub-agent in the background (fire-and-forget). Default: false"
               }
             },
             "required": ["agent_id", "task"]
@@ -415,6 +466,18 @@
         "message": { "type": "string", "description": "Stash message (for push action only)" },
         "include_untracked": { "type": "boolean", "description": "Include untracked files in stash (push only). Default: true." }
       }
+    }
+  },
+  {
+    "name": "generate_diagram",
+    "description": "Generate a Mermaid diagram from code. Saves the diagram to a temp file (neecoder_diagrams) and returns its path with a preview. Use this to visualize architectures, flows, and relationships. Example: generate_diagram { mermaid: 'graph TD; A-->B', type: 'mermaid' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "mermaid": { "type": "string", "description": "the Mermaid diagram code (required)" },
+        "type": { "type": "string", "description": "diagram type (default: 'mermaid')" }
+      },
+      "required": ["mermaid"]
     }
   }
 ]

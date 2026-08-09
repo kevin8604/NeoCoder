@@ -1,12 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import {
-  getFileTree,
-  createFile,
-  createDirectory,
-  deleteFileOrDir,
-  renameFileOrDir,
-  type FileTreeItem,
-} from "../hooks/useTauri";
+import { type ReactNode } from "react";
+import { Folder, FolderOpen, FileCode, FileCode2, FileJson, FileText, File, Globe, Database, Coffee, Palette, FileCog, FileType, Braces } from "lucide-react";
+import { getFileTree, createFile, createDirectory, deleteFileOrDir, renameFileOrDir, type FileTreeItem } from "../hooks/useTauri";
 
 interface FileExplorerProps {
   projectPath: string;
@@ -86,10 +81,10 @@ function TreeNode({ item, depth, onFileSelect, onContextMenu, onRename, refreshK
     [item, handleToggle, onRename]
   );
 
-  const icon = item.is_dir
+  const icon: ReactNode = item.is_dir
     ? expanded
-      ? "📂"
-      : "📁"
+      ? <FolderOpen size={14} />
+      : <Folder size={14} />
     : getFileIcon(item.name);
 
   return (
@@ -133,27 +128,27 @@ function TreeNode({ item, depth, onFileSelect, onContextMenu, onRename, refreshK
   );
 }
 
-function getFileIcon(name: string): string {
+function getFileIcon(name: string): ReactNode {
   const ext = name.split(".").pop()?.toLowerCase();
   switch (ext) {
-    case "rs": return "🦀";
+    case "rs": return <Braces size={14} color="#e0654f" />;
     case "ts":
-    case "tsx": return "🔷";
+    case "tsx": return <FileCode2 size={14} color="#2f74c0" />;
     case "js":
-    case "jsx": return "🟨";
-    case "py": return "🐍";
-    case "go": return "🔵";
-    case "java": return "☕";
+    case "jsx": return <FileCode2 size={14} color="#c9b116" />;
+    case "py": return <FileCode size={14} color="#4f8cc9" />;
+    case "go": return <FileCode2 size={14} color="#00ADD8" />;
+    case "java": return <Coffee size={14} color="#b07219" />;
     case "css":
-    case "scss": return "🎨";
-    case "json": return "📋";
-    case "toml": return "⚙️";
-    case "md": return "📝";
+    case "scss": return <Palette size={14} color="#563d7c" />;
+    case "json": return <FileJson size={14} color="#c9b116" />;
+    case "toml": return <FileCog size={14} color="#8a8aaa" />;
+    case "md": return <FileText size={14} color="#6c7086" />;
     case "yml":
-    case "yaml": return "📐";
-    case "html": return "🌐";
-    case "sql": return "🗃️";
-    default: return "📄";
+    case "yaml": return <FileType size={14} color="#8a8aaa" />;
+    case "html": return <Globe size={14} color="#e34c26" />;
+    case "sql": return <Database size={14} color="#6c7086" />;
+    default: return <File size={14} color="#8a8aaa" />;
   }
 }
 

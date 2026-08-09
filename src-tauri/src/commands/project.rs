@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
 use crate::commands::config::ConfigState;
+use crate::fs_watcher::FileWatcher;
+use crate::fs_service::FileService;
 
 /// Global file snapshots for EditDiff accept/reject
 pub type FileSnapshots = Arc<std::sync::Mutex<HashMap<String, String>>>;
@@ -69,6 +71,7 @@ fn list_directory(path: &std::path::Path, max_depth: u32, current_depth: u32) ->
 pub async fn open_project(
     path: String,
     state: State<'_, ConfigState>,
+    watcher: State<'_, Arc<std::sync::Mutex<FileWatcher>>>,
 ) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     if !p.exists() {
@@ -86,10 +89,21 @@ pub async fn open_project(
 
     let canonical_lower = canonical_str.to_lowercase();
     settings.project_paths.retain(|pp| pp.to_lowercase() != canonical_lower);
-    settings.project_paths.insert(0, canonical_str);
+    settings.project_paths.insert(0, canonical_str.clone());
     settings.project_paths.truncate(10);
 
     manager.update_settings(settings).await?;
+
+    // Start file watching for RAG incremental indexing
+    {
+        let mut w = watcher.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(e) = w.start_watch(&canonical, true) {
+            log::warn!("[FsWatcher] Failed to watch project '{}': {}", canonical_str, e);
+        } else {
+            log::info!("[FsWatcher] Watching project: {}", canonical_str);
+        }
+    }
+
     Ok(())
 }
 
@@ -111,10 +125,7 @@ pub async fn get_file_tree(
 pub async fn read_file(
     path: String,
 ) -> Result<String, String> {
-    if !std::path::Path::new(&path).exists() {
-        return Err(format!("File not found: {}", path));
-    }
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    FileService::read_text(std::path::Path::new(&path), None, None)
 }
 
 #[tauri::command]
@@ -122,10 +133,7 @@ pub async fn write_file(
     path: String,
     content: String,
 ) -> Result<(), String> {
-    if let Some(parent) = std::path::Path::new(&path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, &content).map_err(|e| e.to_string())
+    FileService::write_text(std::path::Path::new(&path), &content, None, None, false)
 }
 
 #[tauri::command]
@@ -133,32 +141,21 @@ pub async fn create_file(
     path: String,
     content: Option<String>,
 ) -> Result<(), String> {
-    if let Some(parent) = std::path::Path::new(&path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, content.unwrap_or_default()).map_err(|e| e.to_string())
+    FileService::write_text(std::path::Path::new(&path), content.as_deref().unwrap_or(""), None, None, false)
 }
 
 #[tauri::command]
 pub async fn create_directory(
     path: String,
 ) -> Result<(), String> {
-    std::fs::create_dir_all(&path).map_err(|e| e.to_string())
+    FileService::create_dir_all(std::path::Path::new(&path), None, None)
 }
 
 #[tauri::command]
 pub async fn delete_file(
     path: String,
 ) -> Result<(), String> {
-    let p = std::path::Path::new(&path);
-    if !p.exists() {
-        return Err(format!("Path not found: {}", path));
-    }
-    if p.is_dir() {
-        std::fs::remove_dir_all(&path).map_err(|e| e.to_string())
-    } else {
-        std::fs::remove_file(&path).map_err(|e| e.to_string())
-    }
+    FileService::remove(std::path::Path::new(&path), None, None)
 }
 
 #[tauri::command]
@@ -166,10 +163,7 @@ pub async fn rename_file(
     source: String,
     destination: String,
 ) -> Result<(), String> {
-    if let Some(parent) = std::path::Path::new(&destination).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::rename(&source, &destination).map_err(|e| e.to_string())
+    FileService::rename(std::path::Path::new(&source), std::path::Path::new(&destination), None, None)
 }
 
 /// Save file snapshots into global state for accept/reject

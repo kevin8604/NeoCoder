@@ -26,6 +26,27 @@ pub struct LSPHoverInfo {
     pub contents: String,
 }
 
+/// A text edit applied to a file (used by rename / code action / formatting).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LSPTextEdit {
+    pub file_path: String,
+    pub start_line: u32,
+    pub start_column: u32,
+    pub end_line: u32,
+    pub end_column: u32,
+    pub new_text: String,
+}
+
+/// A quick-fix / refactor action offered by the language server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LSPCodeAction {
+    pub title: String,
+    pub kind: Option<String>,
+    pub is_preferred: Option<bool>,
+    /// Flattened workspace edits (may touch multiple files).
+    pub edits: Vec<LSPTextEdit>,
+}
+
 /// Detect language from file path
 pub fn detect_language(file_path: &str) -> String {
     let ext = file_path.rsplit('.').next().unwrap_or("").to_lowercase();
@@ -142,7 +163,10 @@ impl LspClient {
                     "hover": { "dynamicRegistration": false },
                     "completion": { "dynamicRegistration": false },
                     "definition": { "dynamicRegistration": false },
-                    "references": { "dynamicRegistration": false }
+                    "references": { "dynamicRegistration": false },
+                    "rename": { "dynamicRegistration": false },
+                    "codeAction": { "dynamicRegistration": false },
+                    "formatting": { "dynamicRegistration": false }
                 },
                 "workspace": {
                     "didChangeConfiguration": { "dynamicRegistration": false }
@@ -362,6 +386,53 @@ impl LspClient {
         })).await
     }
 
+    /// Rename a symbol at the given position. Returns all edits across files.
+    pub async fn rename_symbol(
+        &self,
+        file_path: &str,
+        line: u32,
+        column: u32,
+        new_name: &str,
+    ) -> Result<Vec<LSPTextEdit>, String> {
+        let uri = path_to_uri(file_path);
+        let result = self.send_request("textDocument/rename", serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": column },
+            "newName": new_name
+        })).await?;
+        parse_workspace_edit(&result)
+    }
+
+    /// Request code actions (quick fixes / refactors) at a position.
+    pub async fn code_action(
+        &self,
+        file_path: &str,
+        line: u32,
+        column: u32,
+        diagnostics: &[serde_json::Value],
+    ) -> Result<Vec<LSPCodeAction>, String> {
+        let uri = path_to_uri(file_path);
+        let result = self.send_request("textDocument/codeAction", serde_json::json!({
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": line, "character": column },
+                "end": { "line": line, "character": column }
+            },
+            "context": { "diagnostics": diagnostics }
+        })).await?;
+        parse_code_actions(&result)
+    }
+
+    /// Format the whole document. Returns text edits to apply.
+    pub async fn format_document(&self, file_path: &str) -> Result<Vec<LSPTextEdit>, String> {
+        let uri = path_to_uri(file_path);
+        let result = self.send_request("textDocument/formatting", serde_json::json!({
+            "textDocument": { "uri": uri },
+            "options": { "tabSize": 4, "insertSpaces": true }
+        })).await?;
+        parse_text_edits(&result, file_path)
+    }
+
     /// Shutdown and exit the LSP server.
     pub async fn shutdown(mut self) -> Result<(), String> {
         let _ = self.send_request("shutdown", serde_json::json!({})).await;
@@ -508,6 +579,138 @@ fn parse_hover_response(response: &serde_json::Value) -> Option<LSPHoverInfo> {
     Some(LSPHoverInfo { contents: text })
 }
 
+// ── Parse rename / code action / formatting responses ──────────────────────
+
+/// Convert a `file://` URI back to a filesystem path.
+fn uri_to_path(uri: &str) -> String {
+    let stripped = uri.strip_prefix("file://").unwrap_or(uri);
+    // Windows: file:///C:/path -> C:/path
+    let stripped = stripped.strip_prefix('/').unwrap_or(stripped);
+    stripped.replace('/', "\\")
+}
+
+/// Parse a TextEdit array into LSPTextEdit entries.
+fn parse_text_edits(response: &serde_json::Value, file_path: &str) -> Result<Vec<LSPTextEdit>, String> {
+    let mut edits = Vec::new();
+    let result = response.get("result");
+    let items = match result {
+        Some(serde_json::Value::Array(arr)) => arr,
+        Some(serde_json::Value::Null) => return Ok(vec![]),
+        _ => return Err("Unexpected LSP edit response format".to_string()),
+    };
+
+    for item in items {
+        if let Some((sl, sc, el, ec, new_text)) = parse_single_edit(item) {
+            edits.push(LSPTextEdit {
+                file_path: file_path.to_string(),
+                start_line: sl,
+                start_column: sc,
+                end_line: el,
+                end_column: ec,
+                new_text,
+            });
+        }
+    }
+    Ok(edits)
+}
+
+/// Extract (start_line, start_col, end_line, end_col, new_text) from a TextEdit.
+fn parse_single_edit(item: &serde_json::Value) -> Option<(u32, u32, u32, u32, String)> {
+    let range = item.get("range")?;
+    let start_line = range.pointer("/start/line")?.as_u64()? as u32;
+    let start_col = range.pointer("/start/character")?.as_u64()? as u32;
+    let end_line = range.pointer("/end/line")?.as_u64()? as u32;
+    let end_col = range.pointer("/end/character")?.as_u64()? as u32;
+    let new_text = item.get("newText").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    Some((start_line, start_col, end_line, end_col, new_text))
+}
+
+/// Parse a WorkspaceEdit (rename result) — handles `changes` and `documentChanges`.
+fn parse_workspace_edit(response: &serde_json::Value) -> Result<Vec<LSPTextEdit>, String> {
+    let mut edits = Vec::new();
+    let result = response.get("result");
+
+    // `changes`: { uri: [TextEdit, ...] }
+    if let Some(changes) = result.and_then(|r| r.get("changes")).and_then(|c| c.as_object()) {
+        for (uri, edit_arr) in changes {
+            let file_path = uri_to_path(uri);
+            if let Some(arr) = edit_arr.as_array() {
+                for item in arr {
+                    if let Some((sl, sc, el, ec, text)) = parse_single_edit(item) {
+                        edits.push(LSPTextEdit {
+                            file_path: file_path.clone(),
+                            start_line: sl,
+                            start_column: sc,
+                            end_line: el,
+                            end_column: ec,
+                            new_text: text,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // `documentChanges`: [{ textDocument: { uri }, edits: [TextEdit, ...] }]
+    if let Some(doc_changes) = result.and_then(|r| r.get("documentChanges")).and_then(|c| c.as_array()) {
+        for change in doc_changes {
+            let uri = change.pointer("/textDocument/uri").and_then(|v| v.as_str()).unwrap_or("");
+            let file_path = uri_to_path(uri);
+            if let Some(edit_arr) = change.get("edits").and_then(|e| e.as_array()) {
+                for item in edit_arr {
+                    if let Some((sl, sc, el, ec, text)) = parse_single_edit(item) {
+                        edits.push(LSPTextEdit {
+                            file_path: file_path.clone(),
+                            start_line: sl,
+                            start_column: sc,
+                            end_line: el,
+                            end_column: ec,
+                            new_text: text,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    if edits.is_empty() && result.is_some() && result.unwrap().is_null() {
+        return Ok(vec![]);
+    }
+    Ok(edits)
+}
+
+/// Parse a codeAction response into LSPCodeAction entries (only those with edits).
+fn parse_code_actions(response: &serde_json::Value) -> Result<Vec<LSPCodeAction>, String> {
+    let mut actions = Vec::new();
+    let items = match response.get("result") {
+        Some(serde_json::Value::Array(arr)) => arr,
+        Some(serde_json::Value::Null) => return Ok(vec![]),
+        _ => return Err("Unexpected LSP code action response format".to_string()),
+    };
+
+    for item in items {
+        let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        if title.is_empty() {
+            continue;
+        }
+        let kind = item.get("kind").and_then(|k| k.as_str()).map(|s| s.to_string());
+        let is_preferred = item.get("isPreferred").and_then(|p| p.as_bool());
+
+        let mut edits = Vec::new();
+        if let Some(edit) = item.get("edit") {
+            let workspace = serde_json::json!({ "result": edit });
+            edits = parse_workspace_edit(&workspace)?;
+        }
+        actions.push(LSPCodeAction {
+            title,
+            kind,
+            is_preferred,
+            edits,
+        });
+    }
+    Ok(actions)
+}
+
 fn symbol_kind_name(kind: u64) -> String {
     match kind {
         1 => "File".into(),
@@ -640,6 +843,54 @@ impl LspManager {
         let clients = self.clients.read().await;
         if let Some(client) = clients.get(language) {
             client.did_close(file_path).await
+        } else {
+            Err(format!("No LSP client active for {}", language))
+        }
+    }
+
+    /// Rename a symbol via the LSP client.
+    pub async fn rename_symbol(
+        &self,
+        language: &str,
+        file_path: &str,
+        line: u32,
+        column: u32,
+        new_name: &str,
+    ) -> Result<Vec<LSPTextEdit>, String> {
+        let clients = self.clients.read().await;
+        if let Some(client) = clients.get(language) {
+            client.rename_symbol(file_path, line, column, new_name).await
+        } else {
+            Err(format!("No LSP client active for {}", language))
+        }
+    }
+
+    /// Request code actions via the LSP client.
+    pub async fn code_action(
+        &self,
+        language: &str,
+        file_path: &str,
+        line: u32,
+        column: u32,
+        diagnostics: &[serde_json::Value],
+    ) -> Result<Vec<LSPCodeAction>, String> {
+        let clients = self.clients.read().await;
+        if let Some(client) = clients.get(language) {
+            client.code_action(file_path, line, column, diagnostics).await
+        } else {
+            Err(format!("No LSP client active for {}", language))
+        }
+    }
+
+    /// Format a document via the LSP client.
+    pub async fn format_document(
+        &self,
+        language: &str,
+        file_path: &str,
+    ) -> Result<Vec<LSPTextEdit>, String> {
+        let clients = self.clients.read().await;
+        if let Some(client) = clients.get(language) {
+            client.format_document(file_path).await
         } else {
             Err(format!("No LSP client active for {}", language))
         }

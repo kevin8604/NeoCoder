@@ -1,5 +1,4 @@
-use std::path::Path;
-use crate::agent::utils::resolve_path;
+use crate::fs_service::FileService;
 use super::{Tool, ToolContext};
 
 pub struct WriteFile;
@@ -12,12 +11,8 @@ impl Tool for WriteFile {
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> String {
         let raw = args["path"].as_str().unwrap_or("");
-        let path = resolve_path(ctx.project_path.as_deref(), raw);
+        let path = FileService::resolve(ctx.project_path.as_deref(), raw);
         let create_only = args["create_only"].as_bool().unwrap_or(false);
-
-        if let Err(e) = ctx.sandbox.check_path(&path, ctx.project_path.as_deref(), true) {
-            return format!("Error: Sandbox blocked: {}", e);
-        }
 
         // Check if file exists for overwrite protection
         let existed = path.exists();
@@ -37,11 +32,7 @@ impl Tool for WriteFile {
             None
         };
 
-        if let Some(parent) = Path::new(&path).parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        match std::fs::write(&path, contents) {
+        match FileService::write_text(&path, contents, ctx.project_path.as_deref(), Some(&ctx.sandbox), create_only) {
             Ok(()) => {
                 let new_lines = contents.lines().count();
                 if let Some(old) = old_content {

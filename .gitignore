@@ -27,6 +27,11 @@ Thumbs.db
 # ── Logs ──
 *.log
 
+# ── Build / test artifacts ──
+target188/
+*_out.txt
+
 # ── Misc ──
 searxng/
 TEST_REPORT.md
+IssueHistory/

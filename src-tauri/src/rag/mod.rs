@@ -229,39 +229,44 @@ impl CodeIndexer {
     }
 
     /// Handle file change event: re-index on create/modify, remove on delete.
-    /// Called by FsWatcher callback for incremental RAG updates.
-    pub async fn handle_file_change(&self, path: &Path, kind: crate::fs_watcher::FileChangeKind) {
+    /// Called by the background auto-reindex loop in lib.rs for incremental RAG updates.
+    /// Returns `true` if the index was actually modified.
+    pub async fn handle_file_change(&self, path: &Path, kind: crate::fs_watcher::FileChangeKind) -> bool {
         let path_str = path.to_string_lossy().to_string();
-        
+
         // Check if file extension is supported
         let ext = path.extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_lowercase());
         let is_supported = ext.as_ref().map(|e| self.supported_extensions.contains(e)).unwrap_or(false);
-        
+
         if !is_supported {
-            return;
+            return false;
         }
 
         match kind {
             crate::fs_watcher::FileChangeKind::Deleted => {
                 self.remove_file(&path_str).await;
                 log::info!("[RAG] Removed indexed chunks for deleted file: {}", path_str);
+                true
             }
             crate::fs_watcher::FileChangeKind::Created | crate::fs_watcher::FileChangeKind::Modified => {
-                match std::fs::read_to_string(path) {
+                match tokio::fs::read_to_string(path).await {
                     Ok(content) => {
                         match self.index_file(&path_str, &content).await {
                             Ok(count) => {
                                 log::info!("[RAG] Re-indexed {} chunks for file: {}", count, path_str);
+                                true
                             }
                             Err(e) => {
                                 log::warn!("[RAG] Failed to index file {}: {}", path_str, e);
+                                false
                             }
                         }
                     }
                     Err(e) => {
                         log::warn!("[RAG] Failed to read file {}: {}", path_str, e);
+                        false
                     }
                 }
             }

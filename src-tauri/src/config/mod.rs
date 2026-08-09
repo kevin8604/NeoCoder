@@ -79,6 +79,124 @@ pub struct AppSettings {
     /// Tavily Search API key (encrypted on disk)
     #[serde(default)]
     pub tavily_api_key: String,
+    /// Auto-trigger code review on file save
+    #[serde(default)]
+    pub auto_review_on_save: bool,
+    /// Auto-trigger code review on git commit
+    #[serde(default)]
+    pub auto_review_on_commit: bool,
+    /// Local model integration (Ollama) config
+    #[serde(default)]
+    pub local_model: LocalModelConfig,
+    /// Fine-tuning pipeline config
+    #[serde(default)]
+    pub fine_tune: FineTuneConfig,
+    /// Memory garbage collection config
+    #[serde(default)]
+    pub memory_gc: MemoryGCConfig,
+}
+
+// ── Local model integration (Phase 1) ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LocalModelConfig {
+    /// Whether local model integration is enabled
+    pub enabled: bool,
+    /// Ollama service base URL
+    pub base_url: String,
+    /// Dreaming/summary model (small, low latency)
+    pub dreaming_model: String,
+    /// Inference model (medium, daily Q&A)
+    pub inference_model: String,
+    /// Embedding model (memory semantic search)
+    pub embedding_model: String,
+}
+
+impl Default for LocalModelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: "http://localhost:11434".into(),
+            dreaming_model: "qwen2.5:3b".into(),
+            inference_model: "qwen2.5:7b".into(),
+            embedding_model: "nomic-embed-text".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FineTuneConfig {
+    /// Whether fine-tuning is enabled
+    pub enabled: bool,
+    /// Trigger strategy: manual / threshold / scheduled
+    pub trigger: FineTuneTrigger,
+    /// Threshold trigger: accumulated note count
+    pub threshold_count: u32,
+    /// LoRA rank
+    pub lora_rank: u32,
+    /// LoRA alpha
+    pub lora_alpha: u32,
+    /// Training epochs
+    pub epochs: u32,
+    /// Learning rate
+    pub learning_rate: f64,
+    /// Whether to use GPU
+    pub use_gpu: bool,
+}
+
+impl Default for FineTuneConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            trigger: FineTuneTrigger::Manual,
+            threshold_count: 50,
+            lora_rank: 8,
+            lora_alpha: 16,
+            epochs: 3,
+            learning_rate: 2e-4,
+            use_gpu: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FineTuneTrigger {
+    Manual,
+    Threshold,
+    Scheduled,
+}
+
+impl Default for FineTuneTrigger {
+    fn default() -> Self {
+        Self::Manual
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryGCConfig {
+    /// MEMORY.md max token count (beyond which compaction is triggered)
+    pub max_memory_tokens: usize,
+    /// Daily notes retention days
+    pub notes_retention_days: u32,
+    /// Session retention days
+    pub session_retention_days: u32,
+    /// Whether semantic search is enabled (requires embedding model)
+    pub semantic_search: bool,
+}
+
+impl Default for MemoryGCConfig {
+    fn default() -> Self {
+        Self {
+            max_memory_tokens: 2000,
+            notes_retention_days: 30,
+            session_retention_days: 90,
+            semantic_search: false,
+        }
+    }
 }
 
 fn default_thinking_budget() -> u32 {
@@ -201,6 +319,11 @@ impl Default for AppSettings {
             thinking_enabled: false,
             thinking_budget: default_thinking_budget(),
             tavily_api_key: String::new(),
+            auto_review_on_save: false,
+            auto_review_on_commit: false,
+            local_model: LocalModelConfig::default(),
+            fine_tune: FineTuneConfig::default(),
+            memory_gc: MemoryGCConfig::default(),
         }
     }
 }

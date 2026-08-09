@@ -10,6 +10,9 @@ import {
   readFile,
   answerAgentQuestion,
   answerConfirm,
+  approvePlan,
+  rejectPlan,
+  skipPlan,
   getAgents,
   getSessions,
   getSessionMessages,
@@ -27,6 +30,7 @@ import {
   type SessionMessage,
   type SkillDefinition,
 } from "../hooks/useTauri";
+import { ChevronRight, Brain, ClipboardList, HelpCircle, X, AlertTriangle, Check, CheckCircle2, Clock, XCircle, Circle, FileText, Copy, Play, Pause, Sparkles } from "lucide-react";
 
 // ── Image attachment helpers ────────────────────────────────────────
 
@@ -185,8 +189,11 @@ function ThinkingBubble({ content }: { content: string }) {
         onClick={() => setExpanded(!expanded)}
         style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6, userSelect: "none" }}
       >
-        <span style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>▶</span>
-        <span>💭 Reasoning</span>
+        <span style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", display: "inline-flex" }}>
+          <ChevronRight size={12} />
+        </span>
+        <Sparkles size={13} />
+        <span>Reasoning</span>
         <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>
           {content.length} chars
         </span>
@@ -218,12 +225,15 @@ function TodoListCard({ todos }: { todos: TodoItem[] }) {
   const cancelled = todos.filter((t) => t.status === "cancelled").length;
 
   const statusIcon = (s: string) =>
-    s === "complete" ? "✅" : s === "in_progress" ? "⏳" : s === "cancelled" ? "❌" : "⬜";
+    s === "complete" ? <CheckCircle2 size={12} color="var(--success)" />
+    : s === "in_progress" ? <Clock size={12} color="var(--warning)" />
+    : s === "cancelled" ? <XCircle size={12} color="var(--error)" />
+    : <Circle size={12} color="var(--text-muted)" />;
 
   return (
     <div className="todo-list-card">
       <div className="todo-list-header">
-        <span className="todo-list-title">📋 Task List</span>
+        <span className="todo-list-title"><ClipboardList size={13} /> Task List</span>
         <span className="todo-list-summary">
           {complete}/{total} done · {inProgress} active · {pending} pending
           {cancelled > 0 && ` · ${cancelled} cancelled`}
@@ -267,8 +277,8 @@ function AskQuestionDialog({
     <div className="ask-question-overlay" onClick={onDismiss}>
       <div className="ask-question-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="ask-question-header">
-          <h3>🤔 Agent needs your input</h3>
-          <button className="ask-question-close" onClick={onDismiss}>✕</button>
+          <h3><HelpCircle size={15} /> Agent needs your input</h3>
+          <button className="ask-question-close" onClick={onDismiss}><X size={14} /></button>
         </div>
         <div className="ask-question-body">
           {payload.questions.map((q, i) => (
@@ -325,7 +335,7 @@ function ConfirmDangerDialog({
     <div className="ask-question-overlay" onClick={onDeny}>
       <div className="ask-question-dialog confirm-danger-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="ask-question-header">
-          <h3>⚠️ Dangerous Operation</h3>
+          <h3><AlertTriangle size={15} /> Dangerous Operation</h3>
         </div>
         <div className="ask-question-body">
           <div className="confirm-danger-desc">
@@ -354,8 +364,164 @@ function CopyButton({ code }: { code: string }) {
         setTimeout(() => setCopied(false), 2000);
       }}
     >
-      {copied ? "✓ Copied" : "Copy"}
+      {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
     </button>
+  );
+}
+
+// ── Plan Mode Types ──────────────────────────────────────────────────
+
+interface PlanStep {
+  order: number;
+  description: string;
+  file_path?: string;
+  tool_hint?: string;
+}
+
+interface PlanCardPayload {
+  plan: {
+    session_id: string;
+    agent_id?: string;
+    plan_summary: string;
+    plan_steps: PlanStep[];
+    affected_files: string[];
+  };
+}
+
+// ── PlanCard (approval card shown during Planning phase) ────────────
+
+function PlanCard({
+  payload,
+  onApprove,
+  onReject,
+  onSkip,
+  disabled,
+}: {
+  payload: PlanCardPayload;
+  onApprove: () => void;
+  onReject: (reason: string) => void;
+  onSkip: () => void;
+  disabled: boolean;
+}) {
+  const [rejectReason, setRejectReason] = useState("");
+  const [showRejectInput, setShowRejectInput] = useState(false);
+
+  const plan = payload.plan;
+  const sessionId = plan.session_id;
+
+  function handleApprove() {
+    onApprove();
+  }
+
+  function handleReject() {
+    if (showRejectInput) {
+      onReject(rejectReason);
+      setShowRejectInput(false);
+      setRejectReason("");
+    } else {
+      setShowRejectInput(true);
+    }
+  }
+
+  function handleSkip() {
+    onSkip();
+  }
+
+  return (
+    <div className="plan-card">
+      <div className="plan-card-header">
+        <span className="plan-card-icon"><ClipboardList size={15} /></span>
+        <span className="plan-card-title">Execution Plan</span>
+        <span className="plan-card-session">#{sessionId.substring(0, 8)}</span>
+      </div>
+
+      <div className="plan-card-body">
+        {plan.plan_summary && (
+          <div className="plan-card-summary">
+            <div className="plan-card-section-title">Summary</div>
+            <p>{plan.plan_summary}</p>
+          </div>
+        )}
+
+        {plan.plan_steps.length > 0 && (
+          <div className="plan-card-steps">
+            <div className="plan-card-section-title">
+              Steps ({plan.plan_steps.length})
+            </div>
+            <ol className="plan-step-list">
+              {plan.plan_steps.map((step, i) => (
+                <li key={i} className="plan-step-item">
+                  <span className="plan-step-order">{step.order}</span>
+                  <span className="plan-step-desc">{step.description}</span>
+                  {step.file_path && (
+                    <span className="plan-step-file"><FileText size={12} /> {step.file_path}</span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {plan.affected_files.length > 0 && (
+          <div className="plan-card-files">
+            <div className="plan-card-section-title">
+              Affected Files ({plan.affected_files.length})
+            </div>
+            <div className="plan-file-chips">
+              {plan.affected_files.map((f, i) => (
+                <span key={i} className="plan-file-chip">{f}</span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="plan-card-actions">
+        {showRejectInput && (
+          <div className="plan-reject-input-area">
+            <input
+              type="text"
+              className="plan-reject-input"
+              placeholder="Reason for rejection (optional)..."
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleReject();
+                if (e.key === "Escape") {
+                  setShowRejectInput(false);
+                  setRejectReason("");
+                }
+              }}
+              autoFocus
+              disabled={disabled}
+            />
+          </div>
+        )}
+        <div className="plan-card-buttons">
+          <button
+            className="plan-btn plan-btn-approve"
+            onClick={handleApprove}
+            disabled={disabled}
+          >
+            <Check size={14} /> Approve
+          </button>
+          <button
+            className="plan-btn plan-btn-reject"
+            onClick={handleReject}
+            disabled={disabled}
+          >
+            {showRejectInput ? "✗ Confirm Reject" : "✗ Reject"}
+          </button>
+          <button
+            className="plan-btn plan-btn-skip"
+            onClick={handleSkip}
+            disabled={disabled}
+          >
+            ⏭ Skip
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -885,11 +1051,13 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
   const [fileChanges, setFileChanges] = useState<FileChange[]>([]);
   const [questionDialog, setQuestionDialog] = useState<AskQuestionPayload["AskUserQuestion"] | null>(null);
   const [agentProgress, setAgentProgress] = useState<AgentProgress | null>(null);
+  const [paused, setPaused] = useState(false);
   const [agentLogs, setAgentLogs] = useState<LogEntry[]>([]);
   const [logPanelOpen, setLogPanelOpen] = useState(false);
   const [thinkingText, setThinkingText] = useState("");
   const [trimNotice, setTrimNotice] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ToolCallPayload["ConfirmRequest"] | null>(null);
+  const [planDialog, setPlanDialog] = useState<PlanCardPayload | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [showSessionList, setShowSessionList] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -1056,6 +1224,8 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
             elapsedMs: s.elapsed_ms ?? 0,
             status: s.status ?? "",
           });
+          // C1: track paused state from the agent main loop
+          setPaused(s.status === "paused");
           return;
         }
 
@@ -1068,6 +1238,18 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
         // ── TodoUpdate 事件 ──
         if (payload?.TodoUpdate) {
           setTodoList(payload.TodoUpdate.todos);
+          return;
+        }
+
+        // ── PlanCreated 事件（显示审批卡片） ──
+        if (payload?.PlanCreated) {
+          setPlanDialog(payload as PlanCardPayload);
+          return;
+        }
+
+        // ── PlanApproved / PlanRejected 事件（关闭审批卡片） ──
+        if (payload?.PlanApproved || payload?.PlanRejected) {
+          setPlanDialog(null);
           return;
         }
 
@@ -1281,6 +1463,12 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
       return;
     }
 
+    // Support `@file:line` references — strip the `:line` suffix for matching
+    // (e.g. `chat:42` matches the file `chat` and references line 42)
+    const lineRefMatch = query.match(/^(.+?):(\d+)$/);
+    const matchQuery = lineRefMatch ? lineRefMatch[1] : query;
+    const lineRef = lineRefMatch ? parseInt(lineRefMatch[2], 10) : undefined;
+
     setMentionQuery(query);
     setMentionTriggerStart(triggerPos);
     setMentionTriggerPos({ top: 60, left: Math.min(triggerPos * 7, 300) });
@@ -1299,7 +1487,7 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
     // Add matching files AND directories (limit to 20)
     // Show directories first, then files — directories get a "folder" type
     const matched = projectFiles
-      .filter((f) => f.name.toLowerCase().includes(query) || f.path.toLowerCase().includes(query))
+      .filter((f) => f.name.toLowerCase().includes(matchQuery) || f.path.toLowerCase().includes(matchQuery))
       .sort((a, b) => {
         // Directories first
         if (a.is_dir && !b.is_dir) return -1;
@@ -1314,6 +1502,7 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
         type: f.is_dir ? "folder" : "file",
         description: f.path,
         path: f.path,
+        line: lineRef,
       });
     }
 
@@ -1328,11 +1517,12 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
     if ((item.type === "file" || item.type === "folder") && item.path) {
       // Add to attached files (both files and directories use the same state)
       const isDir = item.type === "folder";
-      if (!attachedFiles.find((f) => f.path === item.path)) {
-        setAttachedFiles((prev) => [...prev, { name: item.label, path: item.path!, is_dir: isDir }]);
+      const refLabel = item.line ? `${item.label}:${item.line}` : item.label;
+      if (!attachedFiles.find((f) => f.path === item.path && f.line === item.line)) {
+        setAttachedFiles((prev) => [...prev, { name: item.label, path: item.path!, is_dir: isDir, line: item.line }]);
       }
       // Replace @filename with chip marker in text
-      setInput(before + `[${item.label}] ` + afterTrigger);
+      setInput(before + `[${refLabel}] ` + afterTrigger);
     } else {
       // For commands like @codebase, just replace with the command text
       setInput(before + `@${item.label} ` + afterTrigger);
@@ -1552,7 +1742,11 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
 
     const userMessage = input.trim();
     // Separate file paths from directory paths
-    const contextFilePaths = attachedFiles.filter((f) => !f.is_dir).map((f) => f.path);
+    // `@file:line` references are sent as `path:line` so the backend can inject
+    // only the referenced line and its surroundings
+    const contextFilePaths = attachedFiles
+      .filter((f) => !f.is_dir)
+      .map((f) => (f.line ? `${f.path}:${f.line}` : f.path));
     const contextFolderPaths = attachedFiles.filter((f) => f.is_dir).map((f) => f.path);
     const imageUrls = attachedImages.length > 0 ? [...attachedImages] : undefined;
     setInput("");
@@ -1664,6 +1858,7 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
   const handleCancel = useCallback(async () => {
     setStreaming(false);
     setBudgetExhausted(null);
+    setPaused(false);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       if (mode === "agent") {
@@ -1671,6 +1866,29 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
       } else {
         await invoke("cancel_completion");
       }
+    } catch {
+      // Not in Tauri
+    }
+  }, [sessionId, mode]);
+
+  // C1: Agent 暂停 / 恢复
+  const handlePause = useCallback(async () => {
+    if (mode !== "agent") return;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("pause_agent", { sessionId });
+      setPaused(true);
+    } catch {
+      // Not in Tauri
+    }
+  }, [sessionId, mode]);
+
+  const handleResume = useCallback(async () => {
+    if (mode !== "agent") return;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("resume_agent", { sessionId });
+      setPaused(false);
     } catch {
       // Not in Tauri
     }
@@ -1752,6 +1970,24 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
     if (!questionDialog) return;
     await answerAgentQuestion(questionDialog.question_id, answers);
     setQuestionDialog(null);
+  }
+
+  async function handleApprovePlan() {
+    if (!planDialog) return;
+    await approvePlan(planDialog.plan.session_id);
+    setPlanDialog(null);
+  }
+
+  async function handleRejectPlan(reason: string) {
+    if (!planDialog) return;
+    await rejectPlan(planDialog.plan.session_id, reason || undefined);
+    setPlanDialog(null);
+  }
+
+  async function handleSkipPlan() {
+    if (!planDialog) return;
+    await skipPlan(planDialog.plan.session_id);
+    setPlanDialog(null);
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -2056,11 +2292,12 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
         {attachedFiles.length > 0 && (
           <div className="chat-attached-files">
             {attachedFiles.map((f) => (
-              <span key={f.path} className="mention-chip">
+              <span key={f.path + (f.line ? `:${f.line}` : "")} className="mention-chip">
                 {f.is_dir ? "📁" : "📄"} {f.name}
+                {f.line ? <span className="mention-chip-line">:{f.line}</span> : null}
                 <button
                   className="mention-chip-remove"
-                  onClick={() => setAttachedFiles((prev) => prev.filter((x) => x.path !== f.path))}
+                  onClick={() => setAttachedFiles((prev) => prev.filter((x) => !(x.path === f.path && x.line === f.line)))}
                 >×</button>
               </span>
             ))}
@@ -2163,6 +2400,25 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
               ■ Cancel
             </button>
           )}
+          {streaming && mode === "agent" && (
+            paused ? (
+              <button
+                className="chat-continue-btn"
+                onClick={handleResume}
+                title="Resume agent"
+              >
+                <Play size={13} /> Resume
+              </button>
+            ) : (
+              <button
+                className="chat-pause-btn"
+                onClick={handlePause}
+                title="Pause agent"
+              >
+                <Pause size={13} /> Pause
+              </button>
+            )
+          )}
           {budgetExhausted && !streaming && (
             <button
               className="chat-continue-btn"
@@ -2180,6 +2436,16 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
           payload={questionDialog}
           onAnswer={handleAnswerQuestion}
           onDismiss={() => setQuestionDialog(null)}
+        />
+      )}
+
+      {planDialog && (
+        <PlanCard
+          payload={planDialog}
+          onApprove={handleApprovePlan}
+          onReject={handleRejectPlan}
+          onSkip={handleSkipPlan}
+          disabled={false}
         />
       )}
 

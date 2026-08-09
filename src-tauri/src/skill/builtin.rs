@@ -118,6 +118,77 @@ $ARGUMENTS
 Write the test file and explain the test strategy. If the code is in a file, create a corresponding test file (e.g., `foo.rs` -> `foo_test.rs` or `test_foo.rs`).
 "#;
 
+pub const AUTO_REVIEW_SKILL: &str = r#"---
+name: auto-review
+description: Automatically review code changes (git diff) for issues
+trigger: /auto-review
+mode: agent
+agent: reviewer
+---
+
+You are performing an automated code review on recent changes.
+
+Analyze the following git diff and provide a structured review.
+
+## Review Criteria
+- **Bugs**: Logic errors, null pointer risks, race conditions
+- **Security**: Injection vulnerabilities, data exposure, auth issues
+- **Performance**: N+1 queries, unnecessary allocations, blocking calls
+- **Style**: Naming conventions, code organization, readability
+- **Best Practices**: Error handling, edge cases, documentation
+
+## Changes to Review
+```diff
+$DIFF
+```
+
+$ARGUMENTS
+
+## Output Format
+Provide your review in this format:
+
+### Summary
+Brief overview of the changes and overall assessment.
+
+### Issues Found
+List any issues with severity (🔴 Critical / 🟡 Warning / 🔵 Suggestion):
+- [severity] file:line - description
+
+### Recommendations
+Actionable suggestions for improvement.
+
+### Verdict
+✅ Approve / ⚠️ Approve with comments / ❌ Request changes
+"#;
+
+/// Multi-agent workflow template: orchestrates reviewer → code_writer → debugger
+/// → reviewer pipeline for structured multi-stage tasks.
+pub const WORKFLOW_SKILL: &str = r#"---
+name: workflow
+description: Run a multi-agent workflow (plan → code → test → review)
+trigger: /workflow
+mode: agent
+agent: orchestrator
+---
+
+You are orchestrating a multi-agent workflow for the following task.
+
+## Workflow stages (run in order, each with the dedicated sub-agent):
+1. **Analysis** — use sub_agent(reviewer) to analyze the task and identify affected areas
+2. **Implementation** — use sub_agent(code_writer) to implement the changes
+3. **Verification** — use run_tests (or run_test) to verify; if tests fail, use sub_agent(debugger) to fix
+4. **Review** — use sub_agent(reviewer) to review the final diff
+
+## Task
+$ARGUMENTS
+
+## Rules
+- Do NOT skip stages: every stage must complete before the next begins
+- Between stages, summarize the outcome in a short line (what changed / what was verified)
+- If a stage fails (tests red, review critical), iterate on that stage up to 2 extra times before escalating
+- Final response must contain: what was implemented, test results, and the review verdict
+"#;
+
 /// Returns all built-in skill file contents as (filename, content) pairs.
 pub fn builtin_skills() -> Vec<(&'static str, &'static str)> {
     vec![
@@ -125,5 +196,7 @@ pub fn builtin_skills() -> Vec<(&'static str, &'static str)> {
         ("explain.md", EXPLAIN_SKILL),
         ("refactor.md", REFACTOR_SKILL),
         ("tests.md", TESTS_SKILL),
+        ("auto-review.md", AUTO_REVIEW_SKILL),
+        ("workflow.md", WORKFLOW_SKILL),
     ]
 }

@@ -5,8 +5,12 @@
 //! Optionally, completed tasks can auto-create GitHub PRs.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use serde::{Deserialize, Serialize};
+use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
+
+use crate::agent::AgentInstance;
 
 /// Unique task identifier.
 pub type TaskId = String;
@@ -140,6 +144,152 @@ impl CloudTaskManager {
         list.sort_by_key(|t| -t.created_at);
         list
     }
+}
+
+/// Spawn a sub-agent in the background (fire-and-forget with completion
+/// notification). Reuses the same execution template as `start_cloud_agent`:
+/// register a CloudTask → spawn → run AgentInstance → complete/fail → emit
+/// "cloud-agent-event" → persist result to the session.
+///
+/// Deliberately a *synchronous* function: it only resolves state and calls
+/// `tokio::spawn`, so it can be called from the agent main loop (which runs
+/// inside another `tokio::spawn` with `Send` requirements) without the
+/// `Send` propagation problem an `async fn` would cause.
+///
+/// Returns the task ID on success (tool result), or an error message.
+pub fn spawn_background_sub_agent(
+    app: tauri::AppHandle,
+    session_id: String,
+    task: String,
+    agent_id: String,
+    project_path: Option<String>,
+) -> Result<String, String> {
+    // Resolve task manager (registered in lib.rs setup)
+    let task_manager = app
+        .try_state::<crate::commands::cloud::CloudTaskState>()
+        .map(|s| s.inner().clone())
+        .ok_or_else(|| "Error: CloudTaskManager not available".to_string())?;
+
+    // Resolve chat memory for context injection + result persistence
+    let memory_arc = app
+        .try_state::<crate::commands::chat::ChatState>()
+        .map(|s| s.memory.clone())
+        .ok_or_else(|| "Error: ChatState not available".to_string())?;
+
+    // Read LLM settings (non-blocking pattern)
+    let (provider, api_key, chat_model) = app
+        .try_state::<Arc<tokio::sync::RwLock<crate::config::AppSettings>>>()
+        .map(|s| {
+            let guard = tokio::task::block_in_place(|| s.blocking_read());
+            (
+                guard.llm_provider.clone(),
+                guard.api_key.clone(),
+                guard.chat_model.clone(),
+            )
+        })
+        .unwrap_or_else(|| {
+            (crate::config::LlmProvider::OpenAI, String::new(), String::new())
+        });
+
+    let task_id = format!("bg-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("task"));
+    let app_clone = app.clone();
+    let task_manager_clone = task_manager.clone();
+    let task_id_clone = task_id.clone();
+    let session_id_clone = session_id.clone();
+
+    // NOTE: the function body itself does no `.await` — everything (register,
+    // memory context extraction, agent run, persistence) happens inside the
+    // spawned task, so this function's future stays `Send` and can be awaited
+    // from the agent main loop (which runs inside another `tokio::spawn`).
+    tokio::spawn(async move {
+        let task_record = CloudTask {
+            id: task_id_clone.clone(),
+            session_id: session_id_clone.clone(),
+            status: CloudTaskStatus::Pending,
+            message: format!("[background sub-agent: {}] {}", agent_id, task),
+            created_at: chrono::Utc::now().timestamp(),
+            completed_at: None,
+            result: None,
+            pr_config: None,
+            pr_url: None,
+        };
+        task_manager_clone.register(task_record).await;
+        task_manager_clone
+            .update_status(&task_id_clone, CloudTaskStatus::Running)
+            .await;
+
+        // Extract memory context inside the task (State lifetime issue)
+        let memory_context = {
+            let mem = memory_arc.read().await;
+            mem.memory_manager().inject_memory_context()
+        };
+
+        // Resolve agent definition (optional)
+        let agent_def = app_clone
+            .try_state::<crate::agent::definition::AgentRegistry>()
+            .and_then(|registry| crate::agent::definition::find_agent(registry.inner(), &agent_id));
+
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let agent_instance = AgentInstance::new(
+            app_clone.clone(),
+            session_id_clone.clone(),
+            vec![crate::llm::ChatMessage::text("user", &task)],
+            provider,
+            api_key,
+            None, // base_url
+            chat_model,
+            project_path,
+            None, // custom_instructions
+            cancelled.clone(),
+            agent_def.as_ref(),
+            Some(memory_context),
+        );
+
+        let agent = Arc::new(tokio::sync::Mutex::new(agent_instance));
+        let result = {
+            let mut agent = agent.lock().await;
+            agent.run().await
+        };
+
+        match result {
+            Ok(final_text) => {
+                task_manager_clone.complete(&task_id_clone, final_text.clone()).await;
+                let _ = app_clone.emit("cloud-agent-event", serde_json::json!({
+                    "type": "completed",
+                    "task_id": task_id_clone,
+                    "source": "background_sub_agent",
+                    "result": final_text,
+                }));
+            }
+            Err(e) => {
+                task_manager_clone.fail(&task_id_clone, e.clone()).await;
+                let _ = app_clone.emit("cloud-agent-event", serde_json::json!({
+                    "type": "failed",
+                    "task_id": task_id_clone,
+                    "source": "background_sub_agent",
+                    "error": e,
+                }));
+            }
+        }
+
+        // Persist result to conversation memory
+        {
+            let mem = memory_arc.write().await;
+            let status = task_manager_clone.get(&task_id_clone).await;
+            if let Some(task_record) = status {
+                if let Some(ref result_text) = task_record.result {
+                    mem.add_message(&session_id_clone, crate::chat::ChatMessage {
+                        role: crate::chat::Role::Assistant,
+                        content: format!("[Background Agent Result: {}]\n\n{}", agent_id, result_text),
+                        images: None,
+                        tool_calls: None,
+                    });
+                }
+            }
+        }
+    });
+
+    Ok(task_id)
 }
 
 /// Attempt to create a GitHub PR from agent changes.

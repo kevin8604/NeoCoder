@@ -13,6 +13,9 @@ pub mod skill;
 pub mod sandbox;
 pub mod mcp;
 pub mod telemetry;
+pub mod fs_service;
+pub mod terminal;
+pub mod event_bus;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,9 +26,9 @@ use commands::pty::PtyState;
 use lsp::LspManager;
 use rag::CodeIndexer;
 use fs_watcher::FileWatcher;
-use fs_watcher::FileChangeKind;
 use agent::QuestionAwaiters;
 use agent::ConfirmAwaiters;
+use agent::PlanApprovalAwaiters;
 use agent::ToolRegistry;
 use agent::definition::AgentRegistry;
 use mcp::client::McpRegistry;
@@ -73,8 +76,19 @@ pub fn run() {
             // Initialize completion cancel map
             app.manage::<commands::completion::CancelMap>(Arc::new(std::sync::Mutex::new(HashMap::new())));
 
+            // Initialize completion candidates store
+            app.manage::<commands::completion::CompletionCandidates>(Arc::new(std::sync::Mutex::new(HashMap::new())));
+
+            // Initialize edit-intent tracker (recently edited files → completion signal)
+            app.manage::<Arc<completion::edit_intent::EditIntentTracker>>(Arc::new(
+                completion::edit_intent::EditIntentTracker::new(),
+            ));
+
             // Initialize Agent cancel map
             app.manage::<commands::chat::AgentCancelMap>(Arc::new(std::sync::Mutex::new(HashMap::new())));
+
+            // Initialize Agent pause control (session-scoped flag + notify)
+            app.manage::<agent::PauseControl>(std::sync::Mutex::new(HashMap::new()));
 
             // Initialize checkpoint store (keyed by session_id)
             app.manage::<agent::checkpoint::CheckpointStore>(agent::checkpoint::new_store());
@@ -117,6 +131,9 @@ pub fn run() {
 
             // Initialize ConfirmAwaiters for dangerous operation confirmation
             app.manage::<ConfirmAwaiters>(Arc::new(std::sync::Mutex::new(HashMap::new())));
+
+            // Initialize PlanApprovalAwaiters for Plan Mode approval flow
+            app.manage::<PlanApprovalAwaiters>(Arc::new(std::sync::Mutex::new(HashMap::new())));
 
             // Initialize ToolRegistry from tools.json (runtime file, fallback to embedded)
             let tools = agent::load_tools_from_disk();
@@ -195,6 +212,25 @@ pub fn run() {
             // Initialize file watcher
             app.manage::<Arc<std::sync::Mutex<FileWatcher>>>(Arc::new(std::sync::Mutex::new(FileWatcher::new())));
 
+            // Auto-start watching the most recent project (if any)
+            {
+                let project_path = app.state::<Arc<RwLock<config::AppSettings>>>()
+                    .inner()
+                    .blocking_read()
+                    .project_paths
+                    .first()
+                    .cloned();
+                if let Some(ref path) = project_path {
+                    let watcher_state = app.state::<Arc<std::sync::Mutex<FileWatcher>>>();
+                    let mut w = watcher_state.inner().lock().unwrap_or_else(|e| e.into_inner());
+                    if let Err(e) = w.start_watch(std::path::Path::new(path), true) {
+                        log::warn!("[FsWatcher] Failed to auto-watch '{}': {}", path, e);
+                    } else {
+                        log::info!("[FsWatcher] Auto-watching project: {}", path);
+                    }
+                }
+            }
+
             // Initialize Skill Manager (global + project-level)
             {
                 let global_skills_dir = config_path.join("skills");
@@ -216,6 +252,7 @@ pub fn run() {
             // Spawn background auto-reindex loop
             let watcher_for_reindex = app.state::<Arc<std::sync::Mutex<FileWatcher>>>().inner().clone();
             let indexer_for_reindex = app.state::<Arc<CodeIndexer>>().inner().clone();
+            let edit_intent_bg = app.state::<Arc<completion::edit_intent::EditIntentTracker>>().inner().clone();
             let config_path_clone = config_path.clone();
             tauri::async_runtime::spawn(async move {
                 let db_path = config_path_clone.join("code_index.db");
@@ -228,38 +265,20 @@ pub fn run() {
                         watcher.poll_events(500)
                     };
 
+                    let mut index_changed = false;
                     for event in events {
-                        let path = event.path;
-                        let kind = event.kind;
-                        let indexer = &indexer_for_reindex;
-                        let should_save = {
-                            match kind {
-                                FileChangeKind::Created | FileChangeKind::Modified => {
-                                    match tokio::fs::read_to_string(&path).await {
-                                        Ok(content) => {
-                                            let path_str = path.to_string_lossy().to_string();
-                                            match indexer.index_file(&path_str, &content).await {
-                                                Ok(n) => log::info!("Auto-reindexed {} ({} chunks)", path_str, n),
-                                                Err(e) => log::warn!("Failed to reindex {}: {}", path_str, e),
-                                            }
-                                            true
-                                        }
-                                        Err(_) => false, // Binary file or non-UTF-8, skip
-                                    }
-                                }
-                                FileChangeKind::Deleted => {
-                                    let path_str = path.to_string_lossy().to_string();
-                                    indexer.remove_file(&path_str).await;
-                                    log::info!("Removed from index: {}", path_str);
-                                    true
-                                }
-                            }
-                        };
-                        // Persist index changes to DB
-                        if should_save {
-                            if let Err(e) = indexer.save_to_db(&db_path_str).await {
-                                log::warn!("Failed to save index to DB: {}", e);
-                            }
+                        // Record edit-intent for modified files (completion signal)
+                        if matches!(event.kind, fs_watcher::FileChangeKind::Modified | fs_watcher::FileChangeKind::Created) {
+                            edit_intent_bg.record_edit(&event.path.to_string_lossy());
+                        }
+                        if indexer_for_reindex.handle_file_change(&event.path, event.kind).await {
+                            index_changed = true;
+                        }
+                    }
+                    // Persist index changes to DB (once per batch)
+                    if index_changed {
+                        if let Err(e) = indexer_for_reindex.save_to_db(&db_path_str).await {
+                            log::warn!("Failed to save index to DB: {}", e);
                         }
                     }
                 }
@@ -276,6 +295,7 @@ pub fn run() {
             commands::config::get_log_path,
             commands::completion::request_completion,
             commands::completion::cancel_completion,
+            commands::completion::cycle_completion,
             commands::edit_inline::edit_inline,
             commands::chat::send_message,
             commands::chat::new_session,
@@ -302,6 +322,9 @@ pub fn run() {
             commands::lsp::lsp_did_change,
             commands::lsp::lsp_did_close,
             commands::lsp::shutdown_lsp,
+            commands::lsp::rename_symbol,
+            commands::lsp::get_code_actions,
+            commands::lsp::format_document,
             commands::search::search_codebase,
             commands::search::reindex_project,
             commands::search::index_file,
@@ -310,7 +333,12 @@ pub fn run() {
             commands::chat::answer_agent_question,
             commands::chat::answer_confirm,
             commands::chat::cancel_agent,
+            commands::chat::pause_agent,
+            commands::chat::resume_agent,
             commands::chat::get_agents,
+            commands::chat::approve_plan,
+            commands::chat::reject_plan,
+            commands::chat::skip_plan,
             commands::agent::get_all_agents,
             commands::agent::save_agent,
             commands::agent::delete_agent,
@@ -340,6 +368,19 @@ pub fn run() {
             commands::pty::write_stdin,
             commands::pty::stop_terminal,
             commands::pty::resize_terminal,
+            commands::dependency_graph::get_dependency_graph,
+            commands::review::trigger_auto_review,
+            commands::review::get_auto_review_settings,
+            commands::memory::check_local_model,
+            commands::memory::search_memory,
+            commands::memory::preview_memory,
+            commands::memory::list_notes,
+            commands::memory::read_note,
+            commands::memory::get_memory_stats,
+            commands::memory::get_memory_entries,
+            commands::memory::cleanup_memory,
+            commands::memory::run_deep_dreaming,
+            commands::memory::export_training_data,
             telemetry::get_telemetry_summary,
             telemetry::get_telemetry_events,
         ])

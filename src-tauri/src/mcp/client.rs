@@ -443,6 +443,12 @@ impl McpRegistry {
         clients.keys().cloned().collect()
     }
 
+    /// Get the number of tools registered by a specific server.
+    pub async fn tool_count_for_server(&self, server_name: &str) -> usize {
+        let tools = self.tools.lock().await;
+        tools.iter().filter(|(_, (srv, _))| srv == server_name).count()
+    }
+
     /// Disconnect from a server: remove its client (process killed on drop)
     /// and remove all its tools. Returns the number of tools removed.
     pub async fn disconnect(&self, server_name: &str) -> Result<usize, String> {

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { FileText } from "lucide-react";
 import { searchCodebase, reindexProject, type SearchResult } from "../hooks/useTauri";
 
 interface SearchPanelProps {
@@ -109,7 +110,7 @@ export default function SearchPanel({ projectPath, onFileSelect }: SearchPanelPr
           >
             <div className="search-result-header">
               <span className="search-result-file" title={result.chunk.file_path}>
-                📄 {result.chunk.file_path.split("\\").pop() || result.chunk.file_path.split("/").pop()}
+                <FileText size={12} /> {result.chunk.file_path.split("\\").pop() || result.chunk.file_path.split("/").pop()}
               </span>
               <span className={`search-result-score ${result.score > 0.5 ? "high" : "low"}`}>
                 {scorePercent(result.score)}%

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { Sparkles, X, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -92,7 +93,7 @@ export function InlineEditBar({ visible, loading, onSubmit, onCancel }: InlineEd
       }}
     >
       <span style={{ color: "var(--accent, #89b4fa)", fontSize: 12, fontWeight: 600 }}>
-        ✨ Edit
+        <Sparkles size={12} /> Edit
       </span>
       <input
         ref={inputRef}
@@ -142,7 +143,7 @@ export function InlineEditBar({ visible, loading, onSubmit, onCancel }: InlineEd
           cursor: "pointer",
         }}
       >
-        ✕
+        <X size={12} />
       </button>
     </div>
   );
@@ -203,7 +204,7 @@ export function InlineDiffView({ original, edited, onAccept, onReject }: InlineD
             cursor: "pointer",
           }}
         >
-          ✓ Accept (Tab)
+          <Check size={12} /> Accept (Tab)
         </button>
         <button
           onClick={onReject}
@@ -218,7 +219,7 @@ export function InlineDiffView({ original, edited, onAccept, onReject }: InlineD
             cursor: "pointer",
           }}
         >
-          ✕ Reject (Esc)
+          <X size={12} /> Reject (Esc)
         </button>
       </div>
 

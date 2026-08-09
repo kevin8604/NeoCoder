@@ -1,4 +1,4 @@
-use crate::agent::utils::resolve_path;
+use crate::fs_service::FileService;
 use super::{Tool, ToolContext};
 
 pub struct DeleteDirectory;
@@ -11,10 +11,7 @@ impl Tool for DeleteDirectory {
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> String {
         let raw = args["path"].as_str().unwrap_or("");
-        let path = resolve_path(ctx.project_path.as_deref(), raw);
-        if let Err(e) = ctx.sandbox.check_path(&path, ctx.project_path.as_deref(), true) {
-            return format!("Error: Sandbox blocked: {}", e);
-        }
+        let path = FileService::resolve(ctx.project_path.as_deref(), raw);
 
         // Gather info before deletion
         let mut file_count = 0usize;
@@ -29,7 +26,7 @@ impl Tool for DeleteDirectory {
             format!("{:.1}MB", total_size as f64 / (1024.0 * 1024.0))
         };
 
-        match std::fs::remove_dir_all(&path) {
+        match FileService::remove(&path, ctx.project_path.as_deref(), Some(&ctx.sandbox)) {
             Ok(()) => format!(
                 "Deleted directory: {} ({} files, {} removed)",
                 path.display(), file_count, size_str

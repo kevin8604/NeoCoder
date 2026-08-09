@@ -44,10 +44,8 @@ pub async fn list_mcp_servers(
     let mut statuses = Vec::new();
     for cfg in configs {
         let is_connected = connected.contains(&cfg.name);
-        // Count tools for this server (approximate from registry)
         let tool_count = if is_connected {
-            // We don't have a direct count per server, skip for now
-            0
+            mcp_registry.tool_count_for_server(&cfg.name).await
         } else {
             0
         };

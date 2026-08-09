@@ -177,12 +177,13 @@ fn test_skill_manager_load_builtins() {
     let manager = SkillManager::new(tmp.clone(), None);
     let skills = manager.list();
 
-    // Should have 4 built-in skills
-    assert_eq!(skills.len(), 4);
+    // Should have 5 built-in skills (auto-review added)
+    assert_eq!(skills.len(), 5);
     assert!(skills.iter().any(|s| s.trigger == "/review"));
     assert!(skills.iter().any(|s| s.trigger == "/explain"));
     assert!(skills.iter().any(|s| s.trigger == "/refactor"));
     assert!(skills.iter().any(|s| s.trigger == "/tests"));
+    assert!(skills.iter().any(|s| s.trigger == "/auto-review"));
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -235,7 +236,7 @@ fn test_skill_manager_reload() {
     std::fs::create_dir_all(&tmp).unwrap();
 
     let manager = SkillManager::new(tmp.clone(), None);
-    assert_eq!(manager.list().len(), 4); // builtins only
+    assert_eq!(manager.list().len(), 5); // builtins only (auto-review included)
 
     // Add a new skill file
     let new_skill = r#"---
@@ -251,7 +252,7 @@ Do custom thing."#;
     // Reload
     manager.reload();
     let skills = manager.list();
-    assert_eq!(skills.len(), 5);
+    assert_eq!(skills.len(), 6); // 5 builtins + 1 custom
     assert!(skills.iter().any(|s| s.trigger == "/custom"));
 
     let _ = std::fs::remove_dir_all(&tmp);

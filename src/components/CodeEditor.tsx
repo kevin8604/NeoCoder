@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { EditorView, keymap, placeholder, Decoration, WidgetType, ViewPlugin, ViewUpdate, DecorationSet } from "@codemirror/view";
-import { EditorState, StateEffect, StateField, RangeSetBuilder } from "@codemirror/state";
+import { EditorState, StateEffect, StateField, RangeSetBuilder, Compartment } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput } from "@codemirror/language";
 import { closeBrackets } from "@codemirror/autocomplete";
@@ -13,6 +13,8 @@ import { html } from "@codemirror/lang-html";
 import { css } from "@codemirror/lang-css";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
+import ContextMenu from "./ContextMenu";
+import { renameSymbol, formatDocument } from "../hooks/useTauri";
 import { InlineEditBar, InlineDiffView, useInlineEdit } from "./InlineEdit";
 
 // ── Light theme for CodeMirror ─────────────────────────────────────────────
@@ -69,6 +71,8 @@ interface CodeEditorProps {
   completionText?: string | null;
   onAcceptCompletion?: () => void;
   onDismissCompletion?: () => void;
+  onCycleCompletion?: () => void;
+  candidateInfo?: { index: number; total: number } | null;
 }
 
 // ── Ghost Text Widget ──────────────────────────────────────────────────────
@@ -155,6 +159,26 @@ function getLanguageExtension(filePath: string) {
   }
 }
 
+/** B1: map file extension → LSP language id (rename/format/code actions). */
+function getLspLanguage(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "rs": return "rust";
+    case "ts":
+    case "tsx": return "typescript";
+    case "js":
+    case "jsx": return "javascript";
+    case "py": return "python";
+    case "go": return "go";
+    case "java": return "java";
+    case "c": return "c";
+    case "cpp":
+    case "cc":
+    case "hpp": return "cpp";
+    default: return "plaintext";
+  }
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function CodeEditor({
@@ -166,10 +190,14 @@ export default function CodeEditor({
   completionText,
   onAcceptCompletion,
   onDismissCompletion,
+  onCycleCompletion,
+  candidateInfo,
 }: CodeEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [editorKey, setEditorKey] = useState(0);
+  // Compartment so the editor theme can be reconfigured live on theme switch
+  const themeCompartmentRef = useRef(new Compartment());
 
   // ── Inline Edit state ──
   const {
@@ -199,7 +227,7 @@ export default function CodeEditor({
         indentOnInput(),
         highlightSelectionMatches(),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        isLight ? lightEditorTheme : oneDark,
+        themeCompartmentRef.current.of(isLight ? lightEditorTheme : oneDark),
         ghostTextTheme,
 
         // Language
@@ -259,6 +287,7 @@ export default function CodeEditor({
             } else if (event.key === "]" && event.altKey && completionText) {
               event.preventDefault();
               // Cycle to next completion — handled by parent
+              onCycleCompletion?.();
               return true;
             }
             return false;
@@ -299,6 +328,23 @@ export default function CodeEditor({
   useEffect(() => {
     setEditorKey((k) => k + 1);
   }, [filePath]);
+
+  // Keep the editor theme in sync with runtime theme switches (data-theme attribute)
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      const light = document.documentElement.getAttribute("data-theme") === "light";
+      view.dispatch({
+        effects: themeCompartmentRef.current.reconfigure(light ? lightEditorTheme : oneDark),
+      });
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => observer.disconnect();
+  }, []);
 
   // Update ghost text decoration when completionText changes
   useEffect(() => {
@@ -374,6 +420,27 @@ export default function CodeEditor({
           const suffix = doc.slice(pos, doc.length).toString();
           return { prefix, suffix, line: line.number, col: pos - line.from };
         },
+        applyTextEdits: (edits: { file_path: string; start_line: number; start_column: number; end_line: number; end_column: number; new_text: string }[]) => {
+          const view = viewRef.current;
+          if (!view || !edits?.length) return;
+          const doc = view.state.doc;
+          // 0-based LSP positions → CodeMirror offsets; apply in reverse order
+          // so earlier edits do not shift later positions.
+          const changes: { from: number; to: number; insert: string }[] = edits
+            .map((e) => {
+              if (e.end_line < e.start_line) return null;
+              const startLine = doc.line(Math.min(Math.max(e.start_line + 1, 1), doc.lines));
+              const endLine = doc.line(Math.min(Math.max(e.end_line + 1, 1), doc.lines));
+              const from = startLine.from + Math.min(e.start_column, startLine.length);
+              const to = endLine.from + Math.min(e.end_column, endLine.length);
+              return { from, to, insert: e.new_text };
+            })
+            .filter((c): c is { from: number; to: number; insert: string } => c !== null)
+            .sort((a, b) => b.from - a.from);
+          if (changes.length) {
+            view.dispatch({ changes });
+          }
+        },
       };
     }
     return () => {
@@ -418,8 +485,87 @@ export default function CodeEditor({
     }
   }, [acceptEdit]);
 
+  // ── B1: LSP 右键菜单（Rename Symbol / Format Document）──
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; line: number; col: number } | null>(null);
+  const [renameDlg, setRenameDlg] = useState<{ x: number; y: number; line: number; col: number } | null>(null);
+  const [renameInput, setRenameInput] = useState("");
+  const [lspBusy, setLspBusy] = useState(false);
+  const [lspError, setLspError] = useState<string | null>(null);
+
+  const handleEditorContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const view = viewRef.current;
+    if (!view) return;
+    const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+    if (pos === null) return;
+    const line = view.state.doc.lineAt(pos);
+    setCtxMenu({
+      x: e.clientX,
+      y: e.clientY,
+      line: line.number - 1, // LSP 0-based
+      col: pos - line.from,
+    });
+  }, []);
+
+  const handleRename = useCallback(async () => {
+    if (!ctxMenu) return;
+    setRenameDlg({ ...ctxMenu });
+    setRenameInput("");
+    setLspError(null);
+    setCtxMenu(null);
+  }, [ctxMenu]);
+
+  const handleRenameSubmit = useCallback(async () => {
+    if (!renameDlg || !renameInput.trim()) return;
+    setLspBusy(true);
+    setLspError(null);
+    try {
+      const edits = await renameSymbol(
+        getLspLanguage(filePath),
+        filePath,
+        renameDlg.line,
+        renameDlg.col,
+        renameInput.trim()
+      );
+      if (edits && edits.length > 0) {
+        (window as any).__neecoder_editor?.applyTextEdits(edits);
+        setRenameDlg(null);
+      } else {
+        setLspError("未找到该位置的符号（或 LSP 不可用）");
+      }
+    } catch (err) {
+      setLspError(String(err));
+    }
+    setLspBusy(false);
+  }, [renameDlg, renameInput, filePath]);
+
+  const handleFormat = useCallback(async () => {
+    if (!ctxMenu) return;
+    const { x, y, ...rest } = ctxMenu;
+    void x; void y;
+    setLspBusy(true);
+    setLspError(null);
+    setCtxMenu(null);
+    try {
+      const edits = await formatDocument(getLspLanguage(filePath), filePath);
+      if (edits && edits.length > 0) {
+        (window as any).__neecoder_editor?.applyTextEdits(edits);
+      } else {
+        setLspError("格式化没有产生变化（或 LSP 不可用）");
+      }
+    } catch (err) {
+      setLspError(String(err));
+    }
+    setLspBusy(false);
+  }, [ctxMenu, filePath]);
+
   return (
-    <div ref={editorRef} className="cm-editor-container" style={{ position: "relative" }}>
+    <div
+      ref={editorRef}
+      className="cm-editor-container"
+      style={{ position: "relative" }}
+      onContextMenu={handleEditorContextMenu}
+    >
       {/* Inline Edit Bar */}
       <InlineEditBar
         visible={inlineEditState.visible && !inlineEditState.edited}
@@ -438,6 +584,26 @@ export default function CodeEditor({
         />
       )}
 
+      {/* Candidate indicator */}
+      {completionText && candidateInfo && candidateInfo.total > 1 && (
+        <div
+          style={{
+            position: "absolute",
+            top: 4,
+            right: 4,
+            padding: "2px 6px",
+            background: "var(--surface-1, #313244)",
+            color: "var(--text-muted, #a6adc8)",
+            borderRadius: 4,
+            fontSize: 11,
+            zIndex: 100,
+            pointerEvents: "none",
+          }}
+        >
+          {candidateInfo.index + 1}/{candidateInfo.total}
+        </div>
+      )}
+
       {/* Error display */}
       {inlineEditState.error && (
         <div
@@ -454,6 +620,61 @@ export default function CodeEditor({
           }}
         >
           {inlineEditState.error}
+        </div>
+      )}
+
+      {/* B1: LSP 右键菜单 */}
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          items={[
+            {
+              label: "Rename Symbol…",
+              icon: "✏️",
+              action: handleRename,
+            },
+            {
+              label: "Format Document",
+              icon: "🎨",
+              action: handleFormat,
+            },
+          ]}
+        />
+      )}
+
+      {/* B1: Rename 对话框 */}
+      {renameDlg && (
+        <div
+          className="lsp-rename-overlay"
+          onClick={() => setRenameDlg(null)}
+        >
+          <div
+            className="lsp-rename-dialog"
+            onClick={(e) => e.stopPropagation()}
+            style={{ left: Math.min(renameDlg.x, window.innerWidth - 260), top: Math.min(renameDlg.y, window.innerHeight - 120) }}
+          >
+            <div className="lsp-rename-title">重命名符号</div>
+            {lspError && <div className="lsp-rename-error">{lspError}</div>}
+            <input
+              className="lsp-rename-input"
+              placeholder="新名称…"
+              value={renameInput}
+              autoFocus
+              onChange={(e) => setRenameInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleRenameSubmit();
+                if (e.key === "Escape") setRenameDlg(null);
+              }}
+            />
+            <div className="lsp-rename-actions">
+              <button className="memory-btn" onClick={() => setRenameDlg(null)}>取消</button>
+              <button className="memory-btn" onClick={handleRenameSubmit} disabled={lspBusy || !renameInput.trim()}>
+                {lspBusy ? "重命名中…" : "重命名"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

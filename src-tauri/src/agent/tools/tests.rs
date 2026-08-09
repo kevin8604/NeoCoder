@@ -21,6 +21,7 @@ mod tests {
                 },
                 None,
             )),
+            lsp_manager: None,
             app_handle: None,
             session_id: None,
             tavily_api_key: String::new(),
@@ -558,5 +559,63 @@ mod tests {
         let ctx = create_test_context(None);
         let result = MemorySearch.execute(json!({"query": "test"}), &ctx).await;
         assert!(result.contains("app handle not available") || result.contains("chat state not available"));
+    }
+
+    // ── Schema Consistency Tests ──────────────────────────────────────────
+
+    /// 双源同步校验：每个注册工具都必须在 tools.json 中有对应 schema，
+    /// 反之亦然（MCP 动态工具除外）。防止 tools.json 与 Rust 实现漂移。
+    #[test]
+    fn test_tool_schema_coverage() {
+        let registry: Vec<crate::agent::ToolDefinition> =
+            serde_json::from_str(include_str!("../../../tools.json")).unwrap_or_default();
+        let schema_names: std::collections::HashSet<String> =
+            registry.iter().map(|t| t.name.clone()).collect();
+
+        let executor = crate::agent::tools::build_executor();
+        let registered: std::collections::HashSet<String> =
+            executor.registered_names().into_iter().collect();
+
+        // 注册了但 schema 缺失（如曾发生 generate_diagram 不可见问题）
+        let missing_schema: Vec<&String> = registered
+            .difference(&schema_names)
+            .filter(|n| !n.starts_with("mcp__")) // MCP 动态工具不在 tools.json
+            .collect();
+        assert!(
+            missing_schema.is_empty(),
+            "Tools registered in Rust but missing in tools.json: {:?}",
+            missing_schema
+        );
+
+        // schema 存在但未注册（孤儿定义）
+        let orphan_schema: Vec<&String> = schema_names
+            .difference(&registered)
+            .filter(|n| !n.starts_with("mcp__"))
+            .collect();
+        assert!(
+            orphan_schema.is_empty(),
+            "Tools defined in tools.json but not registered in Rust: {:?}",
+            orphan_schema
+        );
+    }
+
+    /// 每个 schema 必须是合法的 OpenAI function 格式
+    #[test]
+    fn test_tool_schema_valid_json() {
+        let registry: Vec<crate::agent::ToolDefinition> =
+            serde_json::from_str(include_str!("../../../tools.json"))
+                .expect("tools.json must be valid JSON array of ToolDefinition");
+        assert!(!registry.is_empty());
+        for tool in &registry {
+            assert!(!tool.name.is_empty(), "tool name must not be empty");
+            assert!(!tool.description.is_empty(), "tool '{}' has empty description", tool.name);
+            let schema = tool.to_openai_tool();
+            assert_eq!(schema["type"], "function", "tool '{}' must be a function type", tool.name);
+            assert!(
+                schema["function"]["parameters"]["type"] == "object",
+                "tool '{}' parameters must be an object schema",
+                tool.name
+            );
+        }
     }
 }

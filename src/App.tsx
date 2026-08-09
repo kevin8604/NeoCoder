@@ -8,9 +8,13 @@ import CodeEditor from "./components/CodeEditor";
 import FileExplorer from "./components/FileExplorer";
 import CloudAgentPanel from "./components/CloudAgentPanel";
 import TerminalPanel from "./components/TerminalPanel";
-import { openProject, getLspSymbols, requestCompletion, type LSPSymbol } from "./hooks/useTauri";
+import DependencyGraph from "./components/DependencyGraph";
+import MemoryPanel from "./components/MemoryPanel";
+import InsightsPanel from "./components/InsightsPanel";
+import { PanelLeft, Search, ListTree, Square, MessageSquare, Sparkles, BookOpen, Wrench, Landmark, Shapes, Box, Layers, MapPin, Folder, Tag, Zap, Target, Circle, Braces, FileCode, FileCode2, FileJson, FileText, File, Globe, Database, Coffee, Palette, FileCog, FileType } from "lucide-react";
+import { openProject, getLspSymbols, requestCompletion, cycleCompletion, triggerAutoReview, checkLocalModel, type LSPSymbol } from "./hooks/useTauri";
 
-type View = "editor" | "chat" | "settings" | "search" | "cloud";
+type View = "editor" | "chat" | "settings" | "search" | "cloud" | "graph" | "memory" | "insights";
 type Theme = "dark" | "light";
 
 interface OpenFile {
@@ -23,6 +27,8 @@ function App() {
   const [activeView, setActiveView] = useState<View>("editor");
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [llmConnected, setLlmConnected] = useState(false);
+  /** null = local models disabled; true/false = Ollama health probe result */
+  const [localModelRunning, setLocalModelRunning] = useState<boolean | null>(null);
   const [showExplorer, setShowExplorer] = useState(true);
   const [showTerminal, setShowTerminal] = useState(false);
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
@@ -36,6 +42,8 @@ function App() {
   // Completion state
   const [completionId, setCompletionId] = useState<string | null>(null);
   const [completionText, setCompletionText] = useState<string | null>(null);
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  const [candidatesCount, setCandidatesCount] = useState(0);
 
   // Outline state
   const [showOutline, setShowOutline] = useState(false);
@@ -44,6 +52,24 @@ function App() {
 
   // Theme state
   const [theme, setTheme] = useState<Theme>("dark");
+
+  // Side panel width (persisted across sessions)
+  const [panelWidth, setPanelWidth] = useState(() => {
+    const saved = localStorage.getItem("neecoder-panel-width");
+    const n = saved ? parseInt(saved, 10) : 400;
+    return Number.isFinite(n) && n >= 300 && n <= 700 ? n : 400;
+  });
+  const panelWidthRef = useRef(panelWidth);
+  const [resizingPanel, setResizingPanel] = useState(false);
+
+  // Terminal panel height (persisted across sessions)
+  const [terminalHeight, setTerminalHeight] = useState(() => {
+    const saved = localStorage.getItem("neecoder-terminal-height");
+    const n = saved ? parseInt(saved, 10) : 280;
+    return Number.isFinite(n) && n >= 100 && n <= 600 ? n : 280;
+  });
+  const terminalHeightRef = useRef(terminalHeight);
+  const [resizingTerminal, setResizingTerminal] = useState(false);
 
   // Load theme from settings and apply to DOM
   useEffect(() => {
@@ -72,6 +98,38 @@ function App() {
     loadTheme();
   }, []);
 
+  // ── Local model (Ollama) health polling ────────────────────────
+  // Polls check_local_model while settings.local_model.enabled is on,
+  // surfaces the result in the status bar (auto-degrades to remote when offline).
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function poll() {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const s = await invoke<any>("get_settings");
+        const enabled = !!s?.local_model?.enabled;
+        if (!enabled) {
+          setLocalModelRunning(null);
+        } else {
+          const health = await checkLocalModel();
+          if (!cancelled) setLocalModelRunning(health ? health.running : null);
+        }
+      } catch {
+        // Not in Tauri environment
+        setLocalModelRunning(null);
+      } finally {
+        if (!cancelled) timer = setTimeout(poll, 10_000);
+      }
+    }
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
   const toggleTheme = useCallback(() => {
     setTheme((prev) => {
       const next = prev === "dark" ? "light" : "dark";
@@ -87,6 +145,49 @@ function App() {
       } catch {}
       return next;
     });
+  }, []);
+
+  // ── Side panel drag-to-resize ───────────────────────────────────
+  const startPanelResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = panelWidthRef.current;
+    setResizingPanel(true);
+    const onMove = (ev: MouseEvent) => {
+      // Panel sits on the right edge: dragging left widens it
+      const w = Math.min(700, Math.max(300, startW - (ev.clientX - startX)));
+      panelWidthRef.current = w;
+      setPanelWidth(w);
+    };
+    const onUp = () => {
+      setResizingPanel(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      localStorage.setItem("neecoder-panel-width", String(panelWidthRef.current));
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, []);
+
+  // ── Terminal drag-to-resize ─────────────────────────────────────
+  const startTerminalResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = terminalHeightRef.current;
+    setResizingTerminal(true);
+    const onMove = (ev: MouseEvent) => {
+      const h = Math.min(600, Math.max(100, startH + (ev.clientY - startY)));
+      terminalHeightRef.current = h;
+      setTerminalHeight(h);
+    };
+    const onUp = () => {
+      setResizingTerminal(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      localStorage.setItem("neecoder-terminal-height", String(terminalHeightRef.current));
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   }, []);
 
   // ── Completion trigger (debounced) ──────────────────────────────
@@ -128,6 +229,8 @@ function App() {
 
         if (result) {
           setCompletionId(result.id);
+          setCandidatesCount(result.candidates_count || 1);
+          setCandidateIndex(0);
         }
       } catch {
         // Completion failed silently - no ghost text needed
@@ -253,7 +356,19 @@ function App() {
   const handleDismissCompletion = useCallback(() => {
     setCompletionText(null);
     setCompletionId(null);
+    setCandidateIndex(0);
+    setCandidatesCount(0);
   }, []);
+
+  // Cycle completion candidates (Alt+])
+  const handleCycleCompletion = useCallback(async () => {
+    if (!completionId || candidatesCount <= 1) return;
+    const nextText = await cycleCompletion(completionId, 1);
+    if (nextText) {
+      setCompletionText(nextText);
+      setCandidateIndex((prev) => (prev + 1) % candidatesCount);
+    }
+  }, [completionId, candidatesCount]);
 
   // Cancel completion (also calls backend)
   const handleCancelCompletion = useCallback(async () => {
@@ -360,11 +475,29 @@ function App() {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("write_file", { path: activeFile, content: currentFile.content });
+
+      // Check if auto-review on save is enabled
+      if (projectPath) {
+        const settings = await invoke<any>("get_settings");
+        if (settings?.auto_review_on_save) {
+          // Trigger auto review (non-blocking)
+          triggerAutoReview(projectPath).then((result) => {
+            if (result) {
+              // Switch to chat view to show review results
+              setActiveView("chat");
+              // The review prompt will be sent via the chat system
+              console.log("[AutoReview] Review triggered, session:", result.sessionId);
+            }
+          }).catch((e) => {
+            console.warn("[AutoReview] Failed to trigger review:", e);
+          });
+        }
+      }
     } catch {
       // Browser fallback
       console.log("Save not available in browser mode");
     }
-  }, [currentFile, activeFile]);
+  }, [currentFile, activeFile, projectPath]);
 
   // ── Global Keyboard Shortcuts ───────────────────────────────────
   useEffect(() => {
@@ -460,7 +593,7 @@ function App() {
                 onClick={() => setShowExplorer(!showExplorer)}
                 title="Toggle Explorer"
               >
-                📂
+                <PanelLeft size={15} />
               </button>
               {completionId && (
                 <button
@@ -468,7 +601,7 @@ function App() {
                   onClick={handleCancelCompletion}
                   title="Cancel completion"
                 >
-                  ■ Cancel
+                  <Square size={11} /> Cancel
                 </button>
               )}
             </div>
@@ -478,6 +611,13 @@ function App() {
                   key={file.path}
                   className={`tab ${file.path === activeFile ? "active" : ""}`}
                   onClick={() => setActiveFile(file.path)}
+                  onMouseDown={(e) => {
+                    // Middle-click closes the tab
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      closeFile(file.path);
+                    }
+                  }}
                   onContextMenu={(e) => handleTabContextMenu(e, file.path)}
                 >
                   <span className="tab-icon">{getFileIcon(file.name)}</span>
@@ -502,14 +642,14 @@ function App() {
                     onClick={handleFind}
                     title="Find in File (Ctrl+F)"
                   >
-                    🔍
+                    <Search size={15} />
                   </button>
                   <button
                     className={`editor-toolbar-btn ${showOutline ? "active" : ""}`}
                     onClick={handleToggleOutline}
                     title="Toggle Outline"
                   >
-                    📑
+                    <ListTree size={15} />
                   </button>
                 </>
               )}
@@ -531,19 +671,19 @@ function App() {
                 </div>
                 <div className="welcome-features">
                   <div className="feature-card">
-                    <span className="feature-icon">💬</span>
+                    <span className="feature-icon"><MessageSquare size={18} /></span>
                     <span>AI Chat</span>
                   </div>
                   <div className="feature-card">
-                    <span className="feature-icon">✨</span>
+                    <span className="feature-icon"><Sparkles size={18} /></span>
                     <span>Code Completion</span>
                   </div>
                   <div className="feature-card">
-                    <span className="feature-icon">🔍</span>
+                    <span className="feature-icon"><Search size={18} /></span>
                     <span>Codebase Search</span>
                   </div>
                   <div className="feature-card">
-                    <span className="feature-icon">📚</span>
+                    <span className="feature-icon"><BookOpen size={18} /></span>
                     <span>Smart Context</span>
                   </div>
                 </div>
@@ -564,6 +704,8 @@ function App() {
                       completionText={completionText}
                       onAcceptCompletion={handleAcceptCompletion}
                       onDismissCompletion={handleDismissCompletion}
+                      onCycleCompletion={handleCycleCompletion}
+                      candidateInfo={candidatesCount > 1 ? { index: candidateIndex, total: candidatesCount } : null}
                     />
                   </div>
                   {showOutline && (
@@ -616,8 +758,15 @@ function App() {
           </div>
         </div>
 
-        {/* Side Panel (Chat / Settings / Search) */}
-        <div className={`side-panel ${activeView !== "editor" ? "side-panel-open" : ""}`}>
+        {/* Side Panel (Chat / Settings / Search) — kept mounted so the
+            width transition animates the open/close; content renders only when open */}
+        <div
+          className={`side-panel ${activeView !== "editor" ? "side-panel-open" : ""} ${resizingPanel ? "side-panel-resizing" : ""}`}
+          style={{ width: activeView !== "editor" ? panelWidth : 0 }}
+        >
+          {activeView !== "editor" && (
+            <div className="side-panel-resizer" onMouseDown={startPanelResize} title="Drag to resize" />
+          )}
           {activeView === "chat" && <ChatPanel projectPath={projectPath} />}
           {activeView === "settings" && <Settings />}
           {activeView === "cloud" && <CloudAgentPanel />}
@@ -627,23 +776,39 @@ function App() {
               onFileSelect={handleSearchSelect}
             />
           )}
-          {activeView === "editor" && (
-            <div className="side-panel-empty">
-              <p>NeeCoder</p>
-              <p className="hint">Open Chat, Search, or Settings from the status bar</p>
-            </div>
+          {activeView === "graph" && projectPath && (
+            <DependencyGraph
+              projectPath={projectPath}
+              onFileSelect={(label) => {
+                // Try to find and open the file by label
+                const file = openFiles.find((f) => f.name === label);
+                if (file) {
+                  setActiveFile(file.path);
+                  setActiveView("editor");
+                }
+              }}
+            />
           )}
+          {activeView === "memory" && <MemoryPanel />}
+          {activeView === "insights" && <InsightsPanel />}
         </div>
       </div>
 
       {/* Terminal Panel */}
-      <div className={`terminal-wrapper ${showTerminal ? "terminal-open" : ""}`}>
+      <div
+        className={`terminal-wrapper ${showTerminal ? "terminal-open" : ""} ${resizingTerminal ? "terminal-resizing" : ""}`}
+        style={showTerminal ? { height: terminalHeight } : undefined}
+      >
+        {showTerminal && (
+          <div className="terminal-resizer" onMouseDown={startTerminalResize} title="Drag to resize" />
+        )}
         <TerminalPanel />
       </div>
 
       {/* Status Bar */}
       <StatusBar
         llmConnected={llmConnected}
+        localModelRunning={localModelRunning}
         projectPath={projectPath || ""}
         fileCount={openFiles.length}
         activeView={activeView}
@@ -660,6 +825,15 @@ function App() {
         }
         onCloudClick={() =>
           setActiveView(activeView === "cloud" ? "editor" : "cloud")
+        }
+        onGraphClick={() =>
+          setActiveView(activeView === "graph" ? "editor" : "graph")
+        }
+        onMemoryClick={() =>
+          setActiveView(activeView === "memory" ? "editor" : "memory")
+        }
+        onInsightsClick={() =>
+          setActiveView(activeView === "insights" ? "editor" : "insights")
         }
         onExplorerClick={() => setShowExplorer(!showExplorer)}
       />
@@ -699,39 +873,43 @@ function App() {
   );
 }
 
-function getFileIcon(name: string): string {
+function getFileIcon(name: string) {
   const ext = name.split(".").pop()?.toLowerCase();
   switch (ext) {
-    case "rs": return "🦀";
+    case "rs": return <Braces size={14} color="#e0654f" />;
     case "ts":
-    case "tsx": return "🔷";
+    case "tsx": return <FileCode2 size={14} color="#2f74c0" />;
     case "js":
-    case "jsx": return "🟨";
-    case "py": return "🐍";
-    case "go": return "🔵";
+    case "jsx": return <FileCode2 size={14} color="#c9b116" />;
+    case "py": return <FileCode size={14} color="#4f8cc9" />;
+    case "go": return <FileCode2 size={14} color="#00ADD8" />;
+    case "java": return <Coffee size={14} color="#b07219" />;
     case "css":
-    case "scss": return "🎨";
-    case "json": return "📋";
-    case "toml": return "⚙️";
-    case "md": return "📝";
-    case "html": return "🌐";
-    default: return "📄";
+    case "scss": return <Palette size={14} color="#563d7c" />;
+    case "json": return <FileJson size={14} color="#c9b116" />;
+    case "toml": return <FileCog size={14} color="#8a8aaa" />;
+    case "md": return <FileText size={14} color="#6c7086" />;
+    case "yml":
+    case "yaml": return <FileType size={14} color="#8a8aaa" />;
+    case "html": return <Globe size={14} color="#e34c26" />;
+    case "sql": return <Database size={14} color="#6c7086" />;
+    default: return <File size={14} color="#8a8aaa" />;
   }
 }
 
-function getSymbolIcon(kind: string): string {
+function getSymbolIcon(kind: string) {
   const k = kind.toLowerCase();
-  if (k.includes("function") || k.includes("method")) return "🔧";
-  if (k.includes("class")) return "🏛️";
-  if (k.includes("interface")) return "📐";
-  if (k.includes("struct")) return "📦";
-  if (k.includes("enum")) return "🔢";
-  if (k.includes("variable") || k.includes("const") || k.includes("field")) return "📌";
-  if (k.includes("module") || k.includes("namespace")) return "📁";
-  if (k.includes("type")) return "🏷️";
-  if (k.includes("macro")) return "⚡";
-  if (k.includes("trait")) return "🎯";
-  return "🔹";
+  if (k.includes("function") || k.includes("method")) return <Wrench size={13} />;
+  if (k.includes("class")) return <Landmark size={13} />;
+  if (k.includes("interface")) return <Shapes size={13} />;
+  if (k.includes("struct")) return <Box size={13} />;
+  if (k.includes("enum")) return <Layers size={13} />;
+  if (k.includes("variable") || k.includes("const") || k.includes("field")) return <MapPin size={13} />;
+  if (k.includes("module") || k.includes("namespace")) return <Folder size={13} />;
+  if (k.includes("type")) return <Tag size={13} />;
+  if (k.includes("macro")) return <Zap size={13} />;
+  if (k.includes("trait")) return <Target size={13} />;
+  return <Circle size={13} />;
 }
 
 function detectLanguage(filePath: string): string {

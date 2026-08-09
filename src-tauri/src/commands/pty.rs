@@ -11,7 +11,8 @@
 //! - Supports terminal resize (SIGWINCH)
 //! - Proper terminal emulation
 
-use portable_pty::{native_pty_system, CommandBuilder, PtySize, native_pty_system as PtySystem};
+use crate::terminal::{detect_shell, spawn_pty};
+use portable_pty::PtySize;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::io::{Read, Write};
@@ -35,7 +36,7 @@ impl PtyState {
         Self {
             pty_master: Arc::new(TokioMutex::new(None)),
             child: Arc::new(TokioMutex::new(None)),
-            shell_cmd: Arc::new(Mutex::new(detect_shell())),
+            shell_cmd: Arc::new(Mutex::new(detect_shell().0)),
             size: Arc::new(TokioMutex::new(PtySize {
                 rows: 24,
                 cols: 80,
@@ -43,27 +44,6 @@ impl PtyState {
                 pixel_height: 0,
             })),
         }
-    }
-}
-
-fn detect_shell() -> String {
-    #[cfg(target_os = "windows")]
-    {
-        // Prefer PowerShell Core (pwsh), then PowerShell 5 (powershell), then cmd
-        let has_pwsh = std::process::Command::new("pwsh")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if has_pwsh {
-            "pwsh".to_string()
-        } else {
-            "cmd".to_string()
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string())
     }
 }
 
@@ -87,50 +67,27 @@ pub async fn start_terminal(
         *lock
     };
 
-    // Create a new PTY pair
-    let pty_system = PtySystem();
-    let pair = pty_system
-        .openpty(size)
-        .map_err(|e| format!("Failed to open PTY: {}", e))?;
-
-    // Build the shell command
-    let mut cmd = CommandBuilder::new(&shell);
-    if cfg!(target_os = "windows") {
-        if shell == "cmd" {
-            cmd.arg("/Q"); // Quiet mode
-        }
-    } else {
-        cmd.arg("-i"); // Interactive mode for Unix shells
-    }
-
-    // Spawn the child process
-    let child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("Failed to spawn shell '{}': {}", shell, e))?;
-
-    // Get reader and writer from master BEFORE storing it
-    let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-    let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+    // Create a new PTY pair (shared spawn logic with agent sessions)
+    let handles = spawn_pty(&shell, size.rows, size.cols)?;
 
     // Store the PTY master and child
     {
         let mut master_lock = state.pty_master.lock().await;
-        *master_lock = Some(pair.master);
+        *master_lock = Some(handles.master);
     }
     {
         let mut child_lock = state.child.lock().await;
-        *child_lock = Some(child);
+        *child_lock = Some(handles.child);
     }
 
     // Store the reader in app state
     app.manage(PtyReader {
-        reader: Arc::new(TokioMutex::new(reader)),
+        reader: Arc::new(TokioMutex::new(handles.reader)),
     });
 
     // Store the writer in app state
     app.manage(PtyWriter {
-        writer: Arc::new(TokioMutex::new(writer)),
+        writer: Arc::new(TokioMutex::new(handles.writer)),
     });
 
     let app_clone = app.clone();

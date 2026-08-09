@@ -19,12 +19,12 @@
 //! ```
 
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use crate::event_bus::{EventBus, JsonlAppender};
 use serde::{Deserialize, Serialize};
 
 /// Telemetry event types written to the JSONL file.
@@ -124,42 +124,32 @@ impl TelemetryCounters {
 }
 
 /// Telemetry collector: thread-safe, manages both in-memory counters and JSONL file.
+/// The JSONL file is written through the shared `EventBus` appender core.
 pub struct TelemetryCollector {
     counters: TelemetryCounters,
-    file: Mutex<Option<fs::File>>,
-    telemetry_dir: PathBuf,
+    appender: Arc<JsonlAppender>,
 }
 
 impl TelemetryCollector {
-    /// Create a new collector. Initializes the telemetry directory and log file.
+    /// Create a new collector. Registers the telemetry file on the global event bus
+    /// and initializes the telemetry directory.
     pub fn new(app_data_dir: &Path) -> Self {
         let telemetry_dir = app_data_dir.join("telemetry");
-        let _ = fs::create_dir_all(&telemetry_dir);
 
-        let file_path = telemetry_dir.join("telemetry.jsonl");
-
-        // Open (or create) the telemetry log file in append mode
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&file_path)
-            .ok();
+        // Register on the global event bus (shared JSONL append core)
+        let appender = EventBus::global().register("telemetry", &telemetry_dir, "telemetry.jsonl");
 
         // Write a session marker
-        if let Some(ref f) = file {
-            let marker = serde_json::json!({
-                "event": "telemetry_init",
-                "ts": chrono::Utc::now().timestamp(),
-                "version": env!("CARGO_PKG_VERSION"),
-            });
-            let mut f = f;
-            let _ = writeln!(f, "{}", marker);
-        }
+        let marker = serde_json::json!({
+            "event": "telemetry_init",
+            "ts": chrono::Utc::now().timestamp(),
+            "version": env!("CARGO_PKG_VERSION"),
+        });
+        let _ = appender.append(&marker);
 
         Self {
             counters: TelemetryCounters::new(),
-            file: Mutex::new(file),
-            telemetry_dir,
+            appender,
         }
     }
 
@@ -168,14 +158,9 @@ impl TelemetryCollector {
         // Update in-memory counters
         self.update_counters(event);
 
-        // Append to JSONL file
-        if let Ok(mut guard) = self.file.lock() {
-            if let Some(ref mut f) = *guard {
-                if let Ok(json) = serde_json::to_string(event) {
-                    let _ = writeln!(f, "{}", json);
-                    let _ = f.flush();
-                }
-            }
+        // Append to JSONL file via the shared appender
+        if let Err(e) = self.appender.append(event) {
+            log::debug!("[Telemetry] Failed to record event: {}", e);
         }
     }
 
@@ -288,7 +273,7 @@ impl TelemetryCollector {
 
     /// Get the telemetry file path.
     pub fn file_path(&self) -> PathBuf {
-        self.telemetry_dir.join("telemetry.jsonl")
+        self.appender.path().to_path_buf()
     }
 
     /// Read the last N events from the telemetry file.

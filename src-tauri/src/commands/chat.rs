@@ -3,6 +3,9 @@ use crate::agent;
 use crate::agent::definition::AgentRegistry;
 use crate::agent::QuestionAwaiters;
 use crate::agent::ConfirmAwaiters;
+use crate::agent::PlanAction;
+use crate::agent::PlanApprovalAwaiters;
+use crate::agent::PauseControl;
 use crate::chat::{ChatMode, ChatEvent, ConversationMemory, CHAT_SYSTEM_PROMPT};
 use crate::config::AppSettings;
 use crate::llm::{self, ChatMessage as LlmMessage, ChatRequestParams};
@@ -101,6 +104,27 @@ fn sanitize_messages(
     result
 }
 
+/// Parse a context file reference. Supports the `path:line` form (e.g.
+/// `src/main.rs:42`) used by `@file:line` mentions. Windows drive-letter
+/// colons are handled safely because the suffix after the last colon must
+/// be a positive integer. Returns (path, optional 1-based line number).
+fn parse_context_file_ref(raw: &str) -> (&str, Option<usize>) {
+    if let Some(idx) = raw.rfind(':') {
+        let line_part = &raw[idx + 1..];
+        if !line_part.is_empty() && line_part.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(line) = line_part.parse::<usize>() {
+                // Numeric suffix — treat as a line reference (0 → whole file)
+                return if line >= 1 {
+                    (&raw[..idx], Some(line))
+                } else {
+                    (&raw[..idx], None)
+                };
+            }
+        }
+    }
+    (raw, None)
+}
+
 #[tauri::command]
 pub async fn send_message(
     app: tauri::AppHandle,
@@ -125,13 +149,17 @@ pub async fn send_message(
     let mut messages: Vec<LlmMessage> = vec![];
 
     // Inject context files as system messages (from @ file mentions) — parallel read
+    // `@file:line` references (path:line) inject only the referenced line and its
+    // surroundings instead of the whole file
     if let Some(ref files) = context_files {
         if !files.is_empty() {
+            const LINE_REFERENCE_RADIUS: usize = 20;
             let read_futures = files.iter().map(|fp| {
-                let fp = fp.clone();
+                let (path, line) = parse_context_file_ref(fp);
+                let path = path.to_string();
                 async move {
-                    match tokio::fs::read_to_string(&fp).await {
-                        Ok(content) => Some((fp, content)),
+                    match tokio::fs::read_to_string(&path).await {
+                        Ok(content) => Some((fp.clone(), content, line)),
                         Err(e) => {
                             log::warn!("[Chat] Failed to read context file {}: {}", fp, e);
                             None
@@ -141,7 +169,7 @@ pub async fn send_message(
             });
             let results = futures_util::future::join_all(read_futures).await;
             for result in results.into_iter().flatten() {
-                let (file_path, content) = result;
+                let (file_ref, content, line) = result;
                 let truncated = if content.len() > 50_000 {
                     // Use char-aware truncation to avoid UTF-8 boundary panics
                     let truncated: String = content.chars().take(50_000).collect();
@@ -149,9 +177,28 @@ pub async fn send_message(
                 } else {
                     content
                 };
+                let injected = if let Some(line) = line {
+                    // Extract only the referenced line and its surroundings
+                    let lines: Vec<&str> = truncated.lines().collect();
+                    if lines.is_empty() || line > lines.len() {
+                        // Line out of range — fall back to the whole (truncated) file
+                        truncated
+                    } else {
+                        let start = line.saturating_sub(LINE_REFERENCE_RADIUS).max(1);
+                        let end = (line + LINE_REFERENCE_RADIUS).min(lines.len());
+                        format!(
+                            "(line-reference excerpt: lines {}-{})\n{}",
+                            start,
+                            end,
+                            lines[start - 1..end].join("\n")
+                        )
+                    }
+                } else {
+                    truncated
+                };
                 messages.push(LlmMessage {
                     role: "system".into(),
-                    content: format!("File: {}\n```\n{}\n```", file_path, truncated),
+                    content: format!("File: {}\n```\n{}\n```", file_ref, injected),
                     images: None,
                     tool_calls: None,
                     tool_call_id: None,
@@ -338,8 +385,61 @@ pub async fn send_message(
         tool_call_id: None,
     });
 
+    // ── @codebase / #codebase RAG 注入（Ask / Edit / Agent 全模式）──
+    // 前端 @codebase 提及触发：检索整个代码库并注入最相关片段。
+    // 放在 is_agent 块之前，使 Ask/Edit 模式也获得同样的 RAG 上下文。
+    let has_codebase = message.contains("#codebase") || message.contains("@codebase");
+    if has_codebase {
+        if let Some(indexer) = app.try_state::<Arc<CodeIndexer>>() {
+            let indexer = indexer.inner().clone();
+            // Extract the actual query (remove markers)
+            let query = message.replace("#codebase", "").replace("@codebase", "").trim().to_string();
+            let search_query = if query.is_empty() { &message } else { &query };
+            if let Ok(results) = indexer.hybrid_search(search_query, 5).await {
+                if !results.is_empty() {
+                    let ctx = crate::rag::build_rag_context(
+                        &results.iter().map(|r| r.chunk.clone()).collect::<Vec<_>>(),
+                        5,
+                    );
+                    // Inject as system context at the beginning
+                    messages.insert(0, LlmMessage {
+                        role: "system".into(),
+                        content: format!("The user has requested codebase context. \
+                            Here are the relevant code chunks from the project:\n\n{}", ctx),
+                        images: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                    });
+                }
+            }
+        }
+    }
+
     // ── Extract memory context & project instructions (shared by all modes) ──
     let memory_context = memory.memory_manager().inject_memory_context();
+
+    // ── Ask 模式记忆 RAG：语义检索与当前问题最相关的记忆条目 ──
+    // 与整体 MEMORY.md 注入互补：MEMORY.md 提供全局上下文，这里提供
+    // 与问题高度相关的命中片段（BM25 或混合检索，自动降级）。
+    let ask_memory_rag: Option<String> = if matches!(mode, ChatMode::Ask) {
+        let mgr = memory.memory_manager();
+        let want_semantic = settings.memory_gc.semantic_search;
+        let results = if want_semantic {
+            mgr.hybrid_search_memory(&message, &settings, 5).await
+                .or_else(|_| mgr.search_memory(&message, 5))
+                .ok()
+        } else {
+            mgr.search_memory(&message, 5).ok()
+        };
+        results.map(|rs| {
+            rs.iter()
+                .map(|r| format!("- {}:{} — {}", r.file_path, r.line_number, r.line_content.trim()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }).filter(|s| !s.is_empty())
+    } else {
+        None
+    };
     let effective_project_path = project_path
         .as_ref()
         .map(|s| s.trim().to_string())
@@ -410,35 +510,6 @@ pub async fn send_message(
         }
         let custom_instructions = if custom_instructions.is_empty() { None } else { Some(custom_instructions) };
 
-        // ── #codebase / @codebase RAG 自动注入 ──
-        let mut messages = messages;
-        let has_codebase = message.contains("#codebase") || message.contains("@codebase");
-        if has_codebase {
-            if let Some(indexer) = app.try_state::<Arc<CodeIndexer>>() {
-                let indexer = indexer.inner().clone();
-                // Extract the actual query (remove markers)
-                let query = message.replace("#codebase", "").replace("@codebase", "").trim().to_string();
-                let search_query = if query.is_empty() { &message } else { &query };
-                if let Ok(results) = indexer.hybrid_search(search_query, 5).await {
-                    if !results.is_empty() {
-                        let ctx = crate::rag::build_rag_context(
-                            &results.iter().map(|r| r.chunk.clone()).collect::<Vec<_>>(),
-                            5,
-                        );
-                        // Inject as system context at the beginning
-                        messages.insert(0, LlmMessage {
-                            role: "system".into(),
-                            content: format!("The user has requested codebase context. \
-                                Here are the relevant code chunks from the project:\n\n{}", ctx),
-                            images: None,
-                            tool_calls: None,
-                            tool_call_id: None,
-                        });
-                    }
-                }
-            }
-        }
-
         // ── 智能上下文注入：Agent 模式自动检索相关文件 ──
         if !has_codebase {
             if let Some(ref ctx_files) = context_files {
@@ -504,9 +575,20 @@ pub async fn send_message(
             }
         }
 
+        // Register Agent pause control (flag + notify) for this session
+        let pause_flag = Arc::new(AtomicBool::new(false));
+        let pause_notify = Arc::new(tokio::sync::Notify::new());
+        if let Some(pc) = app.try_state::<PauseControl>() {
+            if let Ok(mut map) = pc.lock() {
+                map.insert(session_id.clone(), (pause_flag.clone(), pause_notify.clone()));
+            }
+        }
+
         let agent_def_cloned = agent_def.clone();
         let session_id_for_cleanup = session_id.clone();
         let memory_manager_for_flush = memory_manager.clone();
+        // Snapshot full settings for the post-run dreaming task (fire-and-forget)
+        let settings_for_dreaming = settings.clone();
 
         let is_plan_mode = plan_mode.unwrap_or(false);
 
@@ -584,6 +666,13 @@ pub async fn send_message(
                         }
                     }
 
+                    // Cleanup pause control
+                    if let Some(pc) = app.try_state::<PauseControl>() {
+                        if let Ok(mut map) = pc.lock() {
+                            map.remove(&session_id_for_cleanup);
+                        }
+                    }
+
                     // Emit error to frontend
                     let _ = app.emit("chat-event", ChatEvent::Error {
                         session_id: session_id.clone(),
@@ -597,6 +686,13 @@ pub async fn send_message(
             // Cleanup cancel flag
             if let Some(cancel_map) = app.try_state::<AgentCancelMap>() {
                 if let Ok(mut map) = cancel_map.lock() {
+                    map.remove(&session_id_for_cleanup);
+                }
+            }
+
+            // Cleanup pause control
+            if let Some(pc) = app.try_state::<PauseControl>() {
+                if let Ok(mut map) = pc.lock() {
                     map.remove(&session_id_for_cleanup);
                 }
             }
@@ -631,18 +727,10 @@ pub async fn send_message(
             drop(mem);
 
             // Dreaming: fire-and-forget LLM summarization of session → MEMORY.md
+            // Routes through the LLM Router: local Ollama first (privacy + cost), remote fallback.
             let memory_mgr = memory_manager_for_flush.clone();
-            let provider_clone = provider.clone();
-            let api_key_clone = api_key.clone();
-            let chat_model_clone = chat_model.clone();
             tokio::spawn(async move {
-                memory_mgr.dreaming(
-                    &session_msgs,
-                    &provider_clone,
-                    &api_key_clone,
-                    None,
-                    &chat_model_clone,
-                ).await;
+                memory_mgr.dreaming(&session_msgs, &settings_for_dreaming).await;
             });
 
             if let Err(e) = result {
@@ -697,6 +785,10 @@ pub async fn send_message(
     if !memory_context.is_empty() {
         system_prompt.push_str("\n\n## Cross-session Memory\n\n");
         system_prompt.push_str(&memory_context);
+    }
+    if let Some(ref rag) = ask_memory_rag {
+        system_prompt.push_str("\n\n## Relevant Memory (retrieved for this question)\n\n");
+        system_prompt.push_str(rag);
     }
     if let Some(ref instructions) = project_instructions {
         system_prompt.push_str("\n\n## Project Instructions\n\n");
@@ -806,6 +898,63 @@ pub async fn cancel_agent(
         }
     }
     let _ = app.emit("chat-event", ChatEvent::Cancelled { session_id, agent_id: None });
+    Ok(())
+}
+
+/// Pause a running agent. Sets the session-scoped pause flag; the agent main
+/// loop parks until `resume_agent` fires the notify. Idempotent.
+#[tauri::command]
+pub async fn pause_agent(
+    app: tauri::AppHandle,
+    session_id: String,
+    pause_control: State<'_, PauseControl>,
+) -> Result<(), String> {
+    if let Ok(map) = pause_control.lock() {
+        if let Some((flag, _notify)) = map.get(&session_id) {
+            flag.store(true, Ordering::SeqCst);
+            let _ = app.emit(
+                "chat-event",
+                ChatEvent::AgentStatus {
+                    session_id: session_id.clone(),
+                    agent_id: None,
+                    status: "pause_requested".into(),
+                    iteration: 0,
+                    total_iterations: 0,
+                    estimated_tokens: 0,
+                    elapsed_ms: 0,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Resume a paused agent: clears the flag and fires the notify so the main
+/// loop can continue. Idempotent.
+#[tauri::command]
+pub async fn resume_agent(
+    app: tauri::AppHandle,
+    session_id: String,
+    pause_control: State<'_, PauseControl>,
+) -> Result<(), String> {
+    if let Ok(map) = pause_control.lock() {
+        if let Some((flag, notify)) = map.get(&session_id) {
+            flag.store(false, Ordering::SeqCst);
+            notify.notify_one();
+            let _ = app.emit(
+                "chat-event",
+                ChatEvent::AgentStatus {
+                    session_id: session_id.clone(),
+                    agent_id: None,
+                    status: "resumed".into(),
+                    iteration: 0,
+                    total_iterations: 0,
+                    estimated_tokens: 0,
+                    elapsed_ms: 0,
+                },
+            );
+        }
+    }
     Ok(())
 }
 
@@ -923,10 +1072,52 @@ pub async fn answer_confirm(
     Ok(())
 }
 
+/// ── Plan Mode Approval Commands ──
+
+/// Send approval (session_id from PlanCreated event) to the waiting Agent.
+#[tauri::command]
+pub async fn approve_plan(
+    session_id: String,
+    awaiters: State<'_, PlanApprovalAwaiters>,
+) -> Result<(), String> {
+    let mut map = awaiters.lock().map_err(|e| format!("Lock error: {}", e))?;
+    if let Some(sender) = map.remove(&session_id) {
+        let _ = sender.send(PlanAction::Approve);
+    }
+    Ok(())
+}
+
+/// Reject a plan with an optional reason.
+#[tauri::command]
+pub async fn reject_plan(
+    session_id: String,
+    reason: Option<String>,
+    awaiters: State<'_, PlanApprovalAwaiters>,
+) -> Result<(), String> {
+    let mut map = awaiters.lock().map_err(|e| format!("Lock error: {}", e))?;
+    if let Some(sender) = map.remove(&session_id) {
+        let _ = sender.send(PlanAction::Reject(reason.unwrap_or_default()));
+    }
+    Ok(())
+}
+
+/// Skip plan — go straight to execution phase.
+#[tauri::command]
+pub async fn skip_plan(
+    session_id: String,
+    awaiters: State<'_, PlanApprovalAwaiters>,
+) -> Result<(), String> {
+    let mut map = awaiters.lock().map_err(|e| format!("Lock error: {}", e))?;
+    if let Some(sender) = map.remove(&session_id) {
+        let _ = sender.send(PlanAction::Skip);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_terminal_history(count: Option<usize>) -> Vec<String> {
     let n = count.unwrap_or(3);
-    let entries = crate::agent::tools::run_terminal_command::get_recent_terminal(n);
+    let entries = crate::terminal::get_recent_terminal(n);
     entries.into_iter().map(|(cmd, output, exit)| {
         format!("$ {}\n{}\nExit: {}", cmd, output, exit)
     }).collect()
@@ -934,7 +1125,7 @@ pub fn get_terminal_history(count: Option<usize>) -> Vec<String> {
 
 #[tauri::command]
 pub fn get_error_summary() -> String {
-    crate::agent::tools::run_terminal_command::get_error_summary()
+    crate::terminal::get_error_summary()
 }
 
 #[tauri::command]
@@ -1113,4 +1304,45 @@ pub async fn delete_branch(
     let storage = get_session_storage()?;
     storage.delete_branch(&session_id, &branch_id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_context_file_ref;
+
+    #[test]
+    fn test_parse_context_file_ref_plain_path() {
+        // No colon / no numeric suffix → no line reference
+        assert_eq!(parse_context_file_ref("src/main.rs"), ("src/main.rs", None));
+    }
+
+    #[test]
+    fn test_parse_context_file_ref_with_line() {
+        // `path:line` form → path + line
+        assert_eq!(parse_context_file_ref("src/main.rs:42"), ("src/main.rs", Some(42)));
+        assert_eq!(parse_context_file_ref("main.rs:1"), ("main.rs", Some(1)));
+        assert_eq!(parse_context_file_ref("main.rs:0"), ("main.rs", None));
+    }
+
+    #[test]
+    fn test_parse_context_file_ref_windows_drive() {
+        // Windows drive-letter colons must not be mistaken for line refs
+        assert_eq!(
+            parse_context_file_ref("C:\\workspace\\file.rs"),
+            ("C:\\workspace\\file.rs", None)
+        );
+        // Windows absolute path + line ref still works (last colon wins)
+        assert_eq!(
+            parse_context_file_ref("C:\\workspace\\file.rs:42"),
+            ("C:\\workspace\\file.rs", Some(42))
+        );
+    }
+
+    #[test]
+    fn test_parse_context_file_ref_non_numeric_suffix() {
+        // A colon not followed by digits is not a line ref (e.g. URLs, labels)
+        assert_eq!(parse_context_file_ref("docs/README.md:section"), ("docs/README.md:section", None));
+        assert_eq!(parse_context_file_ref("file.rs:"), ("file.rs:", None));
+    }
+}
+
 

@@ -12,6 +12,7 @@ fn make_ctx(prefix: &str, suffix: &str, language: &str) -> CompletionContext {
         cursor_column: 0,
         recent_lines: vec![],
         related_context: None,
+        recent_edits: vec![],
     }
 }
 
@@ -98,6 +99,24 @@ fn test_fim_prompt_structure_order() {
     assert!(code_pos < pre_pos);
     assert!(pre_pos < suf_pos);
     assert!(suf_pos < mid_pos);
+}
+
+#[test]
+fn test_fim_prompt_with_recent_edits() {
+    let mut ctx = make_ctx("", "", "rust");
+    ctx.recent_edits = vec!["src/main.rs".to_string(), "src/lib.rs".to_string()];
+    let prompt = build_fim_prompt(&ctx, "deepseek");
+    assert!(prompt.contains("--- Recent Changes ---"));
+    assert!(prompt.contains("// modified: src/main.rs"));
+    assert!(prompt.contains("// modified: src/lib.rs"));
+    assert!(prompt.contains("--- End Recent Changes ---"));
+}
+
+#[test]
+fn test_fim_prompt_no_recent_edits_section() {
+    let ctx = make_ctx("", "", "rust");
+    let prompt = build_fim_prompt(&ctx, "deepseek");
+    assert!(!prompt.contains("--- Recent Changes ---"));
 }
 
 // ── post_process_completion tests ──

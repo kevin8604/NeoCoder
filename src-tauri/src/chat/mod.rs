@@ -88,6 +88,9 @@ pub enum ChatEvent {
     FileRestored { session_id: String, agent_id: Option<String>, file_path: String, content: String },
     CheckpointCreated { session_id: String, agent_id: Option<String>, iteration: u32, commit_hash: Option<String>, files: Vec<String> },
     BudgetExhausted { session_id: String, agent_id: Option<String>, summary: String, max_iterations: u32 },
+    PlanCreated { plan: PlanCreate },
+    PlanApproved { plan: PlanApproved },
+    PlanRejected { plan: PlanRejected },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +128,38 @@ pub struct QuestionOption {
     pub label: String,
     pub description: String,
 }
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanCreate {
+    pub session_id: String,
+    pub agent_id: Option<String>,
+    pub plan_summary: String,
+    pub plan_steps: Vec<PlanStep>,
+    pub affected_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanStep {
+    pub order: u32, 
+    pub description: String, 
+    pub file_path :Option<String>,
+    pub tool_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanApproved {
+    pub session_id: String, 
+    pub agent_id: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanRejected {
+    pub session_id: String, 
+    pub agent_id: Option<String>,
+    pub reason: Option<String>,
+}
+
+
 
 /// Conversation memory manager — backed by Markdown files via MemoryManager.
 pub struct ConversationMemory {

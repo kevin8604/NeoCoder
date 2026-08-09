@@ -8,6 +8,7 @@ pub mod context;
 pub mod checkpoint;
 pub mod loop_detector;
 pub mod cloud;
+pub mod task_summarizer;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,16 +16,34 @@ use std::sync::Arc;
 use std::time::Instant;
 use chrono;
 use tauri::{Emitter, Manager};
-use tokio::sync::RwLock;
-use crate::chat::{ChatEvent, TodoItem, FileChange, DiffHunk};
+use tokio::sync::{RwLock, Notify};
+use crate::chat::{ChatEvent, DiffHunk, FileChange, PlanApproved, PlanCreate, PlanRejected, PlanStep, TodoItem};
 use crate::config::LlmProvider;
 use crate::llm;
 use crate::rag::CodeIndexer;
+use crate::lsp::LspManager;
 use crate::agent::definition::AgentDefinition;
 use crate::agent::loop_detector::{LoopDetector, LoopVerdict};
 use crate::sandbox::SandboxChecker;
 
-use tools::{ToolContext, ToolExecutor, PostExecuteAction};
+use tools::{ToolContext, ToolExecutor, PostExecuteAction, DispatchTask};
+
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all="snake_case")]
+pub struct Plan {
+    pub summary: String,
+    pub steps: Vec <PlanStep>,
+    #[serde(alias = "files")]
+    pub affected_files: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum  PlanAction {
+    Approve,
+    Reject(String),
+    Skip,
+}
 
 // ── 重新导出 ──
 
@@ -51,6 +70,8 @@ impl ToolDefinition {
 pub type ToolRegistry = Arc<Vec<ToolDefinition>>;
 pub type QuestionAwaiters = Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<String>>>>;
 pub type ConfirmAwaiters = Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>>;
+/// Awaiters for Plan Mode approval — maps session_id → sender that the Agent awaits on.
+pub type PlanApprovalAwaiters = Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<PlanAction>>>>;
 
 pub struct ToolCall {
     pub id: String,
@@ -221,8 +242,11 @@ fn is_read_only_tool(name: &str) -> bool {
 
 // ── AgentInstance ──
 
-/// Agent 实例，封装完整的循环逻辑、事件发射和工具调度
-/// 所有字段均为 owned 类型（无生命周期参数），支持 tokio::spawn 并行调度
+/// Session-scoped pause control shared between the frontend commands and the
+/// running AgentInstance. `pause_agent` sets the flag; the agent main loop
+/// blocks on the notify until `resume_agent` fires it.
+pub type PauseControl = std::sync::Mutex<std::collections::HashMap<String, (Arc<AtomicBool>, Arc<Notify>)>>;
+
 pub struct AgentInstance {
     pub agent_id: String,
     app: tauri::AppHandle,
@@ -248,6 +272,10 @@ pub struct AgentInstance {
     /// Context token budget before trimming (~2x max_tokens)
     max_context_tokens: usize,
     cancelled: Arc<AtomicBool>,
+    /// Pause flag + notify (session-scoped). When the flag is set, the main
+    /// loop parks until `resume_agent` resets it and notifies.
+    pause_flag: Arc<AtomicBool>,
+    pause_notify: Arc<Notify>,
     /// Optional override for system prompt (used by sub-agents with their own agent definition)
     system_prompt_override: Option<String>,
     /// Agent started at instant for elapsed time tracking
@@ -262,6 +290,15 @@ pub struct AgentInstance {
     recent_tool_calls: VecDeque<(String, u64)>,
     /// Planning mode: read-only analysis, no write operations
     pub plan_mode: bool,
+    ///// 计划文本（Planning 阶段产出，执行阶段参考）
+    plan_text: Option<String>,
+    /// 计划步骤（结构化）
+    plan_steps :Vec<PlanStep>,
+    /// 影响文件清单
+    affected_files: Vec<String>,
+    /// 计划最大迭代次数（单独预算，默认为 max_iterations 的 30%）
+    planning_max_iterations: usize,
+
     /// Current execution phase (Planning → Executing → Done)
     execution_phase: ExecutionPhase,
     /// Cross-session memory context (MEMORY.md + daily notes) injected into system prompt
@@ -306,6 +343,9 @@ pub struct AgentInstance {
     /// Each entry is a Result to simulate both success and failure responses.
     #[doc(hidden)]
     pub mock_llm_responses: Option<VecDeque<Result<llm::LlmResponse, String>>>,
+
+
+
 }
 
 impl AgentInstance {
@@ -458,6 +498,15 @@ impl AgentInstance {
 
         let context_window = crate::config::model_context_window(&chat_model);
 
+        // ── Pause control: pick up the session-scoped entry registered by
+        // send_message before spawn (fall back to a private pair when absent,
+        // e.g. sub-agents which are not individually pausable).
+        let (pause_flag, pause_notify) = app
+            .try_state::<PauseControl>()
+            .and_then(|pc| pc.lock().ok().map(|g| g.get(&session_id).cloned()))
+            .flatten()
+            .unwrap_or_else(|| (Arc::new(AtomicBool::new(false)), Arc::new(Notify::new())));
+
         let mut agent = Self {
             agent_id,
             app: app.clone(),
@@ -469,6 +518,7 @@ impl AgentInstance {
                 project_path,
                 indexer,
                 sandbox,
+                lsp_manager: app.try_state::<Arc<LspManager>>().map(|s| s.inner().clone()),
                 app_handle: Some(app),
                 session_id: Some(session_id),
                 tavily_api_key,
@@ -491,6 +541,8 @@ impl AgentInstance {
             max_tokens,
             max_context_tokens: context_window, // Dynamic context window based on model
             cancelled,
+            pause_flag,
+            pause_notify,
             system_prompt_override,
             started_at: None,
             total_tokens_est: 0,
@@ -498,6 +550,10 @@ impl AgentInstance {
             api_call_count: 0,
             recent_tool_calls: VecDeque::new(),
             plan_mode: false,
+            plan_text: None,
+            plan_steps: Vec::new(),
+            affected_files: Vec::new(),
+            planning_max_iterations: 0,
             execution_phase: ExecutionPhase::Executing,
             memory_context,
             consecutive_failures: HashMap::new(),
@@ -735,6 +791,60 @@ impl AgentInstance {
         }
     }
 
+    /// Proactive task-progress summarization.
+    ///
+    /// Runs BEFORE emergency compaction: when the context approaches ~55% of the
+    /// token budget (or 30k tokens for large budgets), older messages are replaced
+    /// with a structured task-progress summary via the Dreaming route (local
+    /// Ollama first, fallback remote). Emergency compaction then only needs to
+    /// handle the case where this proactive step was skipped or failed.
+    async fn summarize_task_progress_if_needed(&mut self) {
+        // Read local model config for Dreaming routing (non-blocking pattern)
+        let local_model = self
+            .app
+            .try_state::<Arc<RwLock<crate::config::AppSettings>>>()
+            .map(|s| tokio::task::block_in_place(|| s.blocking_read().local_model.clone()))
+            .unwrap_or_default();
+
+        let system_prompt = self.build_system_prompt();
+        let total_before = self.messages.len() as u32;
+
+        let outcome = task_summarizer::summarize_task_progress_if_needed(
+            &self.messages,
+            &system_prompt,
+            self.max_context_tokens,
+            &self.provider,
+            &self.api_key,
+            self.base_url.as_deref(),
+            &self.chat_model,
+            &local_model,
+        )
+        .await;
+
+        if outcome.performed {
+            let total_after = outcome.messages.len() as u32;
+            let removed = total_before.saturating_sub(total_after);
+            self.emit_log(
+                "info",
+                &format!(
+                    "Task progress summarized: {} -> {} messages ({} chars)",
+                    total_before, total_after, outcome.summary.len()
+                ),
+            );
+            let _ = self.app.emit(
+                "chat-event",
+                ChatEvent::ContextTrimmed {
+                    session_id: self.session_id.clone(),
+                    agent_id: Some(self.agent_id.clone()),
+                    trimmed_count: removed,
+                    total_before,
+                    total_after,
+                },
+            );
+            self.messages = outcome.messages;
+        }
+    }
+
     /// Filter tool definitions based on execution phase and iteration.
     /// - Planning phase: only read-only tools
     /// - Executing, early iterations (<2): exploration tools (read-only + todo_write)
@@ -933,6 +1043,27 @@ impl AgentInstance {
                 return Err("Agent cancelled by user".to_string());
             }
 
+            // Check pause request (user paused the agent mid-task; park until resumed)
+            if self.pause_flag.load(Ordering::Relaxed) {
+                self.emit_log("info", "Agent paused by user — waiting for resume");
+                while self.pause_flag.load(Ordering::Relaxed) {
+                    let elapsed = self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
+                    self.emit_status(
+                        "paused",
+                        iteration as u32,
+                        self.max_iterations as u32,
+                        self.total_tokens_est as u32,
+                        elapsed,
+                    );
+                    // Park until resume_agent fires the notify (or cancel breaks us out)
+                    self.pause_notify.notified().await;
+                    if self.cancelled.load(Ordering::Relaxed) {
+                        break;
+                    }
+                }
+                self.emit_log("info", "Agent resumed");
+            }
+
             // 发射思考状态（含迭代进度）
             let elapsed = self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
             self.emit_status(
@@ -996,6 +1127,9 @@ impl AgentInstance {
                     tool_call_id: None,
                 });
             }
+
+            // Proactive task-progress summarization (before emergency compaction)
+            self.summarize_task_progress_if_needed().await;
 
             // Compact context if it exceeds token budget
             self.compact_context_if_needed().await;
@@ -1096,20 +1230,74 @@ impl AgentInstance {
                         self.agent_id, text.len(),
                         text.chars().take(200).collect::<String>()
                     );
+                    
                     // Phase transition: Planning → Executing
                     if self.execution_phase == ExecutionPhase::Planning {
-                        self.execution_phase = ExecutionPhase::Executing;
-                        self.emit_log("info", "Planning phase complete — transitioning to Executing phase");
-                        self.emit_thinking(&format!("**Plan:**\n{}", text));
-                        // Inject the plan as a user message so LLM follows it in Executing phase
-                        self.messages.push(llm::ChatMessage {
-                            role: "user".into(),
-                            content: format!("Here is the plan I created. Now execute it:\n\n{}", text),
-                            images: None,
-                            tool_calls: None,
-                            tool_call_id: None,
-                        });
-                        continue; // Continue to Executing phase
+                        if let Some((summary, steps, files)) = try_extract_plan(&text) {
+                            // Clone before moving into self fields
+                            let plan_for_event = PlanCreate {
+                                session_id: self.session_id.clone(),
+                                agent_id: Some(self.agent_id.clone()),
+                                plan_summary: summary.clone(),
+                                plan_steps: steps.clone(),
+                                affected_files: files.clone(),
+                            };
+
+                            // Save plan state
+                            self.plan_text = Some(summary);
+                            self.plan_steps = steps;
+                            self.affected_files = files;
+
+                            // Create oneshot channel for user approval via shared state
+                            let (tx, rx) = tokio::sync::oneshot::channel::<PlanAction>();
+
+                            // Store sender in shared state so Tauri commands can reach it
+                            if let Some(awaiters) = self.app.try_state::<PlanApprovalAwaiters>() {
+                                awaiters.lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .insert(self.session_id.clone(), tx);
+                            }
+
+                            // Notify frontend to show PlanCard
+                            let _ = self.app.emit("chat-event", ChatEvent::PlanCreated {
+                                plan: plan_for_event,
+                            });
+
+                            self.emit_log("info", "Plan extracted — waiting for user approval");
+
+                            // Wait for user action (oneshot: single message)
+                            let action = rx.await.unwrap_or(PlanAction::Skip);
+
+                            // Clean up shared state
+                            if let Some(awaiters) = self.app.try_state::<PlanApprovalAwaiters>() {
+                                awaiters.lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .remove(&self.session_id);
+                            }
+
+                            match action {
+                                PlanAction::Approve => {
+                                    self.approve_plan();
+                                }
+                                PlanAction::Reject(reason) => {
+                                    self.reject_plan(&reason);
+                                }
+                                PlanAction::Skip => {
+                                    self.skip_plan();
+                                }
+                            }
+                        } else {
+                            // No structured plan found — prompt LLM to retry
+                            self.emit_log("warn", "No structured plan found in Planning response — asking LLM to retry");
+                            self.messages.push(llm::ChatMessage {
+                                role: "system".into(),
+                                content: "[PLAN_REQUIRED] You are in Planning phase. Please output a structured implementation plan in JSON format:\n```json\n{\"summary\": \"...\", \"steps\": [{\"order\": 1, \"description\": \"...\", \"file_path\": \"...\", \"tool_hint\": \"...\"}], \"affected_files\": [\"...\"]}\n```".into(),
+                                images: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                            });
+                        }
+                        continue;
                     }
 
                     self.emit_log("info", "Agent completed with text response");
@@ -1780,6 +1968,9 @@ impl AgentInstance {
                 });
             }
 
+            // Proactive task-progress summarization (before emergency compaction)
+            self.summarize_task_progress_if_needed().await;
+
             // Compact context if it exceeds token budget
             self.compact_context_if_needed().await;
 
@@ -2094,7 +2285,30 @@ impl AgentInstance {
                 );
                 result
             }
-            PostExecuteAction::DispatchAgent { agent_id, task } => {
+            PostExecuteAction::DispatchAgent { agent_id, task, background } => {
+                // Background mode: fire-and-forget with completion notification.
+                // Registers a CloudTask and returns immediately so the main agent
+                // keeps iterating; the CloudAgentPanel shows progress and the
+                // result is persisted to the session when done.
+                if background {
+                    return cloud::spawn_background_sub_agent(
+                        self.app.clone(),
+                        self.session_id.clone(),
+                        task.clone(),
+                        agent_id.clone(),
+                        self.tool_ctx.project_path.clone(),
+                    )
+                    .map(|task_id| {
+                        format!(
+                            "[BACKGROUND] Sub-agent '{}' dispatched in background. Task ID: {}. \
+                             You may continue with other work; the result will be delivered \
+                             to the user when complete.",
+                            agent_id, task_id
+                        )
+                    })
+                    .unwrap_or_else(|e| e);
+                }
+
                 let registry = self.app.try_state::<crate::agent::definition::AgentRegistry>()
                     .map(|s| s.inner().clone());
                 let registry = match registry {
@@ -2125,22 +2339,80 @@ impl AgentInstance {
                     None => return "Error: AgentRegistry not available".to_string(),
                 };
 
-                let task_tuples: Vec<(String, String, Option<String>, Option<Vec<String>>)> = tasks.into_iter()
-                    .map(|t| (t.agent_id, t.task, t.file_path, t.depends_on))
+                // Split background tasks (fire-and-forget) from foreground tasks
+                let mut background_ids: Vec<String> = Vec::new();
+                let foreground: Vec<DispatchTask> = tasks
+                    .into_iter()
+                    .filter_map(|t| {
+                        if t.background {
+                            // Launch background sub-agent (fire-and-forget)
+                            let task = t.task.clone();
+                            let agent_id = t.agent_id.clone();
+                            let agent_id_for_spawn = agent_id.clone();
+                            let project_path = self.tool_ctx.project_path.clone();
+                            let session_id = self.session_id.clone();
+                            let app = self.app.clone();
+                            let result = cloud::spawn_background_sub_agent(
+                                app,
+                                session_id,
+                                task,
+                                agent_id_for_spawn,
+                                project_path,
+                            );
+                            match result {
+                                Ok(id) => {
+                                    background_ids.push(format!("{} ({})", agent_id, id));
+                                    None
+                                }
+                                Err(e) => {
+                                    background_ids.push(format!("{} (failed: {})", agent_id, e));
+                                    None
+                                }
+                            }
+                        } else {
+                            Some(t)
+                        }
+                    })
                     .collect();
 
-                let results = sub_agent::run_sub_agents_parallel(
-                    &self.app,
-                    &self.session_id,
-                    &task_tuples,
-                    &registry,
-                    &self.provider,
-                    &self.api_key,
-                    self.base_url.as_deref(),
-                    &self.chat_model,
-                    self.tool_ctx.project_path.as_deref(),
-                ).await;
-                results.join("\n\n---\n\n")
+                let mut parts: Vec<String> = Vec::new();
+
+                // Run foreground tasks in parallel (existing behavior)
+                if !foreground.is_empty() {
+                    let task_tuples: Vec<(String, String, Option<String>, Option<Vec<String>>)> =
+                        foreground.into_iter()
+                            .map(|t| (t.agent_id, t.task, t.file_path, t.depends_on))
+                            .collect();
+
+                    let results = sub_agent::run_sub_agents_parallel(
+                        &self.app,
+                        &self.session_id,
+                        &task_tuples,
+                        &registry,
+                        &self.provider,
+                        &self.api_key,
+                        self.base_url.as_deref(),
+                        &self.chat_model,
+                        self.tool_ctx.project_path.as_deref(),
+                    ).await;
+                    parts.push(results.join("\n\n---\n\n"));
+                }
+
+                // Report background dispatches
+                if !background_ids.is_empty() {
+                    parts.push(format!(
+                        "[BACKGROUND] Dispatched {} sub-agent(s) in background: {}. \
+                         You may continue; results will be delivered to the user when complete.",
+                        background_ids.len(),
+                        background_ids.join(", ")
+                    ));
+                }
+
+                if parts.is_empty() {
+                    "Error: no tasks to dispatch".to_string()
+                } else {
+                    parts.join("\n\n---\n\n")
+                }
             }
             PostExecuteAction::None => {
                 self.execute_regular_tool(tc).await
@@ -2658,6 +2930,90 @@ impl AgentInstance {
             );
         }
     }
+
+    fn approve_plan(&mut self) {
+
+        self.execution_phase  = ExecutionPhase::Executing;
+        //step 2
+        if let Some(ref plan_text) = self.plan_text {
+            self.messages.push(llm::ChatMessage{
+                role: "system".into(),
+                content: format!("[Plan Approved]\n\nExecute the following plan step by step:\n\n{}",
+                plan_text),
+                images:None,
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+        
+        // step 3 发射to approved the  plan
+        let _ = self.app.emit(
+            "chat-event",
+            ChatEvent::PlanApproved  { plan: PlanApproved { 
+                session_id: self.session_id.clone(),
+                agent_id: Some(self.agent_id.clone())
+            } }
+        );
+
+        let elapsed = self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
+        self.emit_status("Plan approved — executing...", 0, self.max_iterations as u32, self.total_tokens_est as u32, elapsed);
+    }
+    
+    fn reject_plan(&mut self, reason :&str) {
+
+        //step1
+        if let Some(_) = self.plan_text {
+            let feedback = if reason.is_empty() {
+                "[Plan Rejected]\n\nThe plan was rejected. Please reconsider and produce a new plan.".to_string()
+            } else {
+                format!("[Plan Rejected]\n\nThe plan was rejected. Feedback: {}", reason)
+            };
+
+            self.messages.push(llm::ChatMessage{
+                role: "system".into(),
+                content: feedback,
+                images:None,
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+        self.plan_text = None;
+        self.plan_steps.clear();
+        self.affected_files.clear();
+
+
+        let _ = self.app.emit(
+            "chat-event",
+            ChatEvent::PlanRejected { plan: PlanRejected { 
+                session_id: self.session_id.clone(),
+                agent_id: Some(self.agent_id.clone()),
+                reason: Some(reason.to_string())
+            } }
+        );
+                self.emit_log("info", "Plan rejected"); 
+    }
+    
+    
+    fn skip_plan(&mut self) {
+        self.emit_log("info", "Plan skipped"); 
+        self.execution_phase = ExecutionPhase::Executing;
+        if let Some(ref plan_text) = self.plan_text {
+            self.messages.push(llm::ChatMessage{
+                role: "system".into(),
+                content: format!("[Plan Skipped]\n\nPlan: {}",
+                            plan_text),
+                images:None,
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+
+        self.plan_text=None;
+        self.plan_steps.clear();
+        self.affected_files.clear();
+    }
+
+
 }
 
 // ── Diff 算法 ──
@@ -2799,6 +3155,25 @@ pub async fn run_agent(
     agent.execution_phase = if plan_mode { ExecutionPhase::Planning } else { ExecutionPhase::Executing };
     agent.run().await
 }
+
+fn try_extract_plan(text:&str) ->Option<(String, Vec<PlanStep>, Vec<String>)> {
+    let start = text.find("```json")?;
+    let json_start = start + "```json".len();
+    let json_start = text[json_start..]
+                            .find("\n")
+                            .map(|i| json_start +i+1)
+                            .unwrap_or(json_start);
+    let json_end = text[json_start..]
+                        .find("```")?;
+    let json_str= &text[json_start..json_start + json_end];
+
+    let plan :Plan = serde_json::from_str(json_str).ok()?;
+
+    Some((plan.summary, plan.steps, plan.affected_files))
+    
+}
+
+
 
 #[cfg(test)]
 mod tests {

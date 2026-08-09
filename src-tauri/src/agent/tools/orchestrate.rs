@@ -35,7 +35,10 @@ impl super::Tool for DispatchAgent {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        PostExecuteAction::DispatchAgent { agent_id, task }
+        let background = args.get("background")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        PostExecuteAction::DispatchAgent { agent_id, task, background }
     }
 }
 
@@ -109,7 +112,10 @@ impl super::Tool for DispatchAgents {
                             .filter_map(|v| v.as_str().map(|s| s.to_string()))
                             .collect::<Vec<_>>()
                         );
-                    DispatchTask { agent_id, task, file_path, depends_on }
+                    let background = t.get("background")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    DispatchTask { agent_id, task, file_path, depends_on, background }
                 }).collect()
             })
             .unwrap_or_default();

@@ -3,6 +3,7 @@ name = "neecoder-tauri"
 version = "0.1.0"
 edition = "2024"
 description = "NeeCoder - AI Coding Assistant"
+default-run = "neecoder-tauri"
 
 [package.metadata]
 tauri-dev-url = "http://localhost:1420"

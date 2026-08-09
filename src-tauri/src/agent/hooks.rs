@@ -5,9 +5,9 @@
 //! a pluggable, ordered hook chain.
 
 use std::collections::{HashMap, VecDeque};
-use std::io::Write as _;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use futures_util::FutureExt;
 use tauri::{Emitter, Manager};
 use crate::llm;
 
@@ -399,6 +399,41 @@ impl LifecycleHook for AutoDiagnoseHook {
 
         let work_dir = ctx.project_path.as_deref().unwrap_or(".").to_string();
 
+        // ── C3: test-compile check — for Rust projects, also compile test code
+        // (cargo test --no-run) so compile errors inside #[cfg(test)] modules are
+        // caught before the agent declares victory. Runs in parallel with the
+        // per-file diagnostics below.
+        let is_rust_project = std::path::Path::new(&work_dir).join("Cargo.toml").exists()
+            && modified_files.iter().any(|f| f.ends_with(".rs"));
+        let test_work_dir = work_dir.clone();
+        let test_check = async move {
+            if !is_rust_project {
+                return None;
+            }
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                tokio::process::Command::new("cargo")
+                    .args(["test", "--no-run", "--message-format=short"])
+                    .current_dir(&test_work_dir)
+                    .output(),
+            ).await;
+            if let Ok(Ok(out)) = output {
+                let combined = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+                let has_errors = out.status.code() != Some(0) && !combined.trim().is_empty();
+                if has_errors {
+                    let relevant: Vec<&str> = combined.lines()
+                        .filter(|l| l.contains("error"))
+                        .take(15)
+                        .collect();
+                    if !relevant.is_empty() {
+                        return Some(format!("[cargo test --no-run] test code failed to compile:\n{}", relevant.join("\n")));
+                    }
+                }
+            }
+            None
+        }
+        .boxed();
+
         // Build diagnostic futures — all run in parallel
         let diag_futures = modified_files.iter().map(|file_path| {
             let file_path = file_path.clone();
@@ -449,10 +484,12 @@ impl LifecycleHook for AutoDiagnoseHook {
                 }
                 None
             }
+            .boxed()
         });
 
         // Run all diagnostics in parallel
-        let results = futures_util::future::join_all(diag_futures).await;
+        let all_futures = diag_futures.chain(std::iter::once(test_check));
+        let results = futures_util::future::join_all(all_futures).await;
         let mut all_diagnostics = String::new();
         for result in results.into_iter().flatten() {
             all_diagnostics.push_str(&result);
@@ -475,6 +512,18 @@ impl LifecycleHook for AutoDiagnoseHook {
                 "[AUTO-DIAGNOSTICS] The following files were modified and have errors. Fix them now:\n{}",
                 all_diagnostics
             ),
+            images: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        // ── C3: close the loop — remind the agent to verify with the test tools
+        additional_messages.push(llm::ChatMessage {
+            role: "system".into(),
+            content: "[VERIFY_LOOP] After fixing the errors above, run the relevant tests \
+                (use the run_tests tool, or run_test for a specific suite) to confirm the fix \
+                actually passes. Do not report success until the tests pass. If tests fail, \
+                read the failure output and iterate on the fix.".into(),
             images: None,
             tool_calls: None,
             tool_call_id: None,
@@ -698,11 +747,16 @@ impl LifecycleHook for ErrorPatternHook {
 /// for post-mortem analysis and replay capability.
 pub struct AuditLogHook {
     log_dir: Option<std::path::PathBuf>,
+    /// 按 session_id 缓存的 JSONL appender（共享 EventBus 写入核心）
+    appenders: std::sync::Mutex<HashMap<String, Arc<crate::event_bus::JsonlAppender>>>,
 }
 
 impl AuditLogHook {
     pub fn new(log_dir: Option<std::path::PathBuf>) -> Self {
-        Self { log_dir }
+        Self {
+            log_dir,
+            appenders: std::sync::Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -722,7 +776,19 @@ impl LifecycleHook for AuditLogHook {
             None => return PostHookResult::default(),
         };
 
-        let log_path = log_dir.join(format!("agent_audit_{}.jsonl", ctx.session_id));
+        // Reuse the per-session appender (shared EventBus JSONL core)
+        let appender = match self.appenders.lock() {
+            Ok(mut map) => map
+                .entry(ctx.session_id.clone())
+                .or_insert_with(|| {
+                    Arc::new(crate::event_bus::JsonlAppender::open(
+                        log_dir,
+                        &format!("agent_audit_{}.jsonl", ctx.session_id),
+                    ))
+                })
+                .clone(),
+            Err(_) => return PostHookResult::default(),
+        };
 
         let entry = serde_json::json!({
             "ts": chrono::Utc::now().to_rfc3339(),
@@ -735,19 +801,8 @@ impl LifecycleHook for AuditLogHook {
             "is_error": ErrorPatternHook::is_error_result(result),
         });
 
-        match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-        {
-            Ok(mut file) => {
-                if let Err(e) = writeln!(file, "{}", entry.to_string()) {
-                    log::warn!("[AuditLog] Failed to write: {}", e);
-                }
-            }
-            Err(e) => {
-                log::warn!("[AuditLog] Failed to open {}: {}", log_path.display(), e);
-            }
+        if let Err(e) = appender.append(&entry) {
+            log::warn!("[AuditLog] Failed to write: {}", e);
         }
 
         PostHookResult::default()

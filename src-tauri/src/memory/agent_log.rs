@@ -7,8 +7,9 @@
 //! - Crash recovery (resume from last known state)
 //! - Debugging (trace exact tool call sequence)
 
-use std::path::{Path, PathBuf};
-use tokio::io::AsyncWriteExt;
+use std::path::Path;
+
+use crate::event_bus::JsonlAppender;
 
 /// A single log entry in the agent's JSONL log.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -78,10 +79,10 @@ pub struct ToolCallInfo {
 /// Append-only JSONL agent log.
 ///
 /// Each line in the file is a single `LogEntry` JSON object.
-/// Writes are flushed to disk after each entry via `sync_data()`.
+/// Writes go through the shared `JsonlAppender` (EventBus core) and are
+/// flushed to disk after each entry.
 pub struct AgentLog {
-    file_path: PathBuf,
-    file: Option<tokio::fs::File>,
+    appender: JsonlAppender,
     next_seq: u64,
     agent_id: String,
 }
@@ -93,32 +94,19 @@ impl AgentLog {
     /// is initialized based on existing entries.
     pub async fn new(session_dir: &Path, session_id: &str, agent_id: &str) -> Result<Self, String> {
         let log_dir = session_dir.join("agent_logs");
-        tokio::fs::create_dir_all(&log_dir)
-            .await
-            .map_err(|e| format!("Failed to create agent log dir: {}", e))?;
-
-        let file_path = log_dir.join(format!("{}.jsonl", session_id));
+        let file_name = format!("{}.jsonl", session_id);
 
         // Count existing entries to initialize next_seq
+        let file_path = log_dir.join(&file_name);
         let next_seq = if file_path.exists() {
-            let content = tokio::fs::read_to_string(&file_path)
-                .await
-                .unwrap_or_default();
+            let content = std::fs::read_to_string(&file_path).unwrap_or_default();
             content.lines().filter(|l| !l.is_empty()).count() as u64
         } else {
             0
         };
 
-        let file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&file_path)
-            .await
-            .map_err(|e| format!("Failed to open agent log file: {}", e))?;
-
         Ok(Self {
-            file_path,
-            file: Some(file),
+            appender: JsonlAppender::open(&log_dir, &file_name),
             next_seq,
             agent_id: agent_id.to_string(),
         })
@@ -126,11 +114,6 @@ impl AgentLog {
 
     /// Append a log entry and flush to disk.
     pub async fn append(&mut self, entry_type: LogEntryType) -> Result<(), String> {
-        let file = self
-            .file
-            .as_mut()
-            .ok_or_else(|| "Agent log file not open".to_string())?;
-
         let entry = LogEntry {
             seq: self.next_seq,
             timestamp: chrono::Utc::now().timestamp(),
@@ -139,25 +122,12 @@ impl AgentLog {
         };
         self.next_seq += 1;
 
-        let line = serde_json::to_string(&entry)
-            .map_err(|e| format!("Failed to serialize log entry: {}", e))?;
-
-        file.write_all(line.as_bytes())
-            .await
-            .map_err(|e| format!("Failed to write log entry: {}", e))?;
-        file.write_all(b"\n")
-            .await
-            .map_err(|e| format!("Failed to write log newline: {}", e))?;
-        file.sync_data()
-            .await
-            .map_err(|e| format!("Failed to sync log file: {}", e))?;
-
-        Ok(())
+        self.appender.append(&entry)
     }
 
     /// Get the file path of this log.
     pub fn path(&self) -> &Path {
-        &self.file_path
+        self.appender.path()
     }
 
     /// Read and replay all entries from a log file.

@@ -5,6 +5,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+pub mod health;
+pub mod router;
+
+pub use router::{LlmRoute, LlmRouter, TaskType};
+
 /// Shared cancellation flag for streaming requests
 pub type CancelFlag = Arc<AtomicBool>;
 
@@ -23,6 +28,8 @@ pub struct FimRequest {
     pub prompt: String,
     pub system_prompt: String,
     pub max_tokens: u32,
+    /// Sampling temperature (0.0 = deterministic). Default 0.2.
+    pub temperature: f32,
 }
 
 /// Chat request parameters
@@ -170,7 +177,7 @@ async fn stream_openai_fim(
         "prompt": request.prompt,
         "suffix": "",
         "max_tokens": request.max_tokens,
-        "temperature": 0.2,
+        "temperature": request.temperature,
         "stream": true,
         "stop": ["\n\n\n"],
     });
@@ -342,7 +349,7 @@ async fn stream_anthropic_fim(
         }],
         system: request.system_prompt,
         max_tokens: request.max_tokens,
-        temperature: 0.2,
+        temperature: request.temperature,
         thinking_enabled: false,
         thinking_budget: 0,
     };
@@ -482,7 +489,7 @@ async fn stream_ollama_fim(
         "system": request.system_prompt,
         "stream": true,
         "options": {
-            "temperature": 0.2,
+            "temperature": request.temperature,
             "num_predict": request.max_tokens,
         }
     });

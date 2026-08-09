@@ -1,4 +1,5 @@
-import React from "react";
+import React, { type ReactNode } from "react";
+import { FileText, Zap, Wrench, FolderTree, Folder } from "lucide-react";
 
 export interface MentionItem {
   id: string;
@@ -6,6 +7,8 @@ export interface MentionItem {
   type: "file" | "symbol" | "command" | "codebase" | "folder";
   description?: string;
   path?: string;
+  /** Optional line number for `@file:line` references */
+  line?: number;
 }
 
 interface MentionMenuProps {
@@ -16,12 +19,12 @@ interface MentionMenuProps {
   onSelect: (item: MentionItem) => void;
 }
 
-const typeIcons: Record<string, string> = {
-  file: "📄",
-  symbol: "⚡",
-  command: "🔧",
-  codebase: "🗂️",
-  folder: "📁",
+const typeIcons: Record<string, ReactNode> = {
+  file: <FileText size={13} />,
+  symbol: <Zap size={13} />,
+  command: <Wrench size={13} />,
+  codebase: <FolderTree size={13} />,
+  folder: <Folder size={13} />,
 };
 
 const typeLabels: Record<string, string> = {
@@ -52,7 +55,7 @@ export default function MentionMenu({ visible, items, selectedIndex, position, o
             // visual only via CSS :hover
           }}
         >
-          <span className="mention-icon">{typeIcons[item.type] || "📄"}</span>
+          <span className="mention-icon">{typeIcons[item.type] || <FileText size={13} />}</span>
           <div className="mention-info">
             <span className="mention-label">{item.label}</span>
             {item.description && (

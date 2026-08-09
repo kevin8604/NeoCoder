@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::fs;
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
 /// Tokenize text into lowercase alphanumeric words (min 2 chars).
 fn tokenize(text: &str) -> Vec<String> {
@@ -33,7 +34,7 @@ pub struct MemorySearch {
     memory_dir: std::path::PathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemSearchResult {
     pub file_path: String,
     pub line_number: usize,
@@ -164,7 +165,8 @@ impl MemorySearch {
     }
 
     /// Recursively collect .md files (skipping messages/ subdirectories).
-    fn collect_docs(&self, dir: &Path, docs: &mut Vec<(String, String)>) -> Result<(), String> {
+    /// Exposed for semantic search (embedding-based) which needs the same corpus.
+    pub(crate) fn collect_docs(&self, dir: &Path, docs: &mut Vec<(String, String)>) -> Result<(), String> {
         let entries = fs::read_dir(dir)
             .map_err(|e| format!("Failed to read dir {}: {}", dir.display(), e))?;
 

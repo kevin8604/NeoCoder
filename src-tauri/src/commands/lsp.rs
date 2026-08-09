@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use tauri::State;
-use crate::lsp::{LSPHoverInfo, LSPSymbol, LspManager};
+use crate::lsp::{LSPCodeAction, LSPHoverInfo, LSPSymbol, LSPTextEdit, LspManager};
 
 #[tauri::command]
 pub async fn start_lsp(
@@ -71,4 +71,41 @@ pub async fn shutdown_lsp(
     log::info!("Shutting down all LSP clients");
     lsp_manager.shutdown_all().await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn rename_symbol(
+    lsp_manager: State<'_, Arc<LspManager>>,
+    language: String,
+    file_path: String,
+    line: u32,
+    column: u32,
+    new_name: String,
+) -> Result<Vec<LSPTextEdit>, String> {
+    log::info!("Renaming symbol at {}:{}:{} to '{}'", file_path, line, column, new_name);
+    lsp_manager.rename_symbol(&language, &file_path, line, column, &new_name).await
+}
+
+#[tauri::command]
+pub async fn get_code_actions(
+    lsp_manager: State<'_, Arc<LspManager>>,
+    language: String,
+    file_path: String,
+    line: u32,
+    column: u32,
+    diagnostics: Option<Vec<serde_json::Value>>,
+) -> Result<Vec<LSPCodeAction>, String> {
+    log::info!("Getting code actions at {}:{}:{}", file_path, line, column);
+    let diags = diagnostics.unwrap_or_default();
+    lsp_manager.code_action(&language, &file_path, line, column, &diags).await
+}
+
+#[tauri::command]
+pub async fn format_document(
+    lsp_manager: State<'_, Arc<LspManager>>,
+    language: String,
+    file_path: String,
+) -> Result<Vec<LSPTextEdit>, String> {
+    log::info!("Formatting document {}", file_path);
+    lsp_manager.format_document(&language, &file_path).await
 }

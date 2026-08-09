@@ -1,4 +1,4 @@
-use crate::agent::utils::resolve_path;
+use crate::fs_service::FileService;
 use super::{Tool, ToolContext};
 
 pub struct ReadFile;
@@ -11,21 +11,13 @@ impl Tool for ReadFile {
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> String {
         let raw = args["path"].as_str().unwrap_or("");
-        let path = resolve_path(ctx.project_path.as_deref(), raw);
-        // Sandbox: check read access
-        if let Err(e) = ctx.sandbox.check_path(&path, ctx.project_path.as_deref(), false) {
-            return format!("Error: Sandbox blocked: {}", e);
-        }
-        // Sandbox: check file size
-        if let Err(e) = ctx.sandbox.check_file_size(&path) {
-            return format!("Error: {}", e);
-        }
+        let path = FileService::resolve(ctx.project_path.as_deref(), raw);
 
         // Optional start_line / end_line (1-based, inclusive)
         let start_line = args["start_line"].as_u64().map(|v| v as usize);
         let end_line = args["end_line"].as_u64().map(|v| v as usize);
 
-        match std::fs::read_to_string(&path) {
+        match FileService::read_text(&path, ctx.project_path.as_deref(), Some(&ctx.sandbox)) {
             Ok(content) => {
                 let all_lines: Vec<&str> = content.lines().collect();
                 let total_lines = all_lines.len();
@@ -82,3 +74,4 @@ impl Tool for ReadFile {
         }
     }
 }
+

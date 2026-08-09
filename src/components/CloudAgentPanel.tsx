@@ -5,6 +5,7 @@ import {
   listenToEvent,
   type CloudTask,
 } from "../hooks/useTauri";
+import { Cloud, X, RefreshCw, Link } from "lucide-react";
 
 export default function CloudAgentPanel() {
   const [tasks, setTasks] = useState<CloudTask[]>([]);
@@ -80,16 +81,16 @@ export default function CloudAgentPanel() {
   return (
     <div className="cloud-agent-panel">
       <div className="cloud-agent-header">
-        <h3>☁️ Cloud Agents</h3>
+        <h3><Cloud size={15} /> Cloud Agents</h3>
         <button className="file-explorer-action-btn" onClick={loadTasks} title="Refresh">
-          ↻
+          <RefreshCw size={13} />
         </button>
       </div>
 
       {error && (
         <div className="file-explorer-error">
           {error}
-          <button onClick={() => setError(null)}>✕</button>
+          <button onClick={() => setError(null)}><X size={12} /></button>
         </div>
       )}
 
@@ -123,7 +124,7 @@ export default function CloudAgentPanel() {
                       onClick={() => handleCancel(task.id)}
                       title="Cancel"
                     >
-                      ✕
+                      <X size={12} />
                     </button>
                   )}
                 </div>
@@ -138,7 +139,7 @@ export default function CloudAgentPanel() {
                 )}
                 {task.pr_url && (
                   <div className="cloud-task-pr">
-                    🔗{" "}
+                    <Link size={12} />{" "}
                     <a href={task.pr_url} target="_blank" rel="noopener noreferrer">
                       Pull Request
                     </a>
