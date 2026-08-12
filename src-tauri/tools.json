@@ -434,14 +434,14 @@
   },
   {
     "name": "git_commit",
-    "description": "Stage all changes and create a git commit. Use git_status first to review changes before committing.",
+    "description": "Stage all changes and create a git commit. Use git_status first to review changes before committing. Omit 'message' and pass auto_summary: true to have the LLM derive a commit message from the staged diff (matching recent commit style).",
     "parameters": {
       "type": "object",
       "properties": {
-        "message": { "type": "string", "description": "Commit message (required)" },
+        "message": { "type": "string", "description": "Commit message. Optional when auto_summary is true." },
+        "auto_summary": { "type": "boolean", "description": "If true and no message given, derive a concise commit message from the staged diff via LLM (falls back to a file summary when the LLM is unavailable)." },
         "add_all": { "type": "boolean", "description": "If true (default), run 'git add -A' before committing. Set to false to commit only already-staged changes." }
-      },
-      "required": ["message"]
+      }
     }
   },
   {
@@ -534,6 +534,48 @@
         "wait_ms": { "type": "integer", "description": "Milliseconds to wait for the page to load before capturing (default: 1500)" }
       },
       "required": ["url"]
+    }
+  },
+  {
+    "name": "web_browser",
+    "description": "Interactively drive a persistent headless browser via Chrome DevTools Protocol. Actions: navigate (load a URL), click (CSS selector), type (CSS selector + text), screenshot (capture PNG attached as image), get_text (page inner text), close (shut the session down). The browser stays alive between calls, so you can navigate -> click -> type -> screenshot in sequence to verify and interact with a web UI. Start the dev server first via run_terminal_command. Example: web_browser { action: 'navigate', url: 'http://localhost:5173' } then web_browser { action: 'click', selector: '#login-btn' } then web_browser { action: 'screenshot' }.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "description": "One of: navigate, click, type, screenshot, get_text, close" },
+        "url": { "type": "string", "description": "For navigate: full URL to load, e.g. http://localhost:5173" },
+        "selector": { "type": "string", "description": "For click/type: CSS selector of the target element, e.g. '#submit' or 'button.primary'" },
+        "text": { "type": "string", "description": "For type: text to insert into the focused element" },
+        "wait_ms": { "type": "integer", "description": "For navigate: max milliseconds to wait for page load (default: 1500)" }
+      },
+      "required": ["action"]
+    }
+  },
+  {
+    "name": "generate_tests",
+    "description": "Generate unit/integration tests for a source file via LLM, write them to the conventional location (tests/<name>_tests.rs for Rust, <name>.test.ts next to the file for JS/TS, tests/test_<name>.py for Python, <name>_test.go for Go) and run them by default. Returns the test output so failures can be fixed in a generate-run-fix loop. Example: generate_tests { target: 'src/lib.rs' } or generate_tests { target: 'src/util.ts', write: true, run: true }.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "target": { "type": "string", "description": "Path to the source file to test, relative to the project root, e.g. 'src/lib.rs'" },
+        "framework": { "type": "string", "description": "Optional test framework hint, e.g. 'tokio' or 'vitest'" },
+        "write": { "type": "boolean", "description": "Write the generated tests to disk (default: true). Set false to only get the code back." },
+        "run": { "type": "boolean", "description": "Run the generated tests after writing (default: true)." }
+      },
+      "required": ["target"]
+    }
+  },
+  {
+    "name": "auto_fix",
+    "description": "Diagnose a failed command and produce a fix plan via LLM. Pass the failed command and its error output; optionally a file_path for context. Returns root cause, concrete fix steps and a suggested retry command. Use it when run_terminal_command / run_tests / run_build fails, to close the fail-diagnose-fix-retry loop without pasting raw error dumps into the chat. Example: auto_fix { command: 'cargo test --lib', error: 'error[E0425]: cannot find value', file_path: 'src/lib.rs' }.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "description": "The command that failed, e.g. 'cargo test --lib'" },
+        "error": { "type": "string", "description": "The error output of the failed command (stderr or the tail of stdout). Also accepts 'output' / 'stderr' aliases." },
+        "file_path": { "type": "string", "description": "Optional: a source file involved in the failure, to include as context" }
+      },
+      "required": ["command", "error"]
     }
   }
 ]

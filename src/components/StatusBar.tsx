@@ -1,4 +1,4 @@
-import { Folder, FileText, FolderOpen, Search, Cloud, BarChart3, Brain, TrendingUp, MessageSquare, Settings, Sun, Moon, History } from "lucide-react";
+import { Folder, FileText, FolderOpen, Search, Cloud, BarChart3, Brain, TrendingUp, MessageSquare, Settings, Sun, Moon, History, Activity } from "lucide-react";
 
 interface StatusBarProps {
   llmConnected: boolean;
@@ -16,6 +16,7 @@ interface StatusBarProps {
   onMemoryClick?: () => void;
   onInsightsClick?: () => void;
   onCheckpointsClick?: () => void;
+  onTimelineClick?: () => void;
   /** null = local models disabled; true/false = Ollama health probe result */
   localModelRunning?: boolean | null;
 }
@@ -36,6 +37,7 @@ export default function StatusBar({
   onMemoryClick,
   onInsightsClick,
   onCheckpointsClick,
+  onTimelineClick,
   localModelRunning,
 }: StatusBarProps) {
   const projectName = projectPath
@@ -85,6 +87,11 @@ export default function StatusBar({
         <div className="status-item" onClick={onCheckpointsClick} title="Checkpoints (iteration snapshots & diff)">
           <History size={13} />
           <span>Checkpoints</span>
+        </div>
+
+        <div className="status-item" onClick={onTimelineClick} title="Agent Timeline (tool calls & events)">
+          <Activity size={13} />
+          <span>Timeline</span>
         </div>
 
         <div className="status-item" onClick={onMemoryClick} title="Memory Panel">

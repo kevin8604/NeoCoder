@@ -4777,3 +4777,141 @@ textarea:focus-visible {
 .ckpt-diff-content {
   flex: 1;
 }
+
+/* ---- Agent Timeline Panel ---- */
+.timeline-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timeline-list {
+  padding: 12px 8px;
+}
+
+.timeline-entry {
+  display: flex;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.timeline-entry:hover {
+  background: var(--bg-hover);
+}
+
+.timeline-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 2px;
+}
+
+.timeline-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.timeline-entry.tool.running .timeline-dot {
+  color: var(--warning);
+}
+
+.timeline-entry.tool.done .timeline-dot {
+  color: var(--success);
+}
+
+.timeline-entry.tool.error .timeline-dot {
+  color: var(--error);
+}
+
+.timeline-entry.checkpoint .timeline-dot {
+  color: var(--accent);
+}
+
+.timeline-entry.edit .timeline-dot {
+  color: var(--info);
+}
+
+.timeline-entry.plan .timeline-dot {
+  color: var(--accent);
+}
+
+.timeline-spin {
+  animation: timeline-rotate 1s linear infinite;
+}
+
+@keyframes timeline-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.timeline-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.timeline-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+}
+
+.timeline-tool {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.timeline-duration {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.timeline-time {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.timeline-detail {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 2px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
+}
+
+.timeline-detail.expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.timeline-entry.status .timeline-tool {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.timeline-entry.thinking .timeline-tool {
+  font-weight: 400;
+  font-style: italic;
+}
+
+.timeline-entry.thinking .timeline-detail {
+  -webkit-line-clamp: 3;
+}

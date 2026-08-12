@@ -21,7 +21,7 @@ const BROWSER_CANDIDATES: &[&str] = &[
 ];
 
 /// Locate a headless-capable browser (Edge preferred, Chrome fallback).
-fn find_headless_browser() -> Option<std::path::PathBuf> {
+pub(crate) fn find_headless_browser() -> Option<std::path::PathBuf> {
     for c in BROWSER_CANDIDATES {
         let p = std::path::Path::new(c);
         if p.exists() {
@@ -43,7 +43,7 @@ fn find_headless_browser() -> Option<std::path::PathBuf> {
 }
 
 /// Return the error message for an invalid URL, or None when acceptable.
-fn url_error(url: &str) -> Option<String> {
+pub(crate) fn url_error(url: &str) -> Option<String> {
     if url.is_empty() {
         return Some(
             "[ERROR] web_preview requires a 'url' argument (e.g. web_preview { url: 'http://localhost:1420' })".to_string(),

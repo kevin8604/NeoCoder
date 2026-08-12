@@ -14,7 +14,7 @@ NeeCoder is a desktop AI coding assistant built with **Tauri 2.0 + React + Rust*
 ### Features
 
 - **Three Chat Modes** — Ask (Q&A), Edit (code suggestions with diff preview), Agent (autonomous tool execution)
-- **AI Agent System** — Iterative reasoning loop with 19 built-in tools, sub-agent orchestration, and dangerous operation confirmation
+- **AI Agent System** — Iterative reasoning loop with 41 built-in tools, sub-agent orchestration, and dangerous operation confirmation
 - **Intelligent Code Completion** — FIM (Fill-in-the-Middle) paradigm with LRU caching and ghost text display
 - **RAG Code Search** — Hybrid search combining vector similarity (60%) and BM25 keyword matching (40%)
 - **Multi-Provider LLM** — Supports OpenAI, DeepSeek, Anthropic, and Ollama (local)
@@ -22,6 +22,10 @@ NeeCoder is a desktop AI coding assistant built with **Tauri 2.0 + React + Rust*
 - **Memory System** — Session persistence (Markdown), long-term memory (MEMORY.md), daily notes, and dreaming (LLM-generated summaries)
 - **MCP Protocol** — Connect to external MCP servers for extended tool capabilities
 - **Cloud Agent** — Background task execution with status tracking and cancellation
+- **Browser Automation** — Persistent CDP session (navigate / click / type / screenshot / text extraction) for UI verification
+- **Test-Driven Loop** — `generate_tests` + line-coverage guidance (`coverage`) + TDD state machine, closed with `run_tests` / `run_build` verification
+- **Error Self-Healing** — `auto_fix` diagnoses failed commands (root cause + fix steps + retry command), driving the fail → diagnose → fix → retry loop
+- **Agent Timeline** — Real-time event stream panel (tool calls, thinking, checkpoints, retries) for execution visibility
 - **Security** — Dangerous command interception, operation confirmation dialogs, API key encryption
 
 ### Tech Stack
@@ -98,22 +102,38 @@ NeeCoder/
 |------|-------------|:---:|
 | `read_file` | Read file contents | |
 | `write_file` | Create/overwrite files | |
+| `append_file` | Append content to file | |
 | `edit` | Precise string replacement | |
 | `delete_file` | Delete a file | Yes |
-| `run_terminal_command` | Execute shell commands | Yes |
+| `list_directory` | List directory contents | |
+| `create_directory` | Create directories | |
+| `delete_directory` | Recursively delete directories | Yes |
 | `search_codebase` | RAG semantic code search | |
 | `grep` | Text pattern search | |
 | `glob` | Glob pattern file matching | |
-| `list_directory` | List directory contents | |
-| `create_directory` | Create directories | |
 | `get_symbols` | Extract symbol definitions | |
 | `get_diagnostics` | Compiler/linter diagnostics | |
+| `memory_search` | Memory system semantic search | |
+| `run_terminal_command` | Execute shell commands | Yes |
+| `run_tests` | Detect project type & run tests (read-only) | |
+| `run_build` | Detect project type & run build (read-only) | |
+| `run_terminal_session` | Persistent PTY shell session | |
+| `git_status` / `git_diff` / `git_log` / `git_blame` | Inspect repo state & history | |
+| `git_commit` | Stage & commit changes (`auto_summary` derives message from diff) | |
+| `git_branch` / `git_checkout` / `git_stash` / `git_push` | Branch, checkout, stash, push | |
 | `web_search` | Web search | |
 | `web_fetch` | Fetch web page content | |
+| `web_preview` | Screenshot a running web app (headless) | |
+| `web_browser` | Persistent CDP browser automation (navigate/click/type/screenshot) | |
+| `generate_tests` | Generate unit/integration tests via LLM & run them | |
+| `coverage` | Line-coverage guidance (`cargo llvm-cov` uncovered lines) | |
+| `tdd` | TDD state machine (start/stop/inspect) | |
+| `auto_fix` | Diagnose a failed command → root cause + fix steps + retry | |
+| `generate_diagram` | Generate Mermaid diagrams | |
 | `todo_write` | Task list management | |
 | `ask_user_question` | Ask user during execution | |
-| `append_file` | Append content to file | |
-| `dispatch_agent` | Spawn sub-agents | |
+| `dispatch_agent` / `dispatch_agents` | Spawn sub-agents (serial/parallel) | |
+| `a2a_invoke` | Invoke remote A2A agents | |
 
 ### Built-in Agents
 
@@ -137,7 +157,7 @@ NeeCoder 是一款基于 **Tauri 2.0 + React + Rust** 构建的桌面 AI 编程�
 ### 核心功能
 
 - **三种对话模式** — Ask（问答）、Edit（带 diff 预览的代码建议）、Agent（自主工具执行）
-- **AI Agent 系统** — 迭代推理循环，19 个内置工具，子 Agent 调度，危险操作确认
+- **AI Agent 系统** — 迭代推理循环，41 个内置工具，子 Agent 调度，危险操作确认
 - **智能代码补全** — FIM（Fill-in-the-Middle）范式，LRU 缓存，幽灵文本展示
 - **RAG 代码搜索** — 混合搜索：向量相似度（60%）+ BM25 关键词匹配（40%）
 - **多 LLM 提供商** — 支持 OpenAI、DeepSeek、Anthropic 和 Ollama（本地部署）
@@ -145,6 +165,10 @@ NeeCoder 是一款基于 **Tauri 2.0 + React + Rust** 构建的桌面 AI 编程�
 - **记忆系统** — 会话持久化（Markdown）、长期记忆（MEMORY.md）、每日笔记、Dreaming（LLM 摘要生成）
 - **MCP 协议** — 连接外部 MCP 服务器以扩展工具能力
 - **云 Agent** — 后台任务执行，状态跟踪与取消支持
+- **浏览器自动化** — 持久化 CDP 会话（导航/点击/输入/截图/文本提取），用于 UI 验证
+- **测试驱动闭环** — `generate_tests` + 行覆盖率引导（`coverage`）+ TDD 状态机，由 `run_tests` / `run_build` 验证闭环
+- **错误自愈** — `auto_fix` 诊断失败命令（根因 + 修复步骤 + 重试命令），驱动"失败→诊断→修复→重试"循环
+- **Agent 执行时间线** — 实时事件流面板（工具调用、思考、检查点、重试），执行过程全程可见
 - **安全机制** — 危险命令拦截、操作确认对话框、API Key 加密存储
 
 ### 技术栈
@@ -221,22 +245,38 @@ NeeCoder/
 |------|------|:---:|
 | `read_file` | 读取文件内容 | |
 | `write_file` | 创建/覆写文件 | |
+| `append_file` | 追加内容到文件 | |
 | `edit` | 精确字符串替换 | |
 | `delete_file` | 删除文件 | 是 |
-| `run_terminal_command` | 执行终端命令 | 是 |
+| `list_directory` | 列出目录内容 | |
+| `create_directory` | 创建目录 | |
+| `delete_directory` | 递归删除目录 | 是 |
 | `search_codebase` | RAG 语义代码搜索 | |
 | `grep` | 文本模式搜索 | |
 | `glob` | Glob 模式文件匹配 | |
-| `list_directory` | 列出目录内容 | |
-| `create_directory` | 创建目录 | |
 | `get_symbols` | 提取符号定义 | |
 | `get_diagnostics` | 编译器/linter 诊断 | |
+| `memory_search` | 记忆系统语义搜索 | |
+| `run_terminal_command` | 执行终端命令 | 是 |
+| `run_tests` | 识别项目类型并运行测试（只读） | |
+| `run_build` | 识别项目类型并运行构建（只读） | |
+| `run_terminal_session` | 持久化 PTY shell 会话 | |
+| `git_status` / `git_diff` / `git_log` / `git_blame` | 查看仓库状态与历史 | |
+| `git_commit` | 提交变更（`auto_summary` 从 diff 推导消息） | |
+| `git_branch` / `git_checkout` / `git_stash` / `git_push` | 分支、切换、暂存、推送 | |
 | `web_search` | 网页搜索 | |
 | `web_fetch` | 获取网页内容 | |
+| `web_preview` | 截取运行中 Web 应用截图（无头浏览器） | |
+| `web_browser` | 持久化 CDP 浏览器自动化（导航/点击/输入/截图） | |
+| `generate_tests` | LLM 生成单元/集成测试并运行 | |
+| `coverage` | 行覆盖率引导（`cargo llvm-cov` 未覆盖行） | |
+| `tdd` | TDD 状态机（启动/停止/查看） | |
+| `auto_fix` | 诊断失败命令 → 根因 + 修复步骤 + 重试 | |
+| `generate_diagram` | 生成 Mermaid 图表 | |
 | `todo_write` | 任务列表管理 | |
 | `ask_user_question` | 执行中向用户提问 | |
-| `append_file` | 追加内容到文件 | |
-| `dispatch_agent` | 调度子 Agent | |
+| `dispatch_agent` / `dispatch_agents` | 调度子 Agent（串行/并行） | |
+| `a2a_invoke` | 调用远程 A2A Agent | |
 
 ### 内置 Agent
 

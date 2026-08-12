@@ -276,17 +276,23 @@ pub trait LifecycleHook: Send + Sync {
 }
 ```
 
-**7 个内置 Hook：**
+**13 个内置 Hook：**
 
 | Hook | 级别 | 功能 |
 |------|------|------|
 | `SnapshotHook` | pre_tool | 文件修改前快照（支持 undo/rollback） |
 | `ConfirmHook` | pre_tool | 危险操作确认（delete/terminal） |
-| `OutputTruncateHook` | post_tool | 超长工具输出安全截断 |
 | `SensitiveDataFilterHook` | post_tool | 过滤敏感信息（API Key 等） |
-| `ErrorPatternHook` | post_tool | 检测工具输出中的错误模式 |
-| `AutoDiagnoseHook` | post_tool_batch | 文件修改后自动诊断并注入修复提示 |
+| `PromptInjectionGuardHook` | post_tool | 标记不可信内容注入模式 |
+| `ErrorPatternHook` | post_tool | 检测工具输出中的错误模式与重试循环 |
+| `AutoRollbackHook` | post_tool | 重复验证失败时回滚文件修改 |
+| `TddGateHook` | post_tool | 根据 run_tests 结果驱动 TDD 状态机相位转换 |
+| `FailureMemoryHook` | post_tool | 失败模式写入记忆库供后续参考 |
+| `PreviewImageHook` | post_tool | 将 `[SCREENSHOT]` 标记转为 base64 视觉消息注入 LLM |
 | `AuditLogHook` | post_tool_batch | 记录工具调用审计日志 |
+| `OutputTruncateHook` | post_tool | 超长工具输出安全截断 |
+| `FileChangeTrackerHook` | post_tool | 文件变更事件推送到前端 |
+| `AutoDiagnoseHook` | post_tool_batch | 文件修改后自动诊断并注入修复提示 |
 
 **执行机制：** `post_tool_batch_chain` 遍历所有 Hook，但仅对覆写了相应方法的 Hook 执行实际逻辑；其余 Hook 因默认空实现不产生副作用。
 
@@ -369,7 +375,7 @@ pub trait Tool: Send + Sync {
 - `execute()` — 2 分钟超时 (`DEFAULT_TOOL_TIMEOUT_MS = 120_000`)
 - `register_raw()` — 支持动态注册 MCP 桥接工具
 
-**30 个工具一览：**
+**41 个内置工具一览：**
 
 | 分类 | 工具 | 功能 | 确认 |
 |------|------|------|:---:|
@@ -387,22 +393,32 @@ pub trait Tool: Send + Sync {
 | | `get_symbols` | 提取文件中的符号定义 | |
 | | `get_diagnostics` | 获取编译器/linter 诊断 | |
 | | `memory_search` | 记忆系统语义搜索 | |
-| **终端** | `run_terminal_command` | 执行 shell 命令 | **是** |
+| **终端/构建** | `run_terminal_command` | 执行 shell 命令（一次性进程） | **是** |
+| | `run_terminal_session` | 持久化 PTY shell 会话（cd/环境变量跨调用保留） | |
+| | `run_tests` | 识别项目类型（Cargo/npm/pytest/go）并运行测试，只读 | |
+| | `run_build` | 识别项目类型并运行构建，返回退出码 + 错误定位 | |
 | **Git** | `git_status` | 查看 Git 仓库状态 | |
 | | `git_diff` | 查看文件差异 | |
-| | `git_commit` | 提交变更 | |
+| | `git_commit` | 提交变更（`auto_summary` 参数让 LLM 从 staged diff 推导提交消息，失败回退 name-status 摘要） | |
 | | `git_log` | 查看提交历史 | |
 | | `git_blame` | 查看文件逐行修改历史 | |
 | | `git_branch` | 管理分支 | |
 | | `git_push` | 推送到远程 | |
 | | `git_checkout` | 切换分支/恢复文件 | |
 | | `git_stash` | 暂存/恢复工作区 | |
-| **网络** | `web_search` | Tavily 网页搜索（降级 DuckDuckGo） | |
+| **网络/浏览器** | `web_search` | Tavily 网页搜索（降级 DuckDuckGo） | |
 | | `web_fetch` | 获取网页内容（HTML 转纯文本） | |
+| | `web_preview` | 无头 Edge/Chrome 截取 Web 应用截图，`[SCREENSHOT]` 标记经 PreviewImageHook 注入视觉消息 | |
+| | `web_browser` | 持久化 CDP 浏览器自动化：navigate/click/type/screenshot/get_text/close，页面跨调用保持存活 | |
+| **测试/质量** | `generate_tests` | LLM 按语言约定生成测试（tests/、*.test.ts、test_*.py、*_test.go）并默认运行，生成-运行-修复闭环 | |
+| | `coverage` | 行覆盖率引导：`cargo llvm-cov` 报告未覆盖行（JSON 缓存 + 过滤） | |
+| | `tdd` | TDD 状态机启停/查看，相位转换由 TddGateHook 从 run_tests 结果驱动 | |
+| | `auto_fix` | 失败命令诊断：LLM 输出根因 + 修复步骤 + 重试命令，闭环"失败→诊断→修复→重试" | |
 | **交互** | `ask_user_question` | 向用户提问并阻塞等待回答 | |
 | | `todo_write` | 创建/更新任务列表 | |
 | | `generate_diagram` | 生成 Mermaid 图表 | |
-| **调度** | `dispatch_agent` / `dispatch_agents` | 调度子 Agent | |
+| **调度** | `dispatch_agent` / `dispatch_agents` | 调度子 Agent（串行/并行 + 文件冲突检测） | |
+| | `a2a_invoke` | 调用远程 A2A 协议 Agent | |
 
 ### 4.10 子 Agent 调度 ([agent/sub_agent.rs](src-tauri/src/agent/sub_agent.rs))
 
@@ -443,8 +459,8 @@ pub struct AgentDefinition {
 - `ChatContext` — `active_file`、`selected_code`、`file_mentions`、`symbol_mentions`、`images`
 - `ChatMode` — `Ask` / `Edit` / `Agent`
 
-**事件枚举 `ChatEvent`（16 种变体）：**
-`Started` → `Delta` → `Finished` → `ToolCall` → `ToolResult` → `ToolRetry` → `TodoUpdate` → `AskUserQuestion` → `ConfirmRequest` → `AgentThinking` → `AgentStatus` → `AgentLog` → `ContextTrimmed` → `EditDiff` → `Error` / `Cancelled`
+**事件枚举 `ChatEvent`（21 种变体）：**
+`Started` → `Delta` → `Finished` → `ToolCall` → `ToolResult` → `ToolRetry` → `TodoUpdate` → `AskUserQuestion` → `ConfirmRequest` → `AgentThinking` → `AgentStatus` → `AgentLog` → `ContextTrimmed` → `EditDiff` → `Error` / `Cancelled` → `FileRestored` → `CheckpointCreated` → `BudgetExhausted` → `PlanCreated` / `PlanApproved` / `PlanRejected`
 
 **三种模式：**
 - **Ask** — 直接 `stream_chat`，流式返回
@@ -610,7 +626,7 @@ pub struct AppSettings {
 
 ### 4.24 命令层 (Tauri Commands)
 
-**10 个命令模块，50+ 个 Tauri 命令：**
+**16 个命令模块，50+ 个 Tauri 命令：**
 
 | 模块 | 关键命令 | 功能 |
 |------|---------|------|
@@ -618,11 +634,16 @@ pub struct AppSettings {
 | **completion** | `request_completion` / `cancel_completion` | FIM 补全 |
 | **chat** | `send_message` / `new_session` / `list_sessions` / `cancel_agent` / `answer_agent_question` / `answer_confirm` / `start_cloud_agent` | 对话与 Agent |
 | **agent** | `save_agent` / `delete_agent` | 自定义 Agent 管理 |
+| **cloud** | 云 Agent 任务启停/查询 | 云 Agent 管理 |
+| **a2a** | A2A 远程 Agent 调用 | A2A 协议 |
+| **memory** | 记忆浏览/搜索/统计 | 记忆系统 |
 | **project** | `open_project` / `get_file_tree` / `read_file` / `write_file` / `accept_change` / `reject_change` | 文件操作 |
 | **edit_inline** | `edit_inline` | 内联代码编辑（LLM 驱动） |
 | **pty** | `start_terminal` / `write_stdin` / `resize_terminal` / `stop_terminal` | PTY 终端 |
 | **lsp** | `start_lsp` / `get_symbols` / `get_hover_info` | LSP |
 | **search** | `search_codebase` / `reindex_project` / `get_index_stats` | RAG 搜索 |
+| **dependency_graph** | `get_dependency_graph` | 依赖图扫描 |
+| **review** | `trigger_auto_review` | 自动代码审查 |
 | **mcp** | `list_mcp_servers` / `connect_mcp_server` / `disconnect_mcp_server` | MCP 管理 |
 | **skill** | `list_skills` / `execute_skill` | Skill 执行 |
 
@@ -633,7 +654,7 @@ pub struct AppSettings {
 ### 5.1 入口与根组件
 
 **[App.tsx](src/App.tsx)** — 根组件，管理全局状态：
-- `activeView` — `editor` / `chat` / `settings` / `search` / `cloud` / `terminal`
+- `activeView` — `editor` / `chat` / `settings` / `search` / `cloud` / `terminal` / `graph` / `memory` / `insights` / `checkpoints` / `timeline`
 - `projectPath` / `openFiles` / `activeFile`
 - `completionId` / `completionText` — 补全状态
 - `showOutline` / `outlineSymbols` — 大纲面板
@@ -684,6 +705,22 @@ pub struct AppSettings {
 
 **[CloudAgentPanel.tsx](src/components/CloudAgentPanel.tsx)** — 云 Agent 任务管理
 
+**[AgentTimelinePanel.tsx](src/components/AgentTimelinePanel.tsx)** — Agent 执行时间线
+- 订阅 `chat-event`，渲染工具调用/结果/重试、思考、状态、检查点、编辑、计划等事件流
+- 工具调用成功/失败状态标记、耗时显示、点击展开详情、自动滚动
+
+**[CheckpointPanel.tsx](src/components/CheckpointPanel.tsx)** — 迭代检查点与 diff 面板
+- 展示每轮迭代快照（commit hash、文件变更），支持 diff 查看与回滚
+
+**[MemoryPanel.tsx](src/components/MemoryPanel.tsx)** / **[InsightsPanel.tsx](src/components/InsightsPanel.tsx)** — 记忆与遥测面板
+- 记忆：长期记忆/MEMORY.md 浏览与搜索
+- Insights：遥测统计与 Agent 审计日志（JSONL）
+
+**[DependencyGraph.tsx](src/components/DependencyGraph.tsx)** — 依赖图可视化
+- 后端扫描项目依赖关系，cytoscape 渲染
+
+**[SearchPanel.tsx](src/components/SearchPanel.tsx)** — RAG 混合搜索界面
+
 ### 5.3 Tauri API 抽象层
 
 **[useTauri.ts](src/hooks/useTauri.ts)** — 30+ 个 API 函数封装
@@ -705,7 +742,7 @@ pub struct AppSettings {
 
 | 事件名 | 用途 |
 |--------|------|
-| `chat-event` | 对话流式事件（16 种变体） |
+| `chat-event` | 对话流式事件（21 种变体，含 ToolCall/ToolResult/ToolRetry/CheckpointCreated/PlanCreated 等） |
 | `completion-event` | 代码补全流式事件 |
 | `cloud-agent-event` | 云 Agent 任务状态变更 |
 | `pty-output` | 终端输出数据 |
@@ -728,11 +765,14 @@ pub struct AppSettings {
         → stream_chat → parse tool_calls
         → pre_tool_hook_chain (Snapshot/Confirm)
         → ToolExecutor.execute() [2min timeout]
-        → post_tool_hook_chain (Truncate/Filter/ErrorPattern)
+        → 失败重试: 可重试错误自动重试 1 次 ([RETRY_FAILED]/[RETRY_SUCCESS] 标记)
+        → 死锁检测: 同参工具连续 3 次 → [DEADLOCK_DETECTED] 提示换策略
+        → post_tool_hook_chain (Truncate/Filter/ErrorPattern/AutoRollback/TddGate)
         → post_tool_batch_chain (AutoDiagnose/AuditLog)
         → loop_detector.check() → InjectWarning / HardStop
         → checkpoint.create()
-        → emit ToolCall/ToolResult/EditDiff...
+        → emit ToolCall/ToolResult/EditDiff/CheckpointCreated...
+      → 命令失败时: 系统提示词引导 auto_fix 诊断 → 修复 → 重试（错误自愈循环）
       → 循环结束
     → 持久化消息 + append_note + dreaming
 ← Events → ChatPanel 实时渲染

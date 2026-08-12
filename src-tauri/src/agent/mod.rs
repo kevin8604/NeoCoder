@@ -129,6 +129,15 @@ After writing or editing code, diagnostics are automatically checked for the mod
 
 When running commands that produce errors (compilation, linting, tests), an `--- Error Summary ---` section highlights file paths and line numbers. Use the Edit tool to fix these errors immediately rather than just reporting them to the user.
 
+## Error Self-Healing Loop (fail → diagnose → fix → retry)
+
+When a command (run_terminal_command / run_tests / run_build / web_preview) fails with an unfamiliar or complex error:
+1. Call `auto_fix` with the failed `command`, the `error` output (and an optional `file_path`) to get a structured diagnosis: root cause, concrete fix steps, retry command.
+2. Apply the fix steps (edit files / run commands).
+3. Re-run the retry command and verify it now succeeds.
+4. If the same failure recurs after a fix attempt, change strategy — do not loop on identical retries (a repeated failure signals a wrong diagnosis, not bad luck).
+For trivial errors (missing import, typo, single line in the `--- Error Summary ---`), fix directly with Edit without calling auto_fix — it costs an extra LLM round-trip.
+
 ## Editing Discipline
 
 - **Read before edit**: Never call edit/write_file on a file you haven't read in this session. Read it first to know the exact current content.

@@ -1222,9 +1222,9 @@ impl LifecycleHook for FailureMemoryHook {
 
 // ── PreviewImageHook ──
 
-/// Converts `web_preview` screenshots into vision-capable LLM messages.
+/// Converts `web_preview` / `web_browser` screenshots into vision-capable LLM messages.
 ///
-/// The web_preview tool saves a PNG and returns a `[SCREENSHOT] <path>`
+/// Both tools save a PNG and return a `[SCREENSHOT] <path>`
 /// marker. This hook reads the file, base64-encodes it as a data URL and
 /// injects it as a user message with `images` set, so vision-capable models
 /// can actually see the rendered page and self-correct UI issues. The tool
@@ -1243,7 +1243,7 @@ impl LifecycleHook for PreviewImageHook {
         result: &str,
         _ctx: &HookContext,
     ) -> PostHookResult {
-        if tool_name != "web_preview" {
+        if tool_name != "web_preview" && tool_name != "web_browser" {
             return PostHookResult::default();
         }
 

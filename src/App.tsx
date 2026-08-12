@@ -8,6 +8,7 @@ import CodeEditor from "./components/CodeEditor";
 import FileExplorer from "./components/FileExplorer";
 import CloudAgentPanel from "./components/CloudAgentPanel";
 import CheckpointPanel from "./components/CheckpointPanel";
+import AgentTimelinePanel from "./components/AgentTimelinePanel";
 import TerminalPanel from "./components/TerminalPanel";
 import DependencyGraph from "./components/DependencyGraph";
 import MemoryPanel from "./components/MemoryPanel";
@@ -15,7 +16,7 @@ import InsightsPanel from "./components/InsightsPanel";
 import { PanelLeft, Search, ListTree, Square, MessageSquare, Sparkles, BookOpen, Wrench, Landmark, Shapes, Box, Layers, MapPin, Folder, Tag, Zap, Target, Circle, Braces, FileCode, FileCode2, FileJson, FileText, File, Globe, Database, Coffee, Palette, FileCog, FileType } from "lucide-react";
 import { openProject, getLspSymbols, requestCompletion, cycleCompletion, triggerAutoReview, checkLocalModel, type LSPSymbol } from "./hooks/useTauri";
 
-type View = "editor" | "chat" | "settings" | "search" | "cloud" | "graph" | "memory" | "insights" | "checkpoints";
+type View = "editor" | "chat" | "settings" | "search" | "cloud" | "graph" | "memory" | "insights" | "checkpoints" | "timeline";
 type Theme = "dark" | "light";
 
 interface OpenFile {
@@ -772,6 +773,7 @@ function App() {
           {activeView === "settings" && <Settings />}
           {activeView === "cloud" && <CloudAgentPanel />}
           {activeView === "checkpoints" && projectPath && <CheckpointPanel projectPath={projectPath} />}
+                    {activeView === "timeline" && <AgentTimelinePanel />}
           {activeView === "search" && projectPath && (
             <SearchPanel
               projectPath={projectPath}
@@ -839,6 +841,9 @@ function App() {
         }
         onCheckpointsClick={() =>
           setActiveView(activeView === "checkpoints" ? "editor" : "checkpoints")
+        }
+        onTimelineClick={() =>
+          setActiveView(activeView === "timeline" ? "editor" : "timeline")
         }
         onExplorerClick={() => setShowExplorer(!showExplorer)}
       />
