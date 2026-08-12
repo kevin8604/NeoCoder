@@ -13,3 +13,4 @@ pub mod pty;
 pub mod dependency_graph;
 pub mod review;
 pub mod memory;
+pub mod a2a;

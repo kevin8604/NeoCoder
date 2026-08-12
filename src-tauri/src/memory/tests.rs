@@ -174,7 +174,10 @@ fn test_inject_memory_context_with_data() {
     let dir = temp_test_dir("inject_data");
     let mgr = MemoryManager::new(dir.clone());
 
-    mgr.write_long_term("Key decisions: use Tauri v2").unwrap();
+    // Use append to write an entry in parseable format ("- " bullet + section header).
+    // The [Decision] tag gives it coding weight so it passes the injection filter.
+    mgr.append_long_term("Decisions", "[Decision] Key decisions: use Tauri v2")
+        .unwrap();
     mgr.append_note("Today worked on search").unwrap();
 
     let ctx = mgr.inject_memory_context();
@@ -380,8 +383,8 @@ fn test_long_term_recall_updates_metadata() {
     assert_eq!(updated.len(), 1);
     assert_eq!(updated[0].recall_count, 3, "Count should be 2+1=3");
     assert!(updated[0].stability > original_s, "S should increase after recall");
-    // S += ln(3+1) = ln(4) ≈ 1.39
-    let expected_s = original_s + 3.0_f64.ln();
+    // S += ln(更新后 count+1) = ln(4) ≈ 1.39
+    let expected_s = original_s + 4.0_f64.ln();
     assert!((updated[0].stability - expected_s).abs() < 0.01);
     cleanup(&dir);
 }
@@ -430,14 +433,17 @@ fn test_long_term_cleanup_removes_expired() {
     let dir = temp_test_dir("eb_cleanup");
     let mgr = MemoryManager::new(dir.clone());
 
+    // 相对当前日期构造条目：避免硬编码日期随时间漂移导致判定翻转
+    let now = chrono::Utc::now().date_naive();
+
     let entries = vec![
         // Fresh entry — should survive
         MemoryEntry {
             id: "fresh".to_string(),
             key: None,
             text: "- Fresh entry".to_string(),
-            created: NaiveDate::from_ymd_opt(2026, 6, 25).unwrap(),
-            last_recalled: NaiveDate::from_ymd_opt(2026, 6, 26).unwrap(),
+            created: now - chrono::Duration::days(6),
+            last_recalled: now - chrono::Duration::days(5),
             recall_count: 5,
             stability: 10.0,
             section: "Active".to_string(),
@@ -449,8 +455,8 @@ fn test_long_term_cleanup_removes_expired() {
             id: "forgotten".to_string(),
             key: None,
             text: "- Forgotten entry".to_string(),
-            created: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
-            last_recalled: NaiveDate::from_ymd_opt(2026, 4, 1).unwrap(),
+            created: now - chrono::Duration::days(200),
+            last_recalled: now - chrono::Duration::days(120),
             recall_count: 0,
             stability: 1.0,
             section: "Old".to_string(),
@@ -504,16 +510,19 @@ fn test_long_term_cleanup_recent_but_low_r() {
     let dir = temp_test_dir("eb_cleanup_recent");
     let mgr = MemoryManager::new(dir.clone());
 
+    // 相对当前日期构造条目：低 R 但最近（30 天内）被回忆过——不应归档
+    let now = chrono::Utc::now().date_naive();
+
     // Low R but recalled recently (within 30 days) — should NOT archive
     let entries = vec![
         MemoryEntry {
             id: "recent-low".to_string(),
             key: None,
             text: "- Recent low-R entry".to_string(),
-            created: NaiveDate::from_ymd_opt(2026, 6, 20).unwrap(),
-            last_recalled: NaiveDate::from_ymd_opt(2026, 6, 20).unwrap(),
+            created: now - chrono::Duration::days(6),
+            last_recalled: now - chrono::Duration::days(5),
             recall_count: 0,
-            stability: 1.0, // R after 6 days ≈ 0.0025 but < 30 days
+            stability: 1.0, // R after 5 days ≈ 0.0067 but < 30 days
             section: "S".to_string(),
             category: MemoryCategory::Coding,
             session_id: None,
@@ -536,6 +545,9 @@ fn test_inject_context_r_value_sorting() {
     let dir = temp_test_dir("eb_inject_sort");
     let mgr = MemoryManager::new(dir.clone());
 
+    // 相对当前日期构造条目：避免硬编码日期随时间漂移导致判定翻转
+    let now = chrono::Utc::now().date_naive();
+
     // Create entries with different retention values
     let entries = vec![
         // Low R: recalled 20 days ago, S=1.0
@@ -543,8 +555,8 @@ fn test_inject_context_r_value_sorting() {
             id: "low-r".to_string(),
             key: None,
             text: "- Low retention entry".to_string(),
-            created: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
-            last_recalled: NaiveDate::from_ymd_opt(2026, 6, 6).unwrap(),
+            created: now - chrono::Duration::days(30),
+            last_recalled: now - chrono::Duration::days(20),
             recall_count: 0,
             stability: 1.0,
             section: "Test".to_string(),
@@ -556,8 +568,8 @@ fn test_inject_context_r_value_sorting() {
             id: "high-r".to_string(),
             key: None,
             text: "- High retention entry".to_string(),
-            created: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
-            last_recalled: NaiveDate::from_ymd_opt(2026, 6, 25).unwrap(),
+            created: now - chrono::Duration::days(30),
+            last_recalled: now - chrono::Duration::days(1),
             recall_count: 15,
             stability: 10.0,
             section: "Test".to_string(),
@@ -585,12 +597,15 @@ fn test_inject_context_triggers_recall() {
     let dir = temp_test_dir("eb_inject_recall");
     let mgr = MemoryManager::new(dir.clone());
 
+    // 相对当前日期构造条目：最近回忆过 → R 高 → 通过注入过滤并触发 recall
+    let now = chrono::Utc::now().date_naive();
+
     let entry = MemoryEntry {
         id: "recall-me".to_string(),
         key: None,
         text: "- Will be recalled".to_string(),
-        created: NaiveDate::from_ymd_opt(2026, 6, 25).unwrap(),
-        last_recalled: NaiveDate::from_ymd_opt(2026, 6, 25).unwrap(),
+        created: now - chrono::Duration::days(2),
+        last_recalled: now - chrono::Duration::days(1),
         recall_count: 0,
         stability: 1.0,
         section: "Test".to_string(),
@@ -614,13 +629,16 @@ fn test_inject_context_section_grouping() {
     let dir = temp_test_dir("eb_inject_sections");
     let mgr = MemoryManager::new(dir.clone());
 
+    // 相对当前日期构造条目：最近回忆过 → R 高 → 通过注入过滤
+    let now = chrono::Utc::now().date_naive();
+
     let entries = vec![
         MemoryEntry {
             id: "pattern-a".to_string(),
             key: None,
             text: "- Pattern A".to_string(),
-            created: NaiveDate::from_ymd_opt(2026, 6, 26).unwrap(),
-            last_recalled: NaiveDate::from_ymd_opt(2026, 6, 26).unwrap(),
+            created: now - chrono::Duration::days(2),
+            last_recalled: now - chrono::Duration::days(1),
             recall_count: 5,
             stability: 5.0,
             section: "Patterns".to_string(),
@@ -631,8 +649,8 @@ fn test_inject_context_section_grouping() {
             id: "decision-b".to_string(),
             key: None,
             text: "- Decision B".to_string(),
-            created: NaiveDate::from_ymd_opt(2026, 6, 26).unwrap(),
-            last_recalled: NaiveDate::from_ymd_opt(2026, 6, 26).unwrap(),
+            created: now - chrono::Duration::days(2),
+            last_recalled: now - chrono::Duration::days(1),
             recall_count: 3,
             stability: 3.0,
             section: "Decisions".to_string(),

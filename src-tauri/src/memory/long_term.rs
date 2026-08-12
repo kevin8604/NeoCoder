@@ -77,8 +77,15 @@ impl LongTermMemory {
         }
         // Add entry with Ebbinghaus metadata — detect category from text tags
         let category = MemoryCategory::detect_from_text(entry);
-        let mem_entry = MemoryEntry::with_category(entry.to_string(), section.to_string(), category);
-        new_content.push_str(&format!("\n## {}\n\n{}\n{}\n", section, entry, ebbinghaus::format_metadata(&mem_entry)));
+        // 条目行必须带 "- " 前缀，否则 parse_memory_entries 无法识别（与
+        // serialize_memory_entries 的输出格式保持一致）
+        let bullet = if entry.starts_with("- ") {
+            entry.to_string()
+        } else {
+            format!("- {}", entry)
+        };
+        let mem_entry = MemoryEntry::with_category(bullet.clone(), section.to_string(), category);
+        new_content.push_str(&format!("\n## {}\n\n{}\n{}\n", section, bullet, ebbinghaus::format_metadata(&mem_entry)));
         self.write(&new_content)
     }
 

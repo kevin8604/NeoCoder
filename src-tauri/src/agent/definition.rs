@@ -103,7 +103,7 @@ pub fn default_agents() -> Vec<AgentDefinition> {
                 "grep".into(), "search_codebase".into(), "list_directory".into(),
                 "run_terminal_command".into(), "todo_write".into(), "web_search".into(),
                 "web_fetch".into(), "get_symbols".into(), "get_diagnostics".into(),
-                "dispatch_agent".into(), "dispatch_agents".into(),
+                "dispatch_agent".into(), "dispatch_agents".into(), "a2a_invoke".into(),
             ],
             model: None,
             temperature: None,

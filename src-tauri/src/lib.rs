@@ -16,6 +16,7 @@ pub mod telemetry;
 pub mod fs_service;
 pub mod terminal;
 pub mod event_bus;
+pub mod a2a;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -66,6 +67,7 @@ pub fn run() {
 
             app.manage(commands::chat::ChatState {
                 memory: Arc::new(RwLock::new(chat::ConversationMemory::with_storage(sessions_dir))),
+                plan_mode_sessions: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             });
 
             // Initialize completion cache (LRU, max 200 entries)
@@ -151,12 +153,44 @@ pub fn run() {
             app.manage::<Arc<McpRegistry>>(mcp_registry.clone());
             app.manage::<Arc<std::sync::Mutex<Vec<agent::ToolDefinition>>>>(mcp_tools.clone());
 
-            // Initialize Cloud Agent task manager
-            let cloud_task_manager = Arc::new(agent::cloud::CloudTaskManager::new());
+            // Initialize Cloud Agent task manager (persisted to disk so tasks
+            // survive restarts; interrupted tasks can be resumed)
+            let cloud_task_storage = config_path.join("cloud_tasks.json");
+            let cloud_task_manager = Arc::new(agent::cloud::CloudTaskManager::with_storage(cloud_task_storage));
             app.manage::<commands::cloud::CloudTaskState>(cloud_task_manager);
 
             // Initialize PTY (terminal) state
             app.manage(PtyState::new());
+
+            // Initialize A2A HTTP server (if enabled in settings)
+            {
+                let settings = app.state::<Arc<RwLock<config::AppSettings>>>();
+                let a2a_enabled = settings.inner().blocking_read().a2a_server_enabled;
+                let a2a_port = settings.inner().blocking_read().a2a_server_port;
+                let a2a_token = settings.inner().blocking_read().a2a_server_token.clone();
+
+                let runtime_state = commands::a2a::A2aRuntimeState::default();
+                if a2a_enabled {
+                    let token = if a2a_token.is_empty() {
+                        None
+                    } else {
+                        Some(a2a_token)
+                    };
+                    match a2a::server::start_server(app.handle().clone(), a2a_port, token) {
+                        Ok(()) => {
+                            runtime_state
+                                .running
+                                .store(true, std::sync::atomic::Ordering::SeqCst);
+                            runtime_state
+                                .port
+                                .store(a2a_port, std::sync::atomic::Ordering::SeqCst);
+                            log::info!("[A2A] Server enabled on port {}", a2a_port);
+                        }
+                        Err(e) => log::warn!("[A2A] Failed to start server: {}", e),
+                    }
+                }
+                app.manage::<commands::a2a::A2aRuntimeState>(runtime_state);
+            }
 
             // Initialize Telemetry collector (separate from logging)
             let telemetry_dir = app.path().app_data_dir().unwrap_or_default();
@@ -335,6 +369,8 @@ pub fn run() {
             commands::chat::cancel_agent,
             commands::chat::pause_agent,
             commands::chat::resume_agent,
+            commands::chat::resume_session,
+            commands::chat::list_resumable_sessions,
             commands::chat::get_agents,
             commands::chat::approve_plan,
             commands::chat::reject_plan,
@@ -349,6 +385,7 @@ pub fn run() {
             commands::chat::set_plan_mode,
             commands::chat::list_checkpoints,
             commands::chat::restore_checkpoint,
+            commands::chat::checkpoint_diff,
             commands::chat::create_branch,
             commands::chat::list_branches,
             commands::chat::delete_branch,
@@ -364,6 +401,7 @@ pub fn run() {
             commands::cloud::get_cloud_task,
             commands::cloud::list_cloud_tasks,
             commands::cloud::cancel_cloud_task,
+            commands::cloud::resume_cloud_task,
             commands::pty::start_terminal,
             commands::pty::write_stdin,
             commands::pty::stop_terminal,
@@ -381,6 +419,11 @@ pub fn run() {
             commands::memory::cleanup_memory,
             commands::memory::run_deep_dreaming,
             commands::memory::export_training_data,
+            commands::a2a::get_a2a_status,
+            commands::a2a::set_a2a_config,
+            commands::a2a::list_remote_agents,
+            commands::a2a::discover_remote_agent,
+            commands::a2a::invoke_remote_agent,
             telemetry::get_telemetry_summary,
             telemetry::get_telemetry_events,
         ])

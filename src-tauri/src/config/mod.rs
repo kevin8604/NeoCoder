@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use crate::sandbox::SandboxConfig;
+use crate::a2a::A2aAgentConfig;
 
 // ── API Key obfuscation (XOR + hex encoding) ──
 
@@ -94,6 +95,18 @@ pub struct AppSettings {
     /// Memory garbage collection config
     #[serde(default)]
     pub memory_gc: MemoryGCConfig,
+    /// A2A server: whether the local A2A HTTP server is enabled
+    #[serde(default)]
+    pub a2a_server_enabled: bool,
+    /// A2A server: local listen port
+    #[serde(default = "default_a2a_port")]
+    pub a2a_server_port: u16,
+    /// A2A server: bearer token (empty = no authentication required)
+    #[serde(default)]
+    pub a2a_server_token: String,
+    /// A2A client: configured remote agents
+    #[serde(default)]
+    pub a2a_agents: Vec<A2aAgentConfig>,
 }
 
 // ── Local model integration (Phase 1) ──
@@ -219,6 +232,10 @@ fn default_loop_failure_streak() -> u32 {
     3
 }
 
+fn default_a2a_port() -> u16 {
+    41234
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProvider {
@@ -324,6 +341,10 @@ impl Default for AppSettings {
             local_model: LocalModelConfig::default(),
             fine_tune: FineTuneConfig::default(),
             memory_gc: MemoryGCConfig::default(),
+            a2a_server_enabled: false,
+            a2a_server_port: default_a2a_port(),
+            a2a_server_token: String::new(),
+            a2a_agents: vec![],
         }
     }
 }

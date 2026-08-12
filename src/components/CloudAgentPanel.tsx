@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from "react";
 import {
   listCloudTasks,
   cancelCloudTask,
+  resumeCloudTask,
   listenToEvent,
   type CloudTask,
 } from "../hooks/useTauri";
-import { Cloud, X, RefreshCw, Link } from "lucide-react";
+import { Cloud, X, RefreshCw, Link, Play } from "lucide-react";
 
 export default function CloudAgentPanel() {
   const [tasks, setTasks] = useState<CloudTask[]>([]);
@@ -52,6 +53,11 @@ export default function CloudAgentPanel() {
     loadTasks();
   };
 
+  const handleResume = async (taskId: string) => {
+    await resumeCloudTask(taskId);
+    loadTasks();
+  };
+
   const formatTime = (ts: number): string => {
     const d = new Date(ts * 1000);
     return d.toLocaleTimeString();
@@ -64,6 +70,7 @@ export default function CloudAgentPanel() {
       case "completed": return "Completed";
       case "failed": return "Failed";
       case "cancelled": return "Cancelled";
+      case "interrupted": return "Interrupted";
       default: return status;
     }
   };
@@ -72,11 +79,15 @@ export default function CloudAgentPanel() {
     switch (status) {
       case "completed": return "status-dot connected";
       case "running": return "status-dot connecting";
+      case "interrupted": return "status-dot disconnected";
       case "failed": return "status-dot disconnected";
       case "cancelled": return "status-dot disconnected";
       default: return "status-dot connecting";
     }
   };
+
+  const isResumable = (status: string): boolean =>
+    status === "interrupted" || status === "failed";
 
   return (
     <div className="cloud-agent-panel">
@@ -127,6 +138,15 @@ export default function CloudAgentPanel() {
                       <X size={12} />
                     </button>
                   )}
+                  {isResumable(task.status) && (
+                    <button
+                      className="cloud-task-cancel"
+                      onClick={() => handleResume(task.id)}
+                      title="Resume task"
+                    >
+                      <Play size={12} />
+                    </button>
+                  )}
                 </div>
                 <div className="cloud-task-message">{task.message}</div>
                 {task.result && (
@@ -149,6 +169,11 @@ export default function CloudAgentPanel() {
                   <div className="cloud-task-completed">
                     {task.status === "completed" ? "Completed" : task.status === "failed" ? "Failed" : "Ended"}{" "}
                     at {formatTime(task.completed_at)}
+                  </div>
+                )}
+                {task.status === "interrupted" && (
+                  <div className="cloud-task-completed">
+                    Interrupted by app restart — click ▶ to resume
                   </div>
                 )}
               </div>

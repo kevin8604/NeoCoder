@@ -4,7 +4,8 @@ mod tests {
         Tool, ToolContext,
         read_file::ReadFile, write_file::WriteFile, edit::Edit,
         git_status::GitStatus, git_diff::GitDiff, git_commit::GitCommit,
-        memory_search::MemorySearch,
+        memory_search::MemorySearch, coverage::CoverageTool,
+        a2a_invoke::{A2aInvoke, resolve_agent_url},
     };
     use crate::sandbox::{SandboxChecker, SandboxConfig, SandboxMode};
     use serde_json::json;
@@ -17,6 +18,9 @@ mod tests {
             sandbox: Arc::new(SandboxChecker::new(
                 SandboxConfig {
                     mode: SandboxMode::Permissive,
+                    // 测试在系统临时目录读写文件：显式放行临时目录，
+                    // 否则 Permissive 模式会拒绝所有写入，工具逻辑无法被验证
+                    allowed_paths: vec![std::env::temp_dir().to_string_lossy().to_string()],
                     ..Default::default()
                 },
                 None,
@@ -112,7 +116,7 @@ mod tests {
         });
 
         let result = WriteFile.execute(args, &ctx).await;
-        assert!(result.contains("Successfully wrote"));
+        assert!(result.contains("Successfully created"));
         assert!(result.contains("bytes")); // length of "New file content"
 
         // Verify file was created
@@ -137,7 +141,7 @@ mod tests {
         });
 
         let result = WriteFile.execute(args, &ctx).await;
-        assert!(result.contains("Successfully wrote"));
+        assert!(result.contains("Successfully overwrote"));
 
         // Verify file was overwritten
         let content = std::fs::read_to_string(&test_file).unwrap();
@@ -150,6 +154,8 @@ mod tests {
     #[tokio::test]
     async fn test_write_file_create_parent_dirs() {
         let temp_dir = std::env::temp_dir().join("neecoder_test_write_nested");
+        // 清理可能的残留（Windows 上 remove_dir_all 可能失败被忽略，导致文件已存在）
+        let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("nested").join("dirs").join("file.txt");
 
@@ -160,7 +166,7 @@ mod tests {
         });
 
         let result = WriteFile.execute(args, &ctx).await;
-        assert!(result.contains("Successfully wrote"));
+        assert!(result.contains("Successfully created"), "result: {}", result);
 
         // Verify file was created in nested directory
         assert!(test_file.exists());
@@ -184,7 +190,7 @@ mod tests {
         });
 
         let result = WriteFile.execute(args, &ctx).await;
-        assert!(result.contains("Successfully wrote"));
+        assert!(result.contains("Successfully created"));
         assert!(result.contains("0 bytes"));
 
         // Verify empty file was created
@@ -198,6 +204,8 @@ mod tests {
     #[tokio::test]
     async fn test_write_file_relative_path() {
         let temp_dir = std::env::temp_dir().join("neecoder_test_write_rel");
+        // 清理可能的残留（Windows 上 remove_dir_all 可能失败被忽略，导致文件已存在）
+        let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let ctx = create_test_context(temp_dir.to_str());
@@ -207,7 +215,7 @@ mod tests {
         });
 
         let result = WriteFile.execute(args, &ctx).await;
-        assert!(result.contains("Successfully wrote"));
+        assert!(result.contains("Successfully created"), "result: {}", result);
 
         // Verify file was created in project path
         let test_file = temp_dir.join("relative_file.txt");
@@ -233,7 +241,7 @@ mod tests {
         });
 
         let result = WriteFile.execute(args, &ctx).await;
-        assert!(result.contains("Successfully wrote"));
+        assert!(result.contains("Successfully created"));
 
         // Verify unicode content was written correctly
         let content = std::fs::read_to_string(&test_file).unwrap();
@@ -421,11 +429,117 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
+    // ── CoverageTool Tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_coverage_uncovered_reads_cached_report() {
+        let dir = std::env::temp_dir().join("neecoder_cov_uncovered");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("target")).unwrap();
+
+        // 预置一个缓存报告（模拟 scan 后的产物）
+        let cache = serde_json::json!({
+            "scanned_at": "2026-08-09 00:00:00",
+            "total_lines": 100,
+            "covered_lines": 60,
+            "files": [{
+                "filename": format!("{}/src/agent/hooks.rs", dir.to_str().unwrap()),
+                "total_lines": 50,
+                "covered_lines": 20,
+                "uncovered_ranges": [[1, 10], [20, 30]]
+            }]
+        });
+        std::fs::write(
+            dir.join("target").join("coverage_report.json"),
+            serde_json::to_string(&cache).unwrap(),
+        )
+        .unwrap();
+
+        let ctx = create_test_context(Some(dir.to_str().unwrap()));
+        let result = CoverageTool.execute(json!({ "action": "uncovered" }), &ctx).await;
+        assert!(result.contains("60.0% lines covered"), "result: {}", result);
+        assert!(result.contains("agent/hooks.rs"));
+        assert!(result.contains("1-10"));
+        assert!(result.contains("Guidance"));
+
+        // path 过滤
+        let result = CoverageTool
+            .execute(json!({ "action": "uncovered", "path": "nope" }), &ctx)
+            .await;
+        assert!(result.contains("No files match"), "result: {}", result);
+
+        // status 显示缓存信息
+        let result = CoverageTool.execute(json!({ "action": "status" }), &ctx).await;
+        assert!(result.contains("Coverage cache"), "result: {}", result);
+        assert!(result.contains("60.0%"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_coverage_scan_reuses_cache_without_force() {
+        let dir = std::env::temp_dir().join("neecoder_cov_reuse");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("target")).unwrap();
+
+        let cache = serde_json::json!({
+            "scanned_at": "2026-08-09 00:00:00",
+            "total_lines": 10,
+            "covered_lines": 5,
+            "files": [{
+                "filename": format!("{}/src/a.rs", dir.to_str().unwrap()),
+                "total_lines": 10,
+                "covered_lines": 5,
+                "uncovered_ranges": [[6, 10]]
+            }]
+        });
+        std::fs::write(
+            dir.join("target").join("coverage_report.json"),
+            serde_json::to_string(&cache).unwrap(),
+        )
+        .unwrap();
+
+        let ctx = create_test_context(Some(dir.to_str().unwrap()));
+        // 有缓存且未传 force → 复用缓存，不触发 llvm-cov 执行
+        let result = CoverageTool.execute(json!({ "action": "scan" }), &ctx).await;
+        assert!(result.contains("cached"), "result: {}", result);
+        assert!(result.contains("src/a.rs"));
+        assert!(result.contains("force:true"), "result: {}", result);
+
+        // 无缓存 → 提示先 scan（uncovered 报错路径）
+        let empty = std::env::temp_dir().join("neecoder_cov_empty");
+        let _ = std::fs::remove_dir_all(&empty);
+        std::fs::create_dir_all(&empty).unwrap();
+        let ctx_empty = create_test_context(Some(empty.to_str().unwrap()));
+        let result = CoverageTool
+            .execute(json!({ "action": "uncovered" }), &ctx_empty)
+            .await;
+        assert!(result.contains("no cached coverage report"), "result: {}", result);
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    #[tokio::test]
+    async fn test_coverage_status_no_cache() {
+        let dir = std::env::temp_dir().join("neecoder_cov_status");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let ctx = create_test_context(Some(dir.to_str().unwrap()));
+        let result = CoverageTool.execute(json!({ "action": "status" }), &ctx).await;
+        assert!(result.contains("no report yet"), "result: {}", result);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // ── Edge Cases & Integration Tests ─────────────────────────────────────
 
     #[tokio::test]
     async fn test_write_then_read_roundtrip() {
         let temp_dir = std::env::temp_dir().join("neecoder_test_roundtrip");
+        // 清理可能的残留（Windows 上 remove_dir_all 可能失败被忽略，导致文件已存在）
+        let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("roundtrip.txt");
         let original_content = "Line 1\nLine 2\nLine 3\n特殊字符: 你好🌍";
@@ -437,14 +551,22 @@ mod tests {
             "contents": original_content
         });
         let write_result = WriteFile.execute(write_args, &ctx).await;
-        assert!(write_result.contains("Successfully wrote"));
+        assert!(write_result.contains("Successfully created"), "result: {}", write_result);
 
         // Read
         let read_args = json!({
             "path": test_file.to_str().unwrap()
         });
         let read_result = ReadFile.execute(read_args, &ctx).await;
-        assert!(read_result.contains(original_content));
+        // read_file 输出带行号前缀（"   1\tLine 1"），逐行断言内容
+        for line in original_content.lines() {
+            assert!(
+                read_result.contains(line),
+                "missing {:?} in read result: {}",
+                line,
+                read_result
+            );
+        }
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -501,7 +623,7 @@ mod tests {
         });
 
         let result = WriteFile.execute(args, &ctx).await;
-        assert!(result.contains("Successfully wrote"));
+        assert!(result.contains("Successfully created"));
         assert!(result.contains("1048576 bytes"));
 
         // Verify
@@ -617,5 +739,282 @@ mod tests {
                 tool.name
             );
         }
+    }
+
+    // ── A2A Invoke 集成测试 ──────────────────────────────────────────────
+
+    /// 本地 mock A2A server：Agent Card + message/send + tasks/get（立即 completed）
+    async fn spawn_a2a_mock() -> String {
+        use axum::{
+            Json, Router,
+            http::HeaderMap,
+            response::IntoResponse,
+            routing::{get, post},
+        };
+        use crate::a2a::{JsonRpcResponse, RpcError, Task, TaskState, TaskStatus};
+
+        fn task(id: &str, state: TaskState) -> serde_json::Value {
+            serde_json::to_value(Task::new(id.to_string(), TaskStatus::new(state))).unwrap()
+        }
+
+        let app = Router::new()
+            .route(
+                "/.well-known/agent.json",
+                get(|headers: HeaderMap| async move {
+                    let host = headers
+                        .get("host")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("127.0.0.1:0")
+                        .to_string();
+                    Json(json!({
+                        "name": "MockRemote",
+                        "description": "mock remote agent",
+                        "url": format!("http://{}/a2a", host),
+                        "version": "1.0.0",
+                        "capabilities": { "streaming": true, "pushNotifications": false, "stateTransitionHistory": false },
+                        "skills": [{ "id": "m1", "name": "M1", "description": "d" }]
+                    }))
+                }),
+            )
+            .route(
+                "/a2a",
+                post(|body: String| async move {
+                    let req: serde_json::Value = serde_json::from_str(&body).unwrap();
+                    match req["method"].as_str().unwrap() {
+                        "message/send" | "tasks/get" => {
+                            let mut t = Task::new("t-a2a", TaskStatus::new(TaskState::Completed));
+                            t.artifacts = vec![crate::a2a::Artifact {
+                                name: "result.txt".into(),
+                                parts: vec![crate::a2a::Part::Text {
+                                    text: "mock result text".into(),
+                                }],
+                                metadata: None,
+                            }];
+                            Json(JsonRpcResponse::ok(
+                                json!(1),
+                                serde_json::to_value(&t).unwrap(),
+                            ))
+                            .into_response()
+                        }
+                        _ => Json(JsonRpcResponse::err(
+                            json!(1),
+                            RpcError {
+                                code: -32601,
+                                message: "method not found".into(),
+                                data: None,
+                            },
+                        ))
+                        .into_response(),
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{}", addr)
+    }
+
+    /// mock SSE A2A server：resubscribe 返回 working → completed 事件流
+    async fn spawn_a2a_stream_mock() -> String {
+        use axum::{
+            Json, Router,
+            http::HeaderMap,
+            response::{
+                IntoResponse,
+                sse::{Event, KeepAlive, Sse},
+            },
+            routing::{get, post},
+        };
+        use crate::a2a::{JsonRpcResponse, Task, TaskState, TaskStatus};
+        use std::convert::Infallible;
+        use axum::http::StatusCode;
+
+        fn task(id: &str, state: TaskState) -> serde_json::Value {
+            serde_json::to_value(Task::new(id.to_string(), TaskStatus::new(state))).unwrap()
+        }
+
+        let app = Router::new()
+            .route(
+                "/.well-known/agent.json",
+                get(|headers: HeaderMap| async move {
+                    let host = headers
+                        .get("host")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("127.0.0.1:0")
+                        .to_string();
+                    Json(json!({
+                        "name": "StreamAgent",
+                        "description": "mock",
+                        "url": format!("http://{}/a2a", host),
+                        "version": "1.0.0",
+                        "capabilities": { "streaming": true, "pushNotifications": false, "stateTransitionHistory": false },
+                        "skills": []
+                    }))
+                }),
+            )
+            .route(
+                "/a2a",
+                post(|body: String| async move {
+                    let req: serde_json::Value = serde_json::from_str(&body).unwrap();
+                    match req["method"].as_str().unwrap() {
+                        "message/send" => Json(JsonRpcResponse::ok(
+                            json!(1),
+                            task("s1", TaskState::Working),
+                        ))
+                        .into_response(),
+                        "tasks/resubscribe" => {
+                            let stream = tokio_stream::iter(vec![
+                                Ok::<Event, Infallible>(
+                                    Event::default()
+                                        .event("task_update")
+                                        .data(task("s1", TaskState::Working).to_string()),
+                                ),
+                                Ok::<Event, Infallible>(
+                                    Event::default()
+                                        .event("task_update")
+                                        .data(task("s1", TaskState::Completed).to_string()),
+                                ),
+                            ]);
+                            Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+                        }
+                        _ => StatusCode::NOT_FOUND.into_response(),
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn test_a2a_invoke_success() {
+        let base = spawn_a2a_mock().await;
+        let ctx = create_test_context(None);
+        let result = A2aInvoke
+            .execute(json!({ "url": base, "task": "do the thing" }), &ctx)
+            .await;
+        assert!(result.contains("MockRemote"), "{}", result);
+        assert!(result.contains("mock result text"), "{}", result);
+        assert!(result.contains("completed"), "{}", result);
+    }
+
+    #[tokio::test]
+    async fn test_a2a_invoke_stream_mode() {
+        let base = spawn_a2a_stream_mock().await;
+        let ctx = create_test_context(None);
+        let result = A2aInvoke
+            .execute(json!({ "url": base, "task": "stream it", "mode": "stream" }), &ctx)
+            .await;
+        assert!(result.contains("StreamAgent"), "{}", result);
+        assert!(result.contains("Completed"), "{}", result);
+    }
+
+    #[tokio::test]
+    async fn test_a2a_invoke_missing_url_and_agent() {
+        let ctx = create_test_context(None);
+        // url 和 agent 都缺 → 报错
+        let result = A2aInvoke
+            .execute(json!({ "task": "x" }), &ctx)
+            .await;
+        assert!(result.contains("url or agent parameter is required"), "{}", result);
+        // 只给 agent（未配置）→ 报错并提示配置
+        let result = A2aInvoke
+            .execute(json!({ "agent": "ghost", "task": "x" }), &ctx)
+            .await;
+        assert!(result.contains("unknown remote agent 'ghost'"), "{}", result);
+        assert!(result.contains("Remote Agents"), "{}", result);
+    }
+
+    #[test]
+    fn test_a2a_invoke_resolve_agent_url() {
+        use crate::a2a::A2aAgentConfig;
+        let agents = vec![
+            A2aAgentConfig {
+                name: "local-orchestrator".into(),
+                url: "http://127.0.0.1:41234".into(),
+                description: "d".into(),
+            },
+            A2aAgentConfig {
+                name: "peer-1".into(),
+                url: "http://127.0.0.1:51234".into(),
+                description: "".into(),
+            },
+        ];
+        assert_eq!(
+            resolve_agent_url("local-orchestrator", &agents).unwrap(),
+            "http://127.0.0.1:41234"
+        );
+        // 未命中 → 错误含可用列表
+        let err = resolve_agent_url("ghost", &agents).unwrap_err();
+        assert!(err.contains("unknown remote agent 'ghost'"), "{}", err);
+        assert!(err.contains("local-orchestrator"), "{}", err);
+        // 空列表
+        let err = resolve_agent_url("x", &[]).unwrap_err();
+        assert!(err.contains("configured: none"), "{}", err);
+    }
+
+    #[tokio::test]
+    async fn test_a2a_invoke_with_skill() {
+        let base = spawn_a2a_mock().await;
+        let ctx = create_test_context(None);
+        // skill 参数可选项透传，不影响正常执行
+        let result = A2aInvoke
+            .execute(json!({ "url": base, "task": "x", "skill": "code_writer" }), &ctx)
+            .await;
+        assert!(result.contains("MockRemote"), "{}", result);
+        assert!(!result.contains("Error:"), "{}", result);
+    }
+
+    #[tokio::test]
+    async fn test_a2a_invoke_missing_task() {
+        let ctx = create_test_context(None);
+        let result = A2aInvoke
+            .execute(json!({ "url": "http://127.0.0.1:1" }), &ctx)
+            .await;
+        assert!(result.contains("task parameter is required"), "{}", result);
+    }
+
+    #[tokio::test]
+    async fn test_a2a_invoke_unreachable_url() {
+        let ctx = create_test_context(None);
+        let result = A2aInvoke
+            .execute(json!({ "url": "http://127.0.0.1:1", "task": "x", "timeout_secs": 2 }), &ctx)
+            .await;
+        assert!(result.starts_with("Error: A2A invocation failed"), "{}", result);
+    }
+
+    #[tokio::test]
+    async fn test_a2a_invoke_invalid_mode_falls_back_to_sync() {
+        let base = spawn_a2a_mock().await;
+        let ctx = create_test_context(None);
+        // 非法 mode 回退 sync 并成功
+        let result = A2aInvoke
+            .execute(json!({ "url": base, "task": "x", "mode": "bogus" }), &ctx)
+            .await;
+        assert!(result.contains("MockRemote"), "{}", result);
+        assert!(!result.contains("Error:"), "{}", result);
+    }
+
+    #[test]
+    fn test_a2a_invoke_registration_consistency() {
+        // 1) executor 注册
+        let executor = crate::agent::tools::build_executor();
+        assert!(executor.registered_names().contains(&"a2a_invoke".to_string()));
+        // 2) tools.json 定义
+        let registry: Vec<crate::agent::ToolDefinition> =
+            serde_json::from_str(include_str!("../../../tools.json")).unwrap();
+        assert!(registry.iter().any(|t| t.name == "a2a_invoke"));
+        // 3) orchestrator agent 可用
+        let agents = crate::agent::definition::default_agents();
+        let orchestrator = agents
+            .iter()
+            .find(|a| a.id == "orchestrator")
+            .expect("orchestrator agent exists");
+        assert!(orchestrator.tool_names.contains(&"a2a_invoke".to_string()));
     }
 }

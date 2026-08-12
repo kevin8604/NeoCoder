@@ -17,11 +17,17 @@ import {
   cleanupMemory,
   runDeepDreaming,
   exportTrainingData,
+  getA2aStatus,
+  discoverRemoteAgent,
+  invokeRemoteAgent,
   type LocalModelHealth,
   type McpServerStatus,
   type AgentDefinition,
   type SkillDefinition,
   type ToolInfo,
+  type A2aAgentConfig,
+  type A2aStatus,
+  type AgentCard,
 } from "../hooks/useTauri";
 
 /** Map model name to context window size (mirrors backend config::model_context_window) */
@@ -82,6 +88,11 @@ interface SettingsData {
     learning_rate: number;
     use_gpu: boolean;
   };
+  // ── A2A (Agent-to-Agent) ──
+  a2a_server_enabled?: boolean;
+  a2a_server_port?: number;
+  a2a_server_token?: string;
+  a2a_agents?: A2aAgentConfig[];
 }
 
 export default function Settings() {
@@ -125,6 +136,10 @@ export default function Settings() {
       learning_rate: 0.0002,
       use_gpu: true,
     },
+    a2a_server_enabled: false,
+    a2a_server_port: 41234,
+    a2a_server_token: "",
+    a2a_agents: [],
   });
 
   const [saved, setSaved] = useState(false);
@@ -144,6 +159,19 @@ export default function Settings() {
   const [newMcpCommand, setNewMcpCommand] = useState("");
   const [newMcpArgs, setNewMcpArgs] = useState("");
   const [newMcpEnv, setNewMcpEnv] = useState("");
+
+  // ── A2A state ──
+  const [a2aStatus, setA2aStatus] = useState<A2aStatus | null>(null);
+  const [a2aFormOpen, setA2aFormOpen] = useState(false);
+  const [a2aNewName, setA2aNewName] = useState("");
+  const [a2aNewUrl, setA2aNewUrl] = useState("");
+  const [a2aNewDesc, setA2aNewDesc] = useState("");
+  const [a2aDiscovering, setA2aDiscovering] = useState(false);
+  const [a2aDiscovered, setA2aDiscovered] = useState<AgentCard | null>(null);
+  const [a2aError, setA2aError] = useState<string | null>(null);
+  const [a2aInvoking, setA2aInvoking] = useState(false);
+  const [a2aInvokeTask, setA2aInvokeTask] = useState("");
+  const [a2aInvokeResult, setA2aInvokeResult] = useState<string | null>(null);
 
   // ── Agent management state ──
   const [agentsOpen, setAgentsOpen] = useState(false);
@@ -225,6 +253,61 @@ export default function Settings() {
     const servers = await listMcpServers();
     setMcpServers(servers);
     setMcpLoading(false);
+  };
+
+  const loadA2aStatus = async () => {
+    const status = await getA2aStatus();
+    if (status) setA2aStatus(status);
+  };
+
+  const handleAddRemoteAgent = () => {
+    if (!a2aNewName.trim() || !a2aNewUrl.trim()) return;
+    const agents = [
+      ...(settings.a2a_agents || []),
+      {
+        name: a2aNewName.trim(),
+        url: a2aNewUrl.trim(),
+        description: a2aNewDesc.trim(),
+      },
+    ];
+    update("a2a_agents", agents);
+    setA2aNewName("");
+    setA2aNewUrl("");
+    setA2aNewDesc("");
+    setA2aDiscovered(null);
+    setA2aFormOpen(false);
+  };
+
+  const handleRemoveRemoteAgent = (url: string) => {
+    update("a2a_agents", (settings.a2a_agents || []).filter((a) => a.url !== url));
+  };
+
+  const handleDiscover = async (url: string) => {
+    setA2aDiscovering(true);
+    setA2aError(null);
+    const card = await discoverRemoteAgent(url, settings.a2a_server_token);
+    if (card) {
+      setA2aDiscovered(card);
+    } else {
+      setA2aDiscovered(null);
+      setA2aError(`Discover 失败: 无法获取 ${url} 的 Agent Card`);
+    }
+    setA2aDiscovering(false);
+  };
+
+  const handleInvokeAgent = async (url: string) => {
+    if (!a2aInvokeTask.trim()) return;
+    setA2aInvoking(true);
+    setA2aInvokeResult(null);
+    const result = await invokeRemoteAgent(
+      url,
+      a2aInvokeTask.trim(),
+      "sync",
+      120,
+      settings.a2a_server_token,
+    );
+    setA2aInvokeResult(result ?? "调用失败: 不可达或超时");
+    setA2aInvoking(false);
   };
 
   const handleAddMcpServer = async () => {
@@ -423,6 +506,11 @@ export default function Settings() {
     getLogPath().then((p) => { if (p) setLogPath(p); });
   }, []);
 
+  // Load A2A server status on mount
+  useEffect(() => {
+    loadA2aStatus();
+  }, []);
+
   // Load logs when panel opens
   useEffect(() => {
     if (logOpen) {
@@ -446,6 +534,7 @@ export default function Settings() {
       await invoke("update_settings", { settings });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      loadA2aStatus();
     } catch {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -745,6 +834,159 @@ export default function Settings() {
                 }
               />
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── A2A (Agent-to-Agent) ── */}
+      <div className="settings-group" style={{ borderTop: "1px solid var(--border, #30363d)", paddingTop: 12, marginTop: 8 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={settings.a2a_server_enabled || false}
+            onChange={(e) => update("a2a_server_enabled", e.target.checked)}
+          />
+          A2A Server <span className="settings-hint">— Agent2Agent 协议服务 (127.0.0.1)</span>
+        </label>
+
+        {a2aStatus && (
+          <div style={{ fontSize: 12, marginTop: 4, color: a2aStatus.running ? "#3fb950" : a2aStatus.enabled ? "#f9e2af" : "#8b949e" }}>
+            {a2aStatus.running
+              ? `● 运行中 (127.0.0.1:${a2aStatus.port})${a2aStatus.token_set ? " · Bearer 认证已启用" : ""}`
+              : a2aStatus.enabled
+                ? "● 已启用但未运行 — 保存后重启应用生效"
+                : "● 未启用"}
+          </div>
+        )}
+
+        {settings.a2a_server_enabled && (
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8 }}>
+              <input
+                className="settings-input"
+                type="number"
+                min={1024}
+                max={65535}
+                value={settings.a2a_server_port ?? 41234}
+                onChange={(e) => update("a2a_server_port", Number(e.target.value) || 41234)}
+                placeholder="端口"
+                title="监听端口 (默认 41234)"
+              />
+              <input
+                className="settings-input"
+                value={settings.a2a_server_token || ""}
+                onChange={(e) => update("a2a_server_token", e.target.value)}
+                placeholder="Bearer Token (留空 = 无认证)"
+              />
+            </div>
+
+            <div>
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                Remote Agents ({settings.a2a_agents?.length || 0})
+              </label>
+              {a2aError && (
+                <div style={{ padding: "6px 10px", background: "rgba(239, 68, 68, 0.1)", borderRadius: 4, fontSize: 12, color: "#ef4444", marginTop: 6 }}>
+                  {a2aError}
+                  <button onClick={() => setA2aError(null)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", float: "right", fontSize: 14 }}>✕</button>
+                </div>
+              )}
+              {(settings.a2a_agents || []).length === 0 ? (
+                <div style={{ fontSize: 12, color: "#888", padding: "8px 0" }}>
+                  尚未配置远端 agent — 添加一个 A2A 端点以调用远端 agent
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                  {(settings.a2a_agents || []).map((agent) => (
+                    <div key={agent.url} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#1a1a2e", borderRadius: 6, border: "1px solid #333", fontSize: 12 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, color: "#cdd6f4" }}>{agent.name || agent.url}</div>
+                        <div style={{ fontSize: 10, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {agent.url}{agent.description ? ` — ${agent.description}` : ""}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleDiscover(agent.url)}
+                        disabled={a2aDiscovering}
+                        style={{ background: "none", border: "1px solid #555", color: "#a6e3a1", cursor: "pointer", fontSize: 10, padding: "3px 8px", borderRadius: 4 }}
+                      >
+                        {a2aDiscovering ? "…" : "Discover"}
+                      </button>
+                      <button
+                        onClick={() => handleInvokeAgent(agent.url)}
+                        disabled={a2aInvoking || !a2aInvokeTask.trim()}
+                        style={{ background: "none", border: "1px solid #555", color: "#89b4fa", cursor: "pointer", fontSize: 10, padding: "3px 8px", borderRadius: 4 }}
+                      >
+                        Invoke
+                      </button>
+                      <button
+                        onClick={() => handleRemoveRemoteAgent(agent.url)}
+                        style={{ background: "none", border: "1px solid #555", color: "#f38ba8", cursor: "pointer", fontSize: 10, padding: "3px 8px", borderRadius: 4 }}
+                      >
+                        Del
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {a2aDiscovered && (
+              <div style={{ fontSize: 11, color: "#a6e3a1", padding: "6px 10px", background: "rgba(166,227,161,0.08)", borderRadius: 4, border: "1px solid rgba(166,227,161,0.2)" }}>
+                ✓ {a2aDiscovered.name} v{a2aDiscovered.version} — {a2aDiscovered.description}
+                <div style={{ color: "#a6adc8", marginTop: 2 }}>
+                  {(a2aDiscovered.skills || []).length} skills: {(a2aDiscovered.skills || []).slice(0, 5).map((s) => s.name).join(", ")}
+                  {a2aDiscovered.capabilities?.streaming ? " · streaming ✓" : ""}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input
+                className="settings-input"
+                style={{ flex: 1 }}
+                value={a2aInvokeTask}
+                onChange={(e) => setA2aInvokeTask(e.target.value)}
+                placeholder="手动调用任务文本 (调试, 对选中 agent 按 Invoke)"
+              />
+            </div>
+            {a2aInvokeResult && (
+              <div style={{ fontSize: 11, color: "#89b4fa", maxHeight: 120, overflow: "auto", whiteSpace: "pre-wrap", background: "#1a1a2e", border: "1px solid #333", borderRadius: 4, padding: 8 }}>
+                {a2aInvokeResult}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                className="btn-primary"
+                style={{ fontSize: 11, padding: "4px 10px" }}
+                onClick={() => { setA2aFormOpen(!a2aFormOpen); setA2aDiscovered(null); setA2aError(null); }}
+              >
+                {a2aFormOpen ? "Cancel" : "Add Agent"}
+              </button>
+            </div>
+
+            {a2aFormOpen && (
+              <div style={{ padding: 12, background: "#1a1a2e", borderRadius: 6, border: "1px solid #333", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div className="settings-group">
+                  <label>名称</label>
+                  <input className="settings-input" value={a2aNewName} onChange={(e) => setA2aNewName(e.target.value)} placeholder="e.g., local-orchestrator" />
+                </div>
+                <div className="settings-group">
+                  <label>A2A URL (base url 或 /a2a 端点)</label>
+                  <input className="settings-input" value={a2aNewUrl} onChange={(e) => setA2aNewUrl(e.target.value)} placeholder="http://127.0.0.1:41234" />
+                </div>
+                <div className="settings-group">
+                  <label>描述 (可选)</label>
+                  <input className="settings-input" value={a2aNewDesc} onChange={(e) => setA2aNewDesc(e.target.value)} placeholder="简要描述" />
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button className="btn-primary" style={{ fontSize: 12, padding: "6px 12px" }} onClick={handleAddRemoteAgent}>保存</button>
+                  <button className="settings-button" style={{ fontSize: 12, padding: "6px 12px" }} onClick={() => handleDiscover(a2aNewUrl)} disabled={a2aDiscovering || !a2aNewUrl.trim()}>
+                    {a2aDiscovering ? "发现中…" : "Discover 能力"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

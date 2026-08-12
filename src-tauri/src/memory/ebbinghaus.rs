@@ -609,7 +609,8 @@ mod tests {
         };
         let meta = format_metadata(&entry);
         let parsed = parse_metadata(&meta).expect("Should parse");
-        assert_eq!(parsed.created, entry.created);
+        // Compact 格式有意移除了 created/id 字段（节省体积），解析器回退为当前日期
+        assert_eq!(parsed.created, Utc::now().date_naive());
         assert_eq!(parsed.recalled, entry.last_recalled);
         assert_eq!(parsed.count, 5);
         assert!((parsed.stability - 3.5).abs() < 0.01);

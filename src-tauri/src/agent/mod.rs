@@ -8,7 +8,9 @@ pub mod context;
 pub mod checkpoint;
 pub mod loop_detector;
 pub mod cloud;
+pub mod failure_lessons;
 pub mod task_summarizer;
+pub mod tdd;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -229,6 +231,12 @@ const VERIFICATION_PHASE_TOOLS: &[&str] = &[
     "todo_write", "run_terminal_command",
     "memory_search", "git_status", "git_diff",
 ];
+
+/// Planning 阶段独立迭代预算：默认取 max_iterations 的 30%（至少 2 轮），
+/// 保证复杂任务有足够的只读调研空间，且不挤占执行预算。
+fn default_planning_budget(max_iterations: usize) -> usize {
+    ((max_iterations as f64 * 0.3).ceil() as usize).max(2)
+}
 
 /// Tools that are safe to execute in parallel (read-only, no side effects).
 fn is_read_only_tool(name: &str) -> bool {
@@ -553,7 +561,7 @@ impl AgentInstance {
             plan_text: None,
             plan_steps: Vec::new(),
             affected_files: Vec::new(),
-            planning_max_iterations: 0,
+            planning_max_iterations: default_planning_budget(max_iterations),
             execution_phase: ExecutionPhase::Executing,
             memory_context,
             consecutive_failures: HashMap::new(),
@@ -845,6 +853,16 @@ impl AgentInstance {
         }
     }
 
+    /// 当前执行阶段的迭代预算（Planning 与 Executing 各自独立，互不挤占）。
+    /// Done 阶段预算为 0，循环立即退出。
+    fn phase_budget(&self) -> usize {
+        match self.execution_phase {
+            ExecutionPhase::Planning => self.planning_max_iterations,
+            ExecutionPhase::Done => 0,
+            ExecutionPhase::Executing => self.max_iterations,
+        }
+    }
+
     /// Filter tool definitions based on execution phase and iteration.
     /// - Planning phase: only read-only tools
     /// - Executing, early iterations (<2): exploration tools (read-only + todo_write)
@@ -1032,7 +1050,45 @@ impl AgentInstance {
         // Tool definitions are now filtered per-iteration based on execution_phase
 
         let mut iteration = 0;
-        while iteration < self.max_iterations {
+        let mut last_phase = self.execution_phase;
+        while iteration < self.phase_budget() {
+            // Phase transition (Planning → Executing): reset the iteration counter so
+            // the planning budget and the execution budget stay independent
+            if self.execution_phase != last_phase {
+                log::info!(
+                    "[Agent:{}] Phase transition {:?} → {:?} — resetting iteration budget",
+                    self.agent_id, last_phase, self.execution_phase
+                );
+                iteration = 0;
+                last_phase = self.execution_phase;
+            }
+
+            // Planning budget exhausted without an approved plan — force the
+            // transition to Executing so the agent proceeds with its analysis
+            if self.execution_phase == ExecutionPhase::Planning
+                && iteration >= self.planning_max_iterations
+            {
+                self.emit_log(
+                    "warn",
+                    &format!(
+                        "Planning budget exhausted ({}/{}) — forcing transition to Executing",
+                        iteration, self.planning_max_iterations
+                    ),
+                );
+                self.execution_phase = ExecutionPhase::Executing;
+                self.messages.push(llm::ChatMessage {
+                    role: "system".into(),
+                    content: "[PLAN_BUDGET_EXHAUSTED] The planning budget was exhausted without \
+                        an approved plan. Proceed directly with implementation based on your \
+                        analysis so far. Keep changes minimal and verify them before finishing."
+                        .into(),
+                    images: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                });
+                continue;
+            }
+
             // Check cancellation
             if self.cancelled.load(Ordering::Relaxed) {
                 self.emit_cancelled();
@@ -1064,12 +1120,12 @@ impl AgentInstance {
                 self.emit_log("info", "Agent resumed");
             }
 
-            // 发射思考状态（含迭代进度）
+            // 发射思考状态（含迭代进度，按当前阶段预算显示）
             let elapsed = self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
             self.emit_status(
                 if iteration == 0 { "Analyzing task and planning..." } else { "Processing results and determining next step..." },
                 iteration as u32,
-                self.max_iterations as u32,
+                self.phase_budget() as u32,
                 self.total_tokens_est as u32,
                 elapsed,
             );
@@ -1265,8 +1321,24 @@ impl AgentInstance {
 
                             self.emit_log("info", "Plan extracted — waiting for user approval");
 
-                            // Wait for user action (oneshot: single message)
-                            let action = rx.await.unwrap_or(PlanAction::Skip);
+                            // Wait for user action (oneshot: single message), with a
+                            // timeout so a stalled approval cannot hang the agent forever
+                            let action = match tokio::time::timeout(
+                                std::time::Duration::from_secs(600),
+                                rx,
+                            )
+                            .await
+                            {
+                                Ok(Ok(action)) => action,
+                                Ok(Err(_)) => {
+                                    self.emit_log("warn", "Plan approval channel closed — skipping plan");
+                                    PlanAction::Skip
+                                }
+                                Err(_) => {
+                                    self.emit_log("warn", "Plan approval timed out after 600s — skipping plan");
+                                    PlanAction::Skip
+                                }
+                            };
 
                             // Clean up shared state
                             if let Some(awaiters) = self.app.try_state::<PlanApprovalAwaiters>() {
@@ -1297,6 +1369,8 @@ impl AgentInstance {
                                 tool_call_id: None,
                             });
                         }
+                        // 提前结束本轮但保留迭代计数（continue 会跳过循环末尾的 iteration += 1）
+                        iteration += 1;
                         continue;
                     }
 
@@ -2810,6 +2884,18 @@ impl AgentInstance {
             }
         }
 
+        // Inject cross-session failure lessons (learned error patterns)
+        if let Some(ref pp) = self.tool_ctx.project_path {
+            if let Ok(dir) = self.app.path().app_config_dir() {
+                let store = crate::agent::failure_lessons::FailureLessonsStore::load(dir.join("failure_lessons.json"));
+                let lessons_ctx = store.format_for_prompt(pp);
+                if !lessons_ctx.is_empty() {
+                    prompt.push_str("\n\n## Project Failure Lessons\n\n");
+                    prompt.push_str(&lessons_ctx);
+                }
+            }
+        }
+
         // Inject user preferences context (editing patterns, tool stats)
         if let Some(mem_state) = self.app.try_state::<std::sync::Arc<tokio::sync::RwLock<crate::memory::MemoryManager>>>() {
             if let Ok(mgr) = mem_state.inner().try_read() {
@@ -2840,7 +2926,13 @@ impl AgentInstance {
             prompt.push_str("- Do NOT call write_file, edit, append_file, delete_file, delete_directory, or run_terminal_command\n");
             prompt.push_str("- ONLY use read-only tools: read_file, list_directory, glob, grep, search_codebase, get_symbols, web_search, web_fetch, ask_user_question\n");
             prompt.push_str("- Output a structured plan with: overview, file-by-file changes, and implementation order\n");
-            prompt.push_str("- If you need clarification, use ask_user_question\n");
+            prompt.push_str("- CLARIFY BEFORE PLANNING: identify ambiguous requirements first. If any decision affects the \n");
+            prompt.push_str("  implementation direction (tech stack choice, scope boundaries, API/compatibility constraints, \n");
+            prompt.push_str("  behavior trade-offs), ask the user via ask_user_question BEFORE finalizing the plan — at most \n");
+            prompt.push_str("  3 focused questions in a single call, each with concrete options\n");
+            prompt.push_str("- Do NOT ask questions you can answer yourself: verify assumptions by reading the codebase \n");
+            prompt.push_str("  with read-only tools first. Only ask when the answer is genuinely unknowable from code\n");
+            prompt.push_str("- After the user answers, incorporate the answers into the final plan\n");
         } else if self.execution_phase == ExecutionPhase::Executing {
             prompt.push_str("\n\n## Executing Phase\n\n");
             prompt.push_str("You are in EXECUTING phase. Follow the plan and implement changes using the available tools.\n");
@@ -3180,6 +3272,17 @@ mod tests {
     use super::*;
 
     // ── Task 1: Planning Mode / Task 5: Dynamic Tool Selection ──
+
+    #[test]
+    fn test_default_planning_budget() {
+        // 30% of max_iterations, clamped to at least 2 iterations
+        assert_eq!(default_planning_budget(25), 8); // ceil(7.5)
+        assert_eq!(default_planning_budget(20), 6);
+        assert_eq!(default_planning_budget(10), 3);
+        assert_eq!(default_planning_budget(5), 2); // ceil(1.5)
+        assert_eq!(default_planning_budget(2), 2); // min clamp
+        assert_eq!(default_planning_budget(1), 2);
+    }
 
     #[test]
     fn test_planning_phase_tools_filtered() {

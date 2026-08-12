@@ -39,6 +39,50 @@ export interface AppSettings {
   theme: string;
   auto_review_on_save?: boolean;
   auto_review_on_commit?: boolean;
+  // ── A2A (Agent-to-Agent) ──
+  a2a_server_enabled?: boolean;
+  a2a_server_port?: number;
+  a2a_server_token?: string;
+  a2a_agents?: A2aAgentConfig[];
+}
+
+/** Remote A2A agent entry persisted in AppSettings. */
+export interface A2aAgentConfig {
+  name: string;
+  url: string;
+  description: string;
+}
+
+/** A2A server status as reported by get_a2a_status. */
+export interface A2aStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  token_set: boolean;
+}
+
+/** Agent Card (A2A v1.0, camelCase wire fields). */
+export interface AgentCardSkill {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+}
+
+export interface AgentCard {
+  name: string;
+  description: string;
+  url: string;
+  version: string;
+  capabilities?: {
+    streaming?: boolean;
+    pushNotifications?: boolean;
+    stateTransitionHistory?: boolean;
+  };
+  authentication?: { schemes: string[] } | null;
+  defaultInputModes?: string[];
+  defaultOutputModes?: string[];
+  skills?: AgentCardSkill[];
 }
 
 export interface LSPSymbol {
@@ -474,7 +518,7 @@ export async function disconnectMcpServer(serverName: string): Promise<number | 
 
 // ── Cloud Agent ──
 
-export type CloudTaskStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+export type CloudTaskStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
 
 export interface CloudTask {
   id: string;
@@ -519,6 +563,131 @@ export async function cancelCloudTask(taskId: string): Promise<boolean> {
   if (!isTauri()) return false;
   const { invoke } = await import("@tauri-apps/api/core");
   return (await tryInvoke(() => invoke<void>("cancel_cloud_task", { taskId }))) !== null;
+}
+
+export async function resumeCloudTask(taskId: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return (await tryInvoke(() => invoke<void>("resume_cloud_task", { taskId }))) !== null;
+}
+
+// ── Checkpoints (agent iteration snapshots + diff) ──
+
+export interface Checkpoint {
+  iteration: number;
+  timestamp: number;
+  commit_hash: string | null;
+  files: string[];
+  description: string;
+}
+
+export interface DiffHunk {
+  type: "add" | "remove" | "context" | "hunk";
+  content: string;
+  old_start: number;
+  new_start: number;
+}
+
+export interface FileChange {
+  file_path: string;
+  hunks: DiffHunk[];
+}
+
+export async function listCheckpoints(sessionId: string): Promise<Checkpoint[]> {
+  if (!isTauri()) return [];
+  const { invoke } = await import("@tauri-apps/api/core");
+  const result = await tryInvoke(() => invoke<Checkpoint[]>("list_checkpoints", { sessionId }));
+  return result ?? [];
+}
+
+export async function checkpointDiff(
+  sessionId: string,
+  iteration: number,
+  projectPath: string
+): Promise<FileChange[]> {
+  if (!isTauri()) return [];
+  const { invoke } = await import("@tauri-apps/api/core");
+  const result = await tryInvoke(() =>
+    invoke<FileChange[]>("checkpoint_diff", { sessionId, iteration, projectPath })
+  );
+  return result ?? [];
+}
+
+export async function restoreCheckpoint(
+  sessionId: string,
+  iteration: number,
+  projectPath: string
+): Promise<boolean> {
+  if (!isTauri()) return false;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return (await tryInvoke(() =>
+    invoke<void>("restore_checkpoint", { sessionId, iteration, projectPath })
+  )) !== null;
+}
+
+// ── A2A (Agent-to-Agent) ──
+
+export async function getA2aStatus(): Promise<A2aStatus | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() => invoke<A2aStatus>("get_a2a_status"));
+}
+
+/** Update A2A config — all fields optional, only provided ones change. */
+export async function setA2aConfig(params: {
+  enabled?: boolean;
+  port?: number;
+  token?: string;
+  agents?: A2aAgentConfig[];
+}): Promise<boolean> {
+  if (!isTauri()) return true;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return (await tryInvoke(() => invoke<void>("set_a2a_config", { params }))) !== null;
+}
+
+export async function listRemoteAgents(): Promise<A2aAgentConfig[]> {
+  if (!isTauri()) return [];
+  const { invoke } = await import("@tauri-apps/api/core");
+  const result = await tryInvoke(() => invoke<A2aAgentConfig[]>("list_remote_agents"));
+  return result ?? [];
+}
+
+/** Discover a remote agent's Agent Card (summary shown in the UI). */
+export async function discoverRemoteAgent(
+  url: string,
+  token?: string,
+): Promise<AgentCard | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() =>
+    invoke<AgentCard>("discover_remote_agent", {
+      url,
+      token: token || null,
+    })
+  );
+}
+
+/** Manually invoke a remote agent (debug / manual trigger). */
+export async function invokeRemoteAgent(
+  url: string,
+  task: string,
+  mode?: string,
+  timeoutSecs?: number,
+  token?: string,
+  skill?: string,
+): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() =>
+    invoke<string>("invoke_remote_agent", {
+      url,
+      task,
+      mode: mode || "sync",
+      timeoutSecs: timeoutSecs ?? 120,
+      token: token || null,
+      skill: skill || null,
+    })
+  );
 }
 
 // ── 事件监听 ──────────────────────────────────────────────────────────────

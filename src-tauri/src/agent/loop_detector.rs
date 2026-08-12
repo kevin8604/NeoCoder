@@ -49,8 +49,9 @@ pub struct LoopDetectionConfig {
     /// Number of consecutive read-only tool calls (total, before dedup) to even
     /// consider this strategy. Set to 0 to disable.
     pub read_only_streak_threshold: usize,
-    /// Max consecutive times the same (tool_name + args_sig) can appear in a
-    /// read-only streak before triggering. Set to 0 to disable repeated-read detection.
+    /// Max consecutive times the same (tool_name + args_sig + output) can appear
+    /// in a read-only streak before triggering. Changing output (e.g. polling a
+    /// build log) resets the repeat count. Set to 0 to disable repeated-read detection.
     pub repeated_read_threshold: usize,
 }
 
@@ -135,7 +136,7 @@ pub struct LoopDetector {
     // ── Incremental read-only streak state (updated in record_call) ──
     /// Current consecutive read-only call count (reset to 0 on non-read-only).
     read_only_streak: usize,
-    /// Consecutive count of the same (tool_name, args_sig) at the tail.
+    /// Consecutive count of the same (tool_name, args_sig, output) at the tail.
     tail_repeat_count: usize,
     /// Unique (tool_name, args_sig) pairs within the current read-only streak.
     read_only_unique_keys: HashSet<(String, String)>,
@@ -192,9 +193,14 @@ impl LoopDetector {
             self.read_only_unique_keys
                 .insert((tool_name.to_string(), record.args_sig.clone()));
 
-            // Track consecutive identical (tool_name, args_sig) at the tail
+            // Track consecutive identical (tool_name, args_sig, output) at the tail.
+            // Output changes (e.g. polling a process) reset the count — only truly
+            // static re-reads are loops.
             if let Some(prev) = self.history.back() {
-                if prev.tool_name == tool_name && prev.args_sig == record.args_sig {
+                if prev.tool_name == tool_name
+                    && prev.args_sig == record.args_sig
+                    && prev.result_hash == record.result_hash
+                {
                     self.tail_repeat_count += 1;
                 } else {
                     self.tail_repeat_count = 1;
@@ -370,8 +376,9 @@ impl LoopDetector {
     ///
     /// Two sub-rules, either triggers:
     ///
-    /// A) **Repeated-read**: the same (tool_name, args_sig) appears
-    ///    `repeated_read_threshold`+ times consecutively at the tail.
+    /// A) **Repeated-read**: the same (tool_name, args_sig, output) appears
+    ///    `repeated_read_threshold`+ times consecutively at the tail. Different
+    ///    outputs (e.g. polling) reset the repeat count.
     ///
     /// B) **Blind exploration**: total consecutive read-only calls >=
     ///    `read_only_streak_threshold` AND unique (tool_name, args_sig) count <
@@ -453,7 +460,7 @@ mod tests {
         match detector.check() {
             LoopVerdict::InjectWarning(msg) => {
                 assert!(msg.contains("grep"), "warning should name the tool");
-                assert!(msg.contains("3 times"), "warning should mention count");
+                assert!(msg.contains("3 consecutive times"), "warning should mention count");
             }
             other => panic!("Expected InjectWarning, got {:?}", other),
         }
@@ -473,7 +480,10 @@ mod tests {
 
     #[test]
     fn test_ping_pong_detected() {
-        let mut detector = LoopDetector::new(LoopDetectionConfig::default());
+        let mut detector = LoopDetector::new(LoopDetectionConfig {
+            ping_pong_cycles: 2,
+            ..Default::default()
+        });
 
         // A→B→A→B (2 cycles, 4 calls)
         detector.record_call("read_file", &make_args("a.rs"), "content A", true);
@@ -495,8 +505,15 @@ mod tests {
     fn test_failure_streak_detected() {
         let mut detector = LoopDetector::new(LoopDetectionConfig::default());
 
-        for _ in 0..5 {
-            detector.record_call("edit", &make_args("diff a"), "error: mismatched types", false);
+        // 每次 args 不同：避免同时命中 no-progress 策略（阈值同为 5 且先检查），
+        // 确保验证的是 failure-streak 策略本身
+        for i in 0..5 {
+            detector.record_call(
+                "edit",
+                &make_args(&format!("diff a{}", i)),
+                "error: mismatched types",
+                false,
+            );
         }
 
         match detector.check() {

@@ -5,6 +5,7 @@
 //! Optionally, completed tasks can auto-create GitHub PRs.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
@@ -29,6 +30,23 @@ pub enum CloudTaskStatus {
     Failed(String),
     /// Cancelled by user
     Cancelled,
+    /// Interrupted by app restart — was Running/Pending when the process died.
+    /// Resumable via the `resume_cloud_task` command.
+    Interrupted,
+}
+
+impl CloudTaskStatus {
+    /// Stable lowercase label for the frontend / logs.
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed(_) => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Interrupted => "interrupted",
+        }
+    }
 }
 
 /// Configuration for auto-creating a GitHub PR on completion.
@@ -74,17 +92,66 @@ pub struct CloudTask {
     pub pr_config: Option<PrConfig>,
     /// PR URL (if PR was created)
     pub pr_url: Option<String>,
+    /// Agent definition id used for execution (resume re-runs with the same agent)
+    #[serde(default)]
+    pub agent_id: Option<String>,
 }
 
 /// Shared state for cloud task management.
+///
+/// When constructed with [`CloudTaskManager::with_storage`], every state
+/// change is persisted to a JSON file so tasks survive app restarts.
+/// Tasks that were Running/Pending at load time are marked `Interrupted`
+/// (the process died mid-flight) and can be resumed via `resume_cloud_task`.
 pub struct CloudTaskManager {
     tasks: Mutex<HashMap<TaskId, CloudTask>>,
+    /// Persistence file path (`None` disables persistence, used in tests)
+    storage_path: Option<PathBuf>,
 }
 
 impl CloudTaskManager {
     pub fn new() -> Self {
         Self {
             tasks: Mutex::new(HashMap::new()),
+            storage_path: None,
+        }
+    }
+
+    /// Construct with disk persistence: loads existing tasks from `path` and
+    /// marks tasks that were Running/Pending (interrupted by a restart) as
+    /// `Interrupted` so the user can resume them.
+    pub fn with_storage(path: PathBuf) -> Self {
+        let mut tasks = HashMap::new();
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(list) = serde_json::from_str::<Vec<CloudTask>>(&content) {
+                for mut task in list {
+                    if matches!(task.status, CloudTaskStatus::Pending | CloudTaskStatus::Running) {
+                        task.status = CloudTaskStatus::Interrupted;
+                    }
+                    tasks.insert(task.id.clone(), task);
+                }
+                log::info!("[CloudTask] Loaded {} tasks from {}", tasks.len(), path.display());
+            }
+        }
+        Self {
+            tasks: Mutex::new(tasks),
+            storage_path: Some(path),
+        }
+    }
+
+    /// Write the current task snapshot back to disk (no-op without storage).
+    async fn persist(&self) {
+        let Some(path) = self.storage_path.clone() else { return; };
+        let tasks = self.tasks.lock().await;
+        let snapshot: Vec<CloudTask> = tasks.values().cloned().collect();
+        drop(tasks);
+        match serde_json::to_string_pretty(&snapshot) {
+            Ok(json) => {
+                if let Err(e) = tokio::fs::write(&path, json).await {
+                    log::warn!("[CloudTask] Failed to persist tasks: {}", e);
+                }
+            }
+            Err(e) => log::warn!("[CloudTask] Failed to serialize tasks: {}", e),
         }
     }
 
@@ -93,6 +160,8 @@ impl CloudTaskManager {
         let id = task.id.clone();
         let mut tasks = self.tasks.lock().await;
         tasks.insert(id.clone(), task);
+        drop(tasks);
+        self.persist().await;
         id
     }
 
@@ -102,6 +171,8 @@ impl CloudTaskManager {
         if let Some(task) = tasks.get_mut(id) {
             task.status = status;
         }
+        drop(tasks);
+        self.persist().await;
     }
 
     /// Mark task as completed with result.
@@ -112,6 +183,8 @@ impl CloudTaskManager {
             task.result = Some(result);
             task.completed_at = Some(chrono::Utc::now().timestamp());
         }
+        drop(tasks);
+        self.persist().await;
     }
 
     /// Mark task as failed with error message.
@@ -121,6 +194,8 @@ impl CloudTaskManager {
             task.status = CloudTaskStatus::Failed(error);
             task.completed_at = Some(chrono::Utc::now().timestamp());
         }
+        drop(tasks);
+        self.persist().await;
     }
 
     /// Set PR URL on a completed task.
@@ -129,6 +204,8 @@ impl CloudTaskManager {
         if let Some(task) = tasks.get_mut(id) {
             task.pr_url = Some(pr_url);
         }
+        drop(tasks);
+        self.persist().await;
     }
 
     /// Get a single task by ID.
@@ -212,6 +289,7 @@ pub fn spawn_background_sub_agent(
             result: None,
             pr_config: None,
             pr_url: None,
+            agent_id: Some(agent_id.clone()),
         };
         task_manager_clone.register(task_record).await;
         task_manager_clone
@@ -383,4 +461,86 @@ pub async fn create_github_pr(config: &PrConfig) -> Result<String, String> {
     let pr_url = stdout.trim().to_string();
 
     Ok(pr_url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_task(id: &str, status: CloudTaskStatus) -> CloudTask {
+        CloudTask {
+            id: id.to_string(),
+            session_id: "s1".to_string(),
+            status,
+            message: format!("task {}", id),
+            created_at: 1,
+            completed_at: None,
+            result: None,
+            pr_config: None,
+            pr_url: None,
+            agent_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_persist_and_reload_marks_interrupted() {
+        let dir = std::env::temp_dir().join(format!("cloud-task-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cloud_tasks.json");
+
+        let manager = CloudTaskManager::with_storage(path.clone());
+        manager.register(sample_task("t1", CloudTaskStatus::Running)).await;
+        manager.register(sample_task("t2", CloudTaskStatus::Completed)).await;
+
+        // 状态变更后快照已写盘
+        assert!(path.exists());
+
+        // 模拟重启：从磁盘重新加载
+        let reloaded = CloudTaskManager::with_storage(path.clone());
+        assert_eq!(reloaded.list().await.len(), 2);
+        // 运行中的任务被标记为 Interrupted，等待用户恢复
+        assert_eq!(reloaded.get("t1").await.unwrap().status, CloudTaskStatus::Interrupted);
+        // 已完成的任务原样保留
+        assert_eq!(reloaded.get("t2").await.unwrap().status, CloudTaskStatus::Completed);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_status_updates_persist() {
+        let dir = std::env::temp_dir().join(format!("cloud-task-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cloud_tasks.json");
+
+        let manager = CloudTaskManager::with_storage(path.clone());
+        manager.register(sample_task("t1", CloudTaskStatus::Pending)).await;
+        manager.update_status("t1", CloudTaskStatus::Running).await;
+        manager.complete("t1", "done".to_string()).await;
+
+        let reloaded = CloudTaskManager::with_storage(path.clone());
+        let task = reloaded.get("t1").await.unwrap();
+        assert_eq!(task.status, CloudTaskStatus::Completed);
+        assert_eq!(task.result.as_deref(), Some("done"));
+        assert!(task.completed_at.is_some());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_without_storage_skips_persistence() {
+        let manager = CloudTaskManager::new();
+        manager.register(sample_task("t1", CloudTaskStatus::Pending)).await;
+        manager.update_status("t1", CloudTaskStatus::Running).await;
+        assert_eq!(manager.list().await.len(), 1);
+    }
+
+    #[test]
+    fn test_status_label() {
+        assert_eq!(CloudTaskStatus::Pending.label(), "pending");
+        assert_eq!(CloudTaskStatus::Running.label(), "running");
+        assert_eq!(CloudTaskStatus::Completed.label(), "completed");
+        assert_eq!(CloudTaskStatus::Failed("x".into()).label(), "failed");
+        assert_eq!(CloudTaskStatus::Cancelled.label(), "cancelled");
+        assert_eq!(CloudTaskStatus::Interrupted.label(), "interrupted");
+    }
 }

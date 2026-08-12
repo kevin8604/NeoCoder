@@ -163,6 +163,13 @@ impl AgentLog {
     /// Convert log entries back into LLM chat messages for replay.
     pub fn to_messages(entries: &[LogEntry]) -> Vec<crate::llm::ChatMessage> {
         let mut messages = Vec::new();
+        // Tool results must reference the tool_call_id of the assistant's
+        // preceding tool_calls, otherwise OpenAI-compatible APIs reject the
+        // request (role "tool" must follow an assistant tool_call). Queue the
+        // ids in order as assistant messages appear and consume them as tool
+        // results arrive.
+        let mut pending_tool_call_ids: std::collections::VecDeque<String> =
+            std::collections::VecDeque::new();
 
         for entry in entries {
             match &entry.entry_type {
@@ -179,6 +186,9 @@ impl AgentLog {
                     content,
                     tool_calls,
                 } => {
+                    for tc in tool_calls.iter().flatten() {
+                        pending_tool_call_ids.push_back(tc.id.clone());
+                    }
                     let tc_json = tool_calls.as_ref().map(|calls| {
                         serde_json::Value::Array(
                             calls
@@ -210,12 +220,15 @@ impl AgentLog {
                     result,
                     ..
                 } => {
+                    let call_id = pending_tool_call_ids
+                        .pop_front()
+                        .unwrap_or_else(|| format!("replay-{}", entry.seq));
                     messages.push(crate::llm::ChatMessage {
                         role: "tool".into(),
                         content: result.clone(),
                         images: None,
                         tool_calls: None,
-                        tool_call_id: Some(format!("replay-{}", entry.seq)),
+                        tool_call_id: Some(call_id),
                     });
                 }
                 LogEntryType::CompactionSummary { summary, .. } => {

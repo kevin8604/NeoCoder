@@ -261,13 +261,33 @@ impl SandboxChecker {
         match std::fs::canonicalize(path) {
             Ok(p) => p,
             Err(_) => {
-                // Path doesn't exist — try parent
-                if let Some(parent) = path.parent() {
-                    if parent.exists() {
-                        if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
-                            let remaining = path.strip_prefix(parent).unwrap_or(path);
-                            return canonical_parent.join(remaining);
+                // Path doesn't exist — walk up until we find an existing ancestor,
+                // canonicalize it, then re-append the missing tail. Checking only the
+                // immediate parent would return a non-canonical path for deeply nested
+                // targets, breaking starts_with comparisons against canonicalized
+                // allowed roots (Windows canonical paths carry the \\?\ prefix).
+                let mut missing: Vec<std::ffi::OsString> = Vec::new();
+                let mut cur = path;
+                loop {
+                    match cur.parent() {
+                        Some(parent) => {
+                            if let Some(name) = cur.file_name() {
+                                missing.push(name.to_os_string());
+                            } else {
+                                break;
+                            }
+                            if parent.exists() {
+                                if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
+                                    let mut result = canonical_parent;
+                                    for seg in missing.iter().rev() {
+                                        result.push(seg);
+                                    }
+                                    return result;
+                                }
+                            }
+                            cur = parent;
                         }
+                        None => break,
                     }
                 }
                 // Fallback: return absolute path

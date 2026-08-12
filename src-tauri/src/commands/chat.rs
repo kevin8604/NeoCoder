@@ -43,6 +43,9 @@ Rules:
 
 pub struct ChatState {
     pub memory: Arc<RwLock<ConversationMemory>>,
+    /// 会话级 Plan 模式开关：`set_plan_mode` 写入，`send_message` 未显式传
+    /// plan_mode 参数时回退查询（显式参数优先）。
+    pub plan_mode_sessions: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 /// Sanitize conversation messages for LLM API compatibility.
@@ -144,6 +147,16 @@ pub async fn send_message(
 ) -> Result<String, String> {
     let memory = chat_state.memory.read().await;
     let settings = settings.read().await;
+
+    // Plan 模式：显式传参优先，否则回退到会话级开关（set_plan_mode 写入）
+    let plan_mode = plan_mode.or_else(|| {
+        chat_state
+            .plan_mode_sessions
+            .lock()
+            .ok()
+            .map(|s| s.contains(&session_id))
+            .filter(|&enabled| enabled)
+    });
 
     // Build messages array for LLM API
     let mut messages: Vec<LlmMessage> = vec![];
@@ -456,12 +469,8 @@ pub async fn send_message(
 
     // ── Agent 模式 ──
     if is_agent {
-        let memory_manager = memory.memory_manager();
-        let agent_memory_context = memory_manager.inject_memory_context();
+        let agent_memory_context = memory.memory_manager().inject_memory_context();
         drop(memory);
-        let provider = settings.llm_provider.clone();
-        let api_key = settings.api_key.clone();
-        let chat_model = settings.chat_model.clone();
 
         // Persist user message immediately (survives refresh/restart)
         let user_msg_for_storage = message.clone();
@@ -475,40 +484,6 @@ pub async fn send_message(
                 tool_calls: None,
             });
         }
-
-        // Determine which agent to use
-        let effective_agent_id = agent_id.unwrap_or_else(|| "orchestrator".to_string());
-
-        // Look up agent definition
-        let agent_def: Option<crate::agent::definition::AgentDefinition> = app.try_state::<AgentRegistry>()
-            .and_then(|registry| crate::agent::definition::find_agent(registry.inner(), &effective_agent_id));
-
-        // Load custom instructions from settings + .neecoder/instructions.md
-        let project_path = effective_project_path.clone();
-        let mut custom_instructions = String::new();
-        if !settings.custom_instructions.trim().is_empty() {
-            custom_instructions.push_str(&settings.custom_instructions);
-        }
-        // Try loading project-level instructions
-        if let Some(ref pp) = project_path {
-            let file_path = std::path::Path::new(pp).join(".neecoder").join("instructions.md");
-            if let Ok(content) = std::fs::read_to_string(&file_path) {
-                if !content.trim().is_empty() {
-                    if !custom_instructions.is_empty() {
-                        custom_instructions.push_str("\n\n");
-                    }
-                    custom_instructions.push_str(&content);
-                }
-            }
-        }
-        // Inject memory context (MEMORY.md + recent notes)
-        if !agent_memory_context.is_empty() {
-            if !custom_instructions.is_empty() {
-                custom_instructions.push_str("\n\n");
-            }
-            custom_instructions.push_str(&agent_memory_context);
-        }
-        let custom_instructions = if custom_instructions.is_empty() { None } else { Some(custom_instructions) };
 
         // ── 智能上下文注入：Agent 模式自动检索相关文件 ──
         if !has_codebase {
@@ -567,183 +542,21 @@ pub async fn send_message(
             }
         }
 
-        // Register Agent cancellation flag
-        let cancel_flag = Arc::new(AtomicBool::new(false));
-        if let Some(cancel_map) = app.try_state::<AgentCancelMap>() {
-            if let Ok(mut map) = cancel_map.lock() {
-                map.insert(session_id.clone(), cancel_flag.clone());
-            }
-        }
-
-        // Register Agent pause control (flag + notify) for this session
-        let pause_flag = Arc::new(AtomicBool::new(false));
-        let pause_notify = Arc::new(tokio::sync::Notify::new());
-        if let Some(pc) = app.try_state::<PauseControl>() {
-            if let Ok(mut map) = pc.lock() {
-                map.insert(session_id.clone(), (pause_flag.clone(), pause_notify.clone()));
-            }
-        }
-
-        let agent_def_cloned = agent_def.clone();
-        let session_id_for_cleanup = session_id.clone();
-        let memory_manager_for_flush = memory_manager.clone();
-        // Snapshot full settings for the post-run dreaming task (fire-and-forget)
-        let settings_for_dreaming = settings.clone();
-
-        let is_plan_mode = plan_mode.unwrap_or(false);
-
-        // ── P0-2: Pre-flight validation ──
-        if api_key.trim().is_empty() && !matches!(provider, crate::config::LlmProvider::Ollama) {
-            return Err("No API key configured. Please set your API key in Settings.".to_string());
-        }
-        if chat_model.trim().is_empty() {
-            return Err("No chat model configured. Please select a model in Settings.".to_string());
-        }
-        if !effective_agent_id.is_empty() && effective_agent_id != "orchestrator" && agent_def.is_none() {
-            return Err(format!("Agent '{}' not found in registry. Available agents: orchestrator, explorer, reviewer, architect", effective_agent_id));
-        }
-
-        tokio::spawn(async move {
-            log::info!("[Agent] Spawn started for session '{}', agent '{}' (plan_mode={})", session_id, effective_agent_id, is_plan_mode);
-
-            // ── P0-1: Panic-safe agent execution ──
-            // Run the agent in a nested spawn so any panic is caught as a JoinError.
-            // Clone all moved values for use after the inner spawn completes.
-            let app2 = app.clone();
-            let session_id2 = session_id.clone();
-            let provider2 = provider.clone();
-            let api_key2 = api_key.clone();
-            let chat_model2 = chat_model.clone();
-            let project_path2 = project_path.clone();
-            let custom_instructions2 = custom_instructions.clone();
-            let cancel_flag2 = cancel_flag.clone();
-            let agent_def_cloned2 = agent_def_cloned.clone();
-            let agent_memory_context2 = agent_memory_context.clone();
-            let agent_handle = tokio::spawn(async move {
-                agent::run_agent(
-                    &app2,
-                    &session_id2,
-                    &messages,
-                    &provider2,
-                    &api_key2,
-                    None,
-                    &chat_model2,
-                    project_path2.as_deref(),
-                    custom_instructions2,
-                    cancel_flag2,
-                    agent_def_cloned2.as_ref(),
-                    is_plan_mode,
-                    Some(agent_memory_context2.clone()),
-                ).await
-            });
-
-            let result = match agent_handle.await {
-                Ok(r) => r,
-                Err(join_err) => {
-                    // Extract panic message if available
-                    let panic_msg = if join_err.is_panic() {
-                        if let Ok(payload) = join_err.try_into_panic() {
-                            if let Some(s) = payload.downcast_ref::<String>() {
-                                s.clone()
-                            } else if let Some(s) = payload.downcast_ref::<&str>() {
-                                s.to_string()
-                            } else {
-                                "Unknown panic payload".to_string()
-                            }
-                        } else {
-                            "Panic (payload unavailable)".to_string()
-                        }
-                    } else {
-                        format!("Task cancelled: {}", join_err)
-                    };
-
-                    log::error!("[Agent] Task panicked for session '{}': {}", session_id_for_cleanup, panic_msg);
-
-                    // Cleanup cancel flag
-                    if let Some(cancel_map) = app.try_state::<AgentCancelMap>() {
-                        if let Ok(mut map) = cancel_map.lock() {
-                            map.remove(&session_id_for_cleanup);
-                        }
-                    }
-
-                    // Cleanup pause control
-                    if let Some(pc) = app.try_state::<PauseControl>() {
-                        if let Ok(mut map) = pc.lock() {
-                            map.remove(&session_id_for_cleanup);
-                        }
-                    }
-
-                    // Emit error to frontend
-                    let _ = app.emit("chat-event", ChatEvent::Error {
-                        session_id: session_id.clone(),
-                        agent_id: Some(effective_agent_id.clone()),
-                        message: format!("Agent task crashed: {}", panic_msg),
-                    });
-                    return;
-                }
-            };
-
-            // Cleanup cancel flag
-            if let Some(cancel_map) = app.try_state::<AgentCancelMap>() {
-                if let Ok(mut map) = cancel_map.lock() {
-                    map.remove(&session_id_for_cleanup);
-                }
-            }
-
-            // Cleanup pause control
-            if let Some(pc) = app.try_state::<PauseControl>() {
-                if let Ok(mut map) = pc.lock() {
-                    map.remove(&session_id_for_cleanup);
-                }
-            }
-
-            // Persist final result to conversation memory
-            let result_content = match &result {
-                Ok(text) => text.clone(),
-                Err(e) => {
-                    log::error!("[Agent] Failed for session '{}': {}", session_id_for_cleanup, e);
-                    format!("Error: {}", e)
-                }
-            };
-            let mem = memory_arc.write().await;
-            mem.add_message(&session_id_for_cleanup, crate::chat::ChatMessage {
-                role: crate::chat::Role::Assistant,
-                content: result_content.clone(),
-                images: None,
-                tool_calls: None,
-            });
-
-            // Memory flush: append session summary to today's notes
-            let note = format!(
-                "Agent '{}' completed: {}",
-                agent_def_cloned.as_ref().map(|d| d.id.as_str()).unwrap_or("agent"),
-                result_content.chars().take(150).collect::<String>()
-            );
-            let _ = memory_manager_for_flush.append_note(&note);
-
-            // Collect session messages for dreaming before dropping lock
-            let context_window = crate::config::model_context_window(&chat_model);
-            let session_msgs: Vec<crate::chat::ChatMessage> = mem.get_context_window(&session_id_for_cleanup, context_window);
-            drop(mem);
-
-            // Dreaming: fire-and-forget LLM summarization of session → MEMORY.md
-            // Routes through the LLM Router: local Ollama first (privacy + cost), remote fallback.
-            let memory_mgr = memory_manager_for_flush.clone();
-            tokio::spawn(async move {
-                memory_mgr.dreaming(&session_msgs, &settings_for_dreaming).await;
-            });
-
-            if let Err(e) = result {
-                log::error!("[Agent] Emitting error event: {}", e);
-                let _ = app.emit("chat-event", ChatEvent::Error {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    message: e,
-                });
-            }
-        });
-
-        return Ok("Agent started".to_string());
+        // ── Shared agent spawn pipeline (cancel/pause registration, execution,
+        // result persistence, dreaming) — also used by resume_agent ──
+        let settings_snapshot = settings.clone();
+        return spawn_agent_pipeline(
+            app,
+            &chat_state,
+            session_id,
+            messages,
+            agent_id,
+            effective_project_path,
+            plan_mode,
+            settings_snapshot,
+            agent_memory_context,
+        )
+        .await;
     }
 
     // ── Ask / Edit mode ──
@@ -883,6 +696,385 @@ pub async fn send_message(
     });
 
     Ok("Streaming started".to_string())
+}
+
+/// Shared agent spawn pipeline used by `send_message` (new tasks) and
+/// `resume_agent` (recovered tasks). Registers cancel/pause controls, runs
+/// the agent in a panic-safe nested task, persists the final result, flushes
+/// a session note and fires dreaming.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn spawn_agent_pipeline(
+    app: tauri::AppHandle,
+    chat_state: &ChatState,
+    session_id: String,
+    messages: Vec<LlmMessage>,
+    agent_id: Option<String>,
+    project_path: Option<String>,
+    plan_mode: Option<bool>,
+    settings: AppSettings,
+    agent_memory_context: String,
+) -> Result<String, String> {
+    let provider = settings.llm_provider.clone();
+    let api_key = settings.api_key.clone();
+    let chat_model = settings.chat_model.clone();
+
+    // Determine which agent to use
+    let effective_agent_id = agent_id.clone().unwrap_or_else(|| "orchestrator".to_string());
+
+    // Look up agent definition
+    let agent_def: Option<crate::agent::definition::AgentDefinition> = app.try_state::<AgentRegistry>()
+        .and_then(|registry| crate::agent::definition::find_agent(registry.inner(), &effective_agent_id));
+
+    // Load custom instructions from settings + .neecoder/instructions.md
+    let mut custom_instructions = String::new();
+    if !settings.custom_instructions.trim().is_empty() {
+        custom_instructions.push_str(&settings.custom_instructions);
+    }
+    // Try loading project-level instructions
+    if let Some(ref pp) = project_path {
+        let file_path = std::path::Path::new(pp).join(".neecoder").join("instructions.md");
+        if let Ok(content) = std::fs::read_to_string(&file_path) {
+            if !content.trim().is_empty() {
+                if !custom_instructions.is_empty() {
+                    custom_instructions.push_str("\n\n");
+                }
+                custom_instructions.push_str(&content);
+            }
+        }
+    }
+    // Inject memory context (MEMORY.md + recent notes)
+    if !agent_memory_context.is_empty() {
+        if !custom_instructions.is_empty() {
+            custom_instructions.push_str("\n\n");
+        }
+        custom_instructions.push_str(&agent_memory_context);
+    }
+    let custom_instructions = if custom_instructions.is_empty() { None } else { Some(custom_instructions) };
+
+    // ── P0-2: Pre-flight validation ──
+    if api_key.trim().is_empty() && !matches!(provider, crate::config::LlmProvider::Ollama) {
+        return Err("No API key configured. Please set your API key in Settings.".to_string());
+    }
+    if chat_model.trim().is_empty() {
+        return Err("No chat model configured. Please select a model in Settings.".to_string());
+    }
+    if !effective_agent_id.is_empty() && effective_agent_id != "orchestrator" && agent_def.is_none() {
+        return Err(format!("Agent '{}' not found in registry. Available agents: orchestrator, explorer, reviewer, architect", effective_agent_id));
+    }
+
+    // Register Agent cancellation flag
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    if let Some(cancel_map) = app.try_state::<AgentCancelMap>() {
+        if let Ok(mut map) = cancel_map.lock() {
+            map.insert(session_id.clone(), cancel_flag.clone());
+        }
+    }
+
+    // Register Agent pause control (flag + notify) for this session
+    let pause_flag = Arc::new(AtomicBool::new(false));
+    let pause_notify = Arc::new(tokio::sync::Notify::new());
+    if let Some(pc) = app.try_state::<PauseControl>() {
+        if let Ok(mut map) = pc.lock() {
+            map.insert(session_id.clone(), (pause_flag.clone(), pause_notify.clone()));
+        }
+    }
+
+    let agent_def_cloned = agent_def.clone();
+    let session_id_for_cleanup = session_id.clone();
+    let memory_arc = chat_state.memory.clone();
+    let memory_manager_for_flush = chat_state.memory.read().await.memory_manager();
+    // Snapshot full settings for the post-run dreaming task (fire-and-forget)
+    let settings_for_dreaming = settings.clone();
+
+    let is_plan_mode = plan_mode.unwrap_or(false);
+
+    tokio::spawn(async move {
+        log::info!("[Agent] Spawn started for session '{}', agent '{}' (plan_mode={})", session_id, effective_agent_id, is_plan_mode);
+
+        // ── P0-1: Panic-safe agent execution ──
+        // Run the agent in a nested spawn so any panic is caught as a JoinError.
+        // Clone all moved values for use after the inner spawn completes.
+        let app2 = app.clone();
+        let session_id2 = session_id.clone();
+        let provider2 = provider.clone();
+        let api_key2 = api_key.clone();
+        let chat_model2 = chat_model.clone();
+        let project_path2 = project_path.clone();
+        let custom_instructions2 = custom_instructions.clone();
+        let cancel_flag2 = cancel_flag.clone();
+        let agent_def_cloned2 = agent_def_cloned.clone();
+        let agent_memory_context2 = agent_memory_context.clone();
+        let agent_handle = tokio::spawn(async move {
+            agent::run_agent(
+                &app2,
+                &session_id2,
+                &messages,
+                &provider2,
+                &api_key2,
+                None,
+                &chat_model2,
+                project_path2.as_deref(),
+                custom_instructions2,
+                cancel_flag2,
+                agent_def_cloned2.as_ref(),
+                is_plan_mode,
+                Some(agent_memory_context2.clone()),
+            ).await
+        });
+
+        let result = match agent_handle.await {
+            Ok(r) => r,
+            Err(join_err) => {
+                // Extract panic message if available
+                let panic_msg = if join_err.is_panic() {
+                    if let Ok(payload) = join_err.try_into_panic() {
+                        if let Some(s) = payload.downcast_ref::<String>() {
+                            s.clone()
+                        } else if let Some(s) = payload.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else {
+                            "Unknown panic payload".to_string()
+                        }
+                    } else {
+                        "Panic (payload unavailable)".to_string()
+                    }
+                } else {
+                    format!("Task cancelled: {}", join_err)
+                };
+
+                log::error!("[Agent] Task panicked for session '{}': {}", session_id_for_cleanup, panic_msg);
+
+                // Cleanup cancel flag
+                if let Some(cancel_map) = app.try_state::<AgentCancelMap>() {
+                    if let Ok(mut map) = cancel_map.lock() {
+                        map.remove(&session_id_for_cleanup);
+                    }
+                }
+
+                // Cleanup pause control
+                if let Some(pc) = app.try_state::<PauseControl>() {
+                    if let Ok(mut map) = pc.lock() {
+                        map.remove(&session_id_for_cleanup);
+                    }
+                }
+
+                // Emit error to frontend
+                let _ = app.emit("chat-event", ChatEvent::Error {
+                    session_id: session_id.clone(),
+                    agent_id: Some(effective_agent_id.clone()),
+                    message: format!("Agent task crashed: {}", panic_msg),
+                });
+                return;
+            }
+        };
+
+        // Cleanup cancel flag
+        if let Some(cancel_map) = app.try_state::<AgentCancelMap>() {
+            if let Ok(mut map) = cancel_map.lock() {
+                map.remove(&session_id_for_cleanup);
+            }
+        }
+
+        // Cleanup pause control
+        if let Some(pc) = app.try_state::<PauseControl>() {
+            if let Ok(mut map) = pc.lock() {
+                map.remove(&session_id_for_cleanup);
+            }
+        }
+
+        // Persist final result to conversation memory
+        let result_content = match &result {
+            Ok(text) => text.clone(),
+            Err(e) => {
+                log::error!("[Agent] Failed for session '{}': {}", session_id_for_cleanup, e);
+                format!("Error: {}", e)
+            }
+        };
+        let mem = memory_arc.write().await;
+        mem.add_message(&session_id_for_cleanup, crate::chat::ChatMessage {
+            role: crate::chat::Role::Assistant,
+            content: result_content.clone(),
+            images: None,
+            tool_calls: None,
+        });
+
+        // Memory flush: append session summary to today's notes
+        let note = format!(
+            "Agent '{}' completed: {}",
+            agent_def_cloned.as_ref().map(|d| d.id.as_str()).unwrap_or("agent"),
+            result_content.chars().take(150).collect::<String>()
+        );
+        let _ = memory_manager_for_flush.append_note(&note);
+
+        // Collect session messages for dreaming before dropping lock
+        let context_window = crate::config::model_context_window(&chat_model);
+        let session_msgs: Vec<crate::chat::ChatMessage> = mem.get_context_window(&session_id_for_cleanup, context_window);
+        drop(mem);
+
+        // Dreaming: fire-and-forget LLM summarization of session → MEMORY.md
+        // Routes through the LLM Router: local Ollama first (privacy + cost), remote fallback.
+        let memory_mgr = memory_manager_for_flush.clone();
+        tokio::spawn(async move {
+            memory_mgr.dreaming(&session_msgs, &settings_for_dreaming).await;
+        });
+
+        if let Err(e) = result {
+            log::error!("[Agent] Emitting error event: {}", e);
+            let _ = app.emit("chat-event", ChatEvent::Error {
+                session_id: session_id.clone(),
+                agent_id: None,
+                message: e,
+            });
+        }
+    });
+
+    Ok("Agent started".to_string())
+}
+
+/// Resume an interrupted agent task from its persisted JSONL log.
+///
+/// Rebuilds the LLM message history (user/assistant/tool pairs), injects a
+/// "[SESSION_RESUMED]" instruction, and re-runs the agent with the same
+/// session id so cancel/pause/events keep working. Returns an error when the
+/// session has no agent log or the task already completed.
+#[tauri::command]
+pub async fn resume_session(
+    app: tauri::AppHandle,
+    session_id: String,
+    project_path: Option<String>,
+    followup: Option<String>,
+    chat_state: State<'_, ChatState>,
+    settings: State<'_, Arc<RwLock<AppSettings>>>,
+) -> Result<String, String> {
+    // Locate the agent log
+    let config_dir = app.path().app_config_dir().map_err(|e| format!("App config dir unavailable: {}", e))?;
+    let log_path = config_dir.join("sessions").join("agent_logs").join(format!("{}.jsonl", session_id));
+    if !log_path.exists() {
+        return Err(format!("No agent task found for session '{}'", session_id));
+    }
+
+    // Replay the log and verify the task did not already complete
+    let entries = crate::memory::agent_log::AgentLog::replay(&log_path).await?;
+    if entries.is_empty() {
+        return Err(format!("Agent log for session '{}' is empty", session_id));
+    }
+    if let Some(last) = entries.last() {
+        if matches!(last.entry_type, crate::memory::agent_log::LogEntryType::Completed { .. }) {
+            return Err("The agent task for this session already completed".to_string());
+        }
+    }
+
+    // Rebuild LLM messages from the log (tool results paired to their calls)
+    let mut messages = crate::memory::agent_log::AgentLog::to_messages(&entries);
+
+    // Find the agent that ran this task (from the log), default to orchestrator
+    let log_agent_id = entries.iter().find_map(|e| {
+        if e.agent_id.is_empty() || e.agent_id == "agent" {
+            None
+        } else {
+            Some(e.agent_id.clone())
+        }
+    }).unwrap_or_else(|| "orchestrator".to_string());
+
+    // Inject the resume instruction so the model continues, not restarts
+    let followup_hint = match followup {
+        Some(f) if !f.trim().is_empty() => format!("\nUser additionally asks: {}", f.trim()),
+        _ => String::new(),
+    };
+    messages.push(LlmMessage {
+        role: "system".into(),
+        content: format!(
+            "[SESSION_RESUMED] The application restarted while this task was in progress. \
+             The complete task history is above. Review the current state of the workspace \
+             (tool results show what was done; files may have changed since) and CONTINUE the \
+             task to completion. Do not repeat completed steps; finish what remains.{}",
+            followup_hint
+        ),
+        images: None,
+        tool_calls: None,
+        tool_call_id: None,
+    });
+
+    // Snapshot settings for the pipeline
+    let settings = settings.read().await;
+    let settings_snapshot = settings.clone();
+    drop(settings);
+
+    let memory = chat_state.memory.read().await;
+    let agent_memory_context = memory.memory_manager().inject_memory_context();
+    drop(memory);
+
+    spawn_agent_pipeline(
+        app,
+        &chat_state,
+        session_id,
+        messages,
+        Some(log_agent_id),
+        project_path,
+        None,
+        settings_snapshot,
+        agent_memory_context,
+    )
+    .await
+}
+
+/// List agent sessions whose tasks were interrupted (no Completed entry) and
+/// can be resumed after a restart. Returns session id, agent id and the last
+/// activity timestamp of each resumable task.
+#[tauri::command]
+pub async fn list_resumable_sessions(
+    app: tauri::AppHandle,
+) -> Result<Vec<serde_json::Value>, String> {
+    let config_dir = app.path().app_config_dir().map_err(|e| format!("App config dir unavailable: {}", e))?;
+    let logs_dir = config_dir.join("sessions").join("agent_logs");
+    let mut resumable = Vec::new();
+
+    if !logs_dir.is_dir() {
+        return Ok(resumable);
+    }
+
+    let mut files: Vec<_> = std::fs::read_dir(&logs_dir)
+        .map_err(|e| format!("Failed to read agent logs: {}", e))?
+        .flatten()
+        .collect();
+    files.sort_by_key(|e| e.file_name());
+
+    for entry in files {
+        let path = entry.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+
+        let mut last_entry: Option<crate::memory::agent_log::LogEntry> = None;
+        let mut agent_id = String::new();
+        for line in content.lines().filter(|l| !l.trim().is_empty()) {
+            if let Ok(entry) = serde_json::from_str::<crate::memory::agent_log::LogEntry>(line) {
+                agent_id = entry.agent_id.clone();
+                last_entry = Some(entry);
+            }
+        }
+
+        let Some(last) = last_entry else { continue };
+        if matches!(last.entry_type, crate::memory::agent_log::LogEntryType::Completed { .. }) {
+            continue;
+        }
+
+        let session_id = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        if session_id.is_empty() {
+            continue;
+        }
+
+        resumable.push(serde_json::json!({
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "last_timestamp": last.timestamp,
+        }));
+    }
+
+    Ok(resumable)
 }
 
 #[tauri::command]
@@ -1191,12 +1383,23 @@ pub async fn replay_session(
 
 /// Set plan mode for a session.
 /// When enabled, the agent starts in Planning phase (read-only analysis).
-/// The actual plan_mode is applied when `send_message` is called with `plan_mode: Some(true)`.
+/// Persists per-session; `send_message` falls back to this when it is not
+/// called with an explicit `plan_mode` argument.
 #[tauri::command]
 pub async fn set_plan_mode(
     session_id: String,
     enabled: bool,
+    chat_state: State<'_, ChatState>,
 ) -> Result<bool, String> {
+    let mut sessions = chat_state
+        .plan_mode_sessions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if enabled {
+        sessions.insert(session_id.clone());
+    } else {
+        sessions.remove(&session_id);
+    }
     log::info!(
         "[Chat] Plan mode set to {} for session '{}'",
         enabled,
@@ -1269,6 +1472,154 @@ pub async fn restore_checkpoint(
     manager.restore(&checkpoint).await
 }
 
+/// Get the structured diff introduced by a checkpoint's git commit.
+///
+/// Uses `git diff <hash>^ <hash> -- <files>`; falls back to `git show <hash>`
+/// when the checkpoint commit has no parent (e.g. it is the repository's first
+/// commit). Returns an empty list when the checkpoint produced no changes.
+#[tauri::command]
+pub async fn checkpoint_diff(
+    session_id: String,
+    iteration: u32,
+    project_path: Option<String>,
+    store: State<'_, crate::agent::checkpoint::CheckpointStore>,
+) -> Result<Vec<crate::chat::FileChange>, String> {
+    let work_dir = project_path
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| "No project path provided".to_string())?;
+    let checkpoint = {
+        let store = store.lock().unwrap_or_else(|e| e.into_inner());
+        store.get(&session_id)
+            .and_then(|cps| cps.iter().find(|cp| cp.iteration == iteration))
+            .cloned()
+            .ok_or_else(|| format!("No checkpoint found for iteration {}", iteration))?
+    };
+    let hash = checkpoint.commit_hash.as_ref()
+        .ok_or_else(|| "Checkpoint has no commit hash (project is not a git repository)".to_string())?;
+
+    let files: Vec<&str> = checkpoint.files.iter().map(|s| s.as_str()).collect();
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.arg("diff")
+        .arg(format!("{}^", hash))
+        .arg(hash)
+        .current_dir(&work_dir);
+    if !files.is_empty() {
+        cmd.arg("--").args(&files);
+    }
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        cmd.output(),
+    ).await;
+
+    let raw = match output {
+        Ok(Ok(out)) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
+        _ => {
+            // Fallback: initial commit (no parent) — diff against the empty tree
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                tokio::process::Command::new("git")
+                    .arg("show")
+                    .arg(hash)
+                    .arg("--format=")
+                    .current_dir(&work_dir)
+                    .output(),
+            ).await;
+            match output {
+                Ok(Ok(out)) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
+                Ok(Ok(out)) => {
+                    return Err(format!("git diff failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+                }
+                Ok(Err(e)) => return Err(format!("Failed to execute git: {}", e)),
+                Err(_) => return Err("git diff timed out".to_string()),
+            }
+        }
+    };
+
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(parse_unified_diff(&raw))
+}
+
+/// Parse git unified diff text into structured per-file changes.
+///
+/// Recognises `diff --git` file headers, `@@` hunk headers (kept as context
+/// rows for line-number display), and ` ` (context) / `+` (add) / `-` (remove)
+/// content lines. Binary/header noise (index, ---, +++, new/deleted file
+/// markers, `\ No newline`) is skipped.
+fn parse_unified_diff(raw: &str) -> Vec<crate::chat::FileChange> {
+    let mut changes: Vec<crate::chat::FileChange> = Vec::new();
+    let mut current: Option<(String, Vec<crate::chat::DiffHunk>)> = None;
+    let mut old_line = 0u32;
+    let mut new_line = 0u32;
+
+    for line in raw.lines() {
+        if let Some(header) = line.strip_prefix("diff --git ") {
+            // New file section: "a/path b/path" — keep the b/ (new) path
+            let path = header.rsplit(" b/").next().unwrap_or(header).trim();
+            if let Some((path, hunks)) = current.take() {
+                changes.push(crate::chat::FileChange { file_path: path, hunks });
+            }
+            current = Some((path.to_string(), Vec::new()));
+            old_line = 0;
+            new_line = 0;
+        } else if line.starts_with("@@") {
+            // Hunk header: @@ -old_start[,count] +new_start[,count] @@
+            if let Some((_, hunks)) = &mut current {
+                hunks.push(crate::chat::DiffHunk {
+                    hunk_type: "hunk".into(),
+                    content: line.to_string(),
+                    old_start: old_line,
+                    new_start: new_line,
+                });
+            }
+            let mut it = line.split_whitespace();
+            it.next(); // @@
+            let old_part = it.next().unwrap_or("-0");
+            let new_part = it.next().unwrap_or("+0");
+            old_line = old_part.trim_start_matches('-').split(',').next()
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            new_line = new_part.trim_start_matches('+').split(',').next()
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+        } else if line.starts_with("index ")
+            || line.starts_with("---")
+            || line.starts_with("+++")
+            || line.starts_with("new file mode")
+            || line.starts_with("deleted file mode")
+            || line == r"\ No newline at end of file"
+        {
+            continue;
+        } else if let Some((_, hunks)) = &mut current {
+            let hunk_type = if line.starts_with('+') {
+                "add"
+            } else if line.starts_with('-') {
+                "remove"
+            } else {
+                "context"
+            };
+            let content = line.trim_start_matches(['+', '-', ' ']).to_string();
+            hunks.push(crate::chat::DiffHunk {
+                hunk_type: hunk_type.into(),
+                content,
+                old_start: old_line,
+                new_start: new_line,
+            });
+            match hunk_type {
+                "add" => new_line += 1,
+                "remove" => old_line += 1,
+                _ => {
+                    old_line += 1;
+                    new_line += 1;
+                }
+            }
+        }
+    }
+    if let Some((path, hunks)) = current.take() {
+        changes.push(crate::chat::FileChange { file_path: path, hunks });
+    }
+    changes
+}
+
 // ── Conversation Branching Commands ──────────────────────────────────────
 
 fn get_session_storage() -> Result<crate::memory::session_store::SessionStorage, String> {
@@ -1308,6 +1659,54 @@ pub async fn delete_branch(
 #[cfg(test)]
 mod tests {
     use super::parse_context_file_ref;
+
+    #[test]
+    fn test_parse_unified_diff_basic() {
+        let raw = r#"diff --git a/src/main.rs b/src/main.rs
+index 123..456 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,3 +1,4 @@
+ fn main() {
+-    println!("old");
++    println!("new");
+     println!("both");
+ }
+diff --git a/README.md b/README.md
+new file mode 100644
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,2 @@
++# Title
++Body
+"#;
+        let changes = super::parse_unified_diff(raw);
+        assert_eq!(changes.len(), 2);
+
+        // 第一个文件：路径取自 b/ 侧，含 add/remove/context 行
+        let main = &changes[0];
+        assert_eq!(main.file_path, "src/main.rs");
+        let types: Vec<&str> = main.hunks.iter().map(|h| h.hunk_type.as_str()).collect();
+        assert_eq!(types, vec!["hunk", "context", "remove", "add", "context", "context"]);
+        assert_eq!(main.hunks[2].content, "println!(\"old\");");
+        assert_eq!(main.hunks[3].content, "println!(\"new\");");
+        // 行号跟踪：context 后 old/new 同步前进，remove 后 new_start 不前进
+        assert_eq!(main.hunks[2].old_start, 2);
+        assert_eq!(main.hunks[3].new_start, 2);
+        assert_eq!(main.hunks[3].old_start, 3); // remove 已消耗旧文件行 2
+
+        // 第二个文件：新增文件
+        let readme = &changes[1];
+        assert_eq!(readme.file_path, "README.md");
+        assert!(readme.hunks.iter().all(|h| h.hunk_type == "add" || h.hunk_type == "hunk"));
+    }
+
+    #[test]
+    fn test_parse_unified_diff_empty() {
+        assert!(super::parse_unified_diff("").is_empty());
+        // 无 diff --git 头的垃圾文本 → 无文件
+        assert!(super::parse_unified_diff("hello world\n").is_empty());
+    }
 
     #[test]
     fn test_parse_context_file_ref_plain_path() {

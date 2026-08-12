@@ -40,6 +40,10 @@ pub mod generate_diagram;
 pub mod run_tests;
 pub mod run_build;
 pub mod run_terminal_session;
+pub mod web_preview;
+pub mod tdd;
+pub mod coverage;
+pub mod a2a_invoke;
 
 #[cfg(test)]
 mod tests;
@@ -214,5 +218,9 @@ pub fn build_executor() -> ToolExecutor {
     executor.register(run_tests::RunTests);
     executor.register(run_build::RunBuild);
     executor.register(run_terminal_session::RunTerminalSession);
+    executor.register(web_preview::WebPreview);
+    executor.register(tdd::TddTool);
+    executor.register(coverage::CoverageTool);
+    executor.register(a2a_invoke::A2aInvoke);
     executor
 }

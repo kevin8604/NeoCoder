@@ -147,6 +147,50 @@
     }
   },
   {
+    "name": "tdd",
+    "description": "TDD orchestration mode: start/stop/inspect the Red → Green → Refactor state machine for the current session. Call tdd { action: 'start' } to enter TDD mode before writing tests. The phase advances AUTOMATICALLY from run_tests outcomes (a failing suite confirms RED, a passing suite advances GREEN → REFACTOR → DONE), and phase-specific guidance is injected into the context — the agent never needs to track the phase itself. Optional `test_command` overrides the auto-detected command. Example: tdd { action: 'start' }, tdd { action: 'status' }, tdd { action: 'stop' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "description": "what to do: 'start' (enter TDD mode, restarting any existing session state), 'status' (show current phase), 'stop' (exit TDD mode and show summary)" },
+        "test_command": { "type": "string", "description": "optional custom test command used for phase gating (default: auto-detected from project)" }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "coverage",
+    "description": "Line-coverage guidance for test writing: runs `cargo llvm-cov` (or reuses the cached report) and lists source files with the most uncovered lines, including concrete line ranges. Call this BEFORE writing tests to target the highest-value gaps, then verify with run_tests and rescan with { action: 'scan', force: true }. Actions: 'scan' (default; runs coverage or reuses cache unless force:true), 'uncovered' (read cached report with path/limit/min_lines filters), 'status' (cache info). Parameters: action, path (substring filter on file paths), limit (max files, default 10), min_lines (minimum uncovered lines per file, default 1), force (rescan even if cache exists). Example: coverage { }, coverage { action: 'uncovered', path: 'hooks', min_lines: 20 }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "description": "what to do: 'scan' (run or reuse cached coverage), 'uncovered' (list gaps from cache), 'status' (show cache info)" },
+        "path": { "type": "string", "description": "optional substring filter on file paths (e.g. 'hooks' matches hooks.rs)" },
+        "limit": { "type": "integer", "description": "max number of files to list, ordered by uncovered lines desc (default 10)" },
+        "min_lines": { "type": "integer", "description": "only list files with at least this many uncovered lines (default 1)" },
+        "force": { "type": "boolean", "description": "force a fresh coverage run even if a cached report exists (default false)" }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "a2a_invoke",
+    "description": "Call a remote A2A (Agent2Agent) agent and wait for its result. Use this to delegate work to other AI agents that expose an A2A endpoint (Agent Card at /.well-known/agent.json). Parameters: url (base URL like http://127.0.0.1:41234 or an /a2a endpoint) OR agent (name of a remote agent configured in Settings → A2A → Remote Agents; the URL is resolved from settings), task (the text of the task to send), mode ('sync' default | 'poll' | 'stream'), skill (optional: skill/agent id to request on the remote side, sent as metadata.skillId — see the remote Agent Card's skills), timeout_secs (max wait, default 120), token (optional bearer token; falls back to local A2A server token). Example: a2a_invoke { url: 'http://127.0.0.1:41234', task: 'Summarize the changes in src/hooks', mode: 'sync' } or a2a_invoke { agent: 'local-orchestrator', task: 'Refactor main.rs', skill: 'code_writer' }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "description": "A2A base URL (e.g. http://127.0.0.1:41234) or /a2a endpoint; alternative to agent" },
+        "agent": { "type": "string", "description": "name of a configured remote agent (Settings → A2A → Remote Agents); alternative to url" },
+        "task": { "type": "string", "description": "the task text to send to the remote agent" },
+        "mode": { "type": "string", "description": "sync (default) | poll | stream" },
+        "skill": { "type": "string", "description": "optional skill/agent id requested on the remote side (metadata.skillId)" },
+        "timeout_secs": { "type": "integer", "description": "max wait seconds for completion (default 120)" },
+        "token": { "type": "string", "description": "optional bearer token; falls back to local A2A server token" }
+      },
+      "required": ["task"]
+    }
+  },
+  {
     "name": "run_build",
     "description": "Read-only build verifier: detects the project build system (Cargo.toml -> cargo build, package.json -> npm run build, go.mod -> go build ./..., pyproject.toml -> python -m build) and executes it with a 300s timeout, returning exit code, truncated output, and compiler error locations (file:line). Use this AFTER writing/editing code to confirm it compiles — no confirmation needed. Optionally override with a custom `command` or target a subdirectory with `directory`. Example: run_build { } or run_build { command: 'cargo check' }",
     "parameters": {
@@ -478,6 +522,18 @@
         "type": { "type": "string", "description": "diagram type (default: 'mermaid')" }
       },
       "required": ["mermaid"]
+    }
+  },
+  {
+    "name": "web_preview",
+    "description": "Capture a screenshot of a running web page (headless Edge/Chrome) so you can visually verify UI changes (layout, colors, alignment). Start the dev server first via run_terminal_command, then screenshot it. The image is attached to the conversation for review. Example: web_preview { url: 'http://localhost:5173' } or web_preview { url: 'http://localhost:5173', wait_ms: 3000 }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "description": "Full URL of the page to screenshot, e.g. http://localhost:5173" },
+        "wait_ms": { "type": "integer", "description": "Milliseconds to wait for the page to load before capturing (default: 1500)" }
+      },
+      "required": ["url"]
     }
   }
 ]
