@@ -107,6 +107,55 @@ pub struct AppSettings {
     /// A2A client: configured remote agents
     #[serde(default)]
     pub a2a_agents: Vec<A2aAgentConfig>,
+    /// Multi-workspace runtime: independent index db / watcher / project skills per workspace
+    #[serde(default)]
+    pub workspaces: Vec<Workspace>,
+    /// Currently active workspace id (drives index db, watcher and project-level skills)
+    #[serde(default)]
+    pub active_workspace_id: Option<String>,
+}
+
+/// A registered workspace (project) in the multi-workspace runtime.
+/// Each workspace owns an independent code index database, file watcher
+/// session and project-level skills directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Workspace {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub created_at: i64,
+    pub last_opened_at: i64,
+    /// Absolute path of the per-workspace SQLite index DB (filled by the backend on activate)
+    #[serde(default)]
+    pub index_db_path: String,
+}
+
+impl Workspace {
+    /// Create a new workspace entry from a directory path.
+    pub fn new(path: String) -> Self {
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| path.clone());
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp();
+        Self {
+            id,
+            name,
+            path,
+            created_at: now,
+            last_opened_at: now,
+            index_db_path: String::new(),
+        }
+    }
+
+    /// The canonical index DB path for this workspace: `{config_dir}/workspaces/{id}/code_index.db`.
+    pub fn index_db_path_for(&self, config_dir: &std::path::Path) -> String {
+        let dir = config_dir.join("workspaces").join(&self.id);
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join("code_index.db").to_string_lossy().to_string()
+    }
 }
 
 // ── Local model integration (Phase 1) ──
@@ -345,6 +394,8 @@ impl Default for AppSettings {
             a2a_server_port: default_a2a_port(),
             a2a_server_token: String::new(),
             a2a_agents: vec![],
+            workspaces: vec![],
+            active_workspace_id: None,
         }
     }
 }

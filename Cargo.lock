@@ -2512,6 +2512,7 @@ dependencies = [
  "env_logger",
  "futures-util",
  "glob",
+ "image",
  "log",
  "notify",
  "portable-pty",

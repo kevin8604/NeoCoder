@@ -9,10 +9,21 @@
 //! web_browser { action: "navigate", url: "http://localhost:1420" }
 //! web_browser { action: "click", selector: "#login-btn" }
 //! web_browser { action: "type", selector: "#name", text: "admin" }
-//! web_browser { action: "screenshot" }
+//! web_browser { action: "screenshot", name: "login" }
 //! web_browser { action: "get_text" }
 //! web_browser { action: "close" }
 //! ```
+//!
+//! # Recording & replay
+//! Every successful navigate/click/type/screenshot is appended to the session
+//! action log. `export_script` dumps it as a JSON array that can be replayed
+//! later with `replay` (same session or a fresh one) to re-run a UI flow.
+//!
+//! # Visual regression
+//! `screenshot` accepts an optional `name`; a later `screenshot_diff` with
+//! that name (or an absolute file path) compares the current page against the
+//! reference PNG pixel-by-pixel and reports the changed-pixel ratio plus a
+//! diff image (changed pixels highlighted in red) for the agent to attach.
 //!
 //! Screenshots reuse the `[SCREENSHOT] <path>` marker so `PreviewImageHook`
 //! attaches the PNG as a vision-capable message, exactly like `web_preview`.
@@ -20,6 +31,8 @@
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tokio_tungstenite::connect_async;
@@ -34,6 +47,10 @@ pub struct WebBrowser;
 struct BrowserSession {
     child: tokio::process::Child,
     page_ws_url: String,
+    /// Actions recorded for `export_script` / `replay` (navigate/click/type/screenshot).
+    action_log: Vec<Value>,
+    /// Named screenshots kept for `screenshot_diff` (name → png path).
+    screenshots: HashMap<String, PathBuf>,
 }
 
 static SESSION: OnceLock<Mutex<Option<BrowserSession>>> = OnceLock::new();
@@ -121,7 +138,12 @@ async fn ensure_browser() -> Result<(), String> {
         .map_err(|e| format!("Session lock poisoned: {}", e))?;
     if guard.is_none() {
         log::info!("[WebBrowser] Headless browser ready on port {}", port);
-        *guard = Some(BrowserSession { child, page_ws_url });
+        *guard = Some(BrowserSession {
+            child,
+            page_ws_url,
+            action_log: Vec::new(),
+            screenshots: HashMap::new(),
+        });
     }
     Ok(())
 }
@@ -298,7 +320,9 @@ async fn do_type(selector: &str, text: &str) -> Result<String, String> {
     Ok(format!("Typed {} characters into '{}'.", text.chars().count(), selector))
 }
 
-async fn do_screenshot() -> Result<String, String> {
+/// Capture the current page. `name` (optional) registers the PNG for
+/// later `screenshot_diff` comparisons.
+async fn do_screenshot(name: Option<&str>) -> Result<String, String> {
     let ws_url = page_ws_url()?;
     let result = cdp_call(&ws_url, "Page.captureScreenshot", json!({ "format": "png" })).await?;
     let b64 = result["data"]
@@ -313,17 +337,273 @@ async fn do_screenshot() -> Result<String, String> {
     let out_dir = std::env::temp_dir().join("neecoder_previews");
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| format!("Cannot create preview dir: {}", e))?;
-    let out_path = out_dir.join(format!(
-        "browser_{}.png",
-        chrono::Utc::now().timestamp_millis()
-    ));
+    let file_name = match name {
+        Some(n) if !n.trim().is_empty() => format!("browser_{}.png", n.trim()),
+        _ => format!("browser_{}.png", chrono::Utc::now().timestamp_millis()),
+    };
+    let out_path = out_dir.join(&file_name);
     std::fs::write(&out_path, &bytes)
         .map_err(|e| format!("Cannot write screenshot: {}", e))?;
+
+    if let Some(n) = name.filter(|n| !n.trim().is_empty()) {
+        if let Ok(mut guard) = session().lock() {
+            if let Some(s) = guard.as_mut() {
+                s.screenshots.insert(n.trim().to_string(), out_path.clone());
+            }
+        }
+    }
+
     log::info!("[WebBrowser] Screenshot saved: {}", out_path.display());
+    let hint = if name.is_some() {
+        "\nUse web_browser { action: 'screenshot_diff', reference: '<name>' } to compare against a later state."
+    } else {
+        ""
+    };
     Ok(format!(
-        "[SCREENSHOT] {}\nInteractive screenshot captured via web_browser. The image is attached for review.",
-        out_path.to_string_lossy()
+        "[SCREENSHOT] {}\nInteractive screenshot captured via web_browser. The image is attached for review.{}",
+        out_path.to_string_lossy(),
+        hint
     ))
+}
+
+/// Pixel-wise PNG diff. Returns `(changed_ratio, diff_png_bytes)` where the
+/// diff image marks changed pixels in red on a dark background.
+fn pixel_diff_png(reference: &[u8], current: &[u8]) -> Result<(f64, Vec<u8>), String> {
+    use image::{GenericImageView, ImageFormat, Rgba, RgbaImage};
+    let a = image::load_from_memory(reference)
+        .map_err(|e| format!("Reference PNG decode failed: {}", e))?
+        .to_rgba8();
+    let b = image::load_from_memory(current)
+        .map_err(|e| format!("Current PNG decode failed: {}", e))?
+        .to_rgba8();
+    let (wa, ha) = a.dimensions();
+    let (wb, hb) = b.dimensions();
+    let w = wa.min(wb);
+    let h = ha.min(hb);
+
+    let mut diff = RgbaImage::new(w, h);
+    let mut changed: u64 = 0;
+    for y in 0..h {
+        for x in 0..w {
+            let pa = a.get_pixel(x, y).0;
+            let pb = b.get_pixel(x, y).0;
+            let delta: i64 = (pa[0] as i64 - pb[0] as i64).abs()
+                + (pa[1] as i64 - pb[1] as i64).abs()
+                + (pa[2] as i64 - pb[2] as i64).abs();
+            if delta > 60 {
+                changed += 1;
+                diff.put_pixel(x, y, Rgba([255, 60, 70, 255]));
+            } else {
+                diff.put_pixel(x, y, Rgba([22, 22, 26, 255]));
+            }
+        }
+    }
+    let total = w as u64 * h as u64;
+    let ratio = if total == 0 { 1.0 } else { changed as f64 / total as f64 };
+    let mut out = Vec::new();
+    diff.write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)
+        .map_err(|e| format!("Diff PNG encode failed: {}", e))?;
+    Ok((ratio, out))
+}
+
+/// Compare the current page against a reference screenshot (named via
+/// `screenshot { name }` or an absolute file path) and report the changed
+/// pixel ratio plus a highlighted diff image.
+async fn do_screenshot_diff(reference: &str) -> Result<String, String> {
+    if reference.trim().is_empty() {
+        return Err("[ERROR] screenshot_diff requires a 'reference' argument: \
+                    a name from a previous screenshot call (e.g. screenshot { name: 'login' }) \
+                    or an absolute PNG path".to_string());
+    }
+
+    // Resolve the reference PNG path (named screenshot > absolute path)
+    let ref_path: Option<PathBuf> = {
+        let named = session()
+            .lock()
+            .map_err(|e| format!("Session lock poisoned: {}", e))?
+            .as_ref()
+            .and_then(|s| s.screenshots.get(reference.trim()).cloned());
+        match named {
+            Some(p) => Some(p),
+            None => {
+                let p = Path::new(reference.trim()).to_path_buf();
+                if p.is_file() { Some(p) } else { None }
+            }
+        }
+    };
+    let ref_path = ref_path.ok_or_else(|| format!(
+        "[ERROR] Reference '{}' not found: no screenshot with that name in this session \
+         and no file at that path. Take one first with screenshot {{ name: '{}' }}.",
+        reference, reference.trim()
+    ))?;
+
+    let reference_bytes =
+        std::fs::read(&ref_path).map_err(|e| format!("Cannot read reference PNG: {}", e))?;
+
+    // Capture the current page
+    let ws_url = page_ws_url()?;
+    let result = cdp_call(&ws_url, "Page.captureScreenshot", json!({ "format": "png" })).await?;
+    let b64 = result["data"]
+        .as_str()
+        .ok_or_else(|| "CDP captureScreenshot returned no data".to_string())?;
+    let current = {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| format!("Screenshot base64 decode failed: {}", e))?
+    };
+
+    let (ratio, diff_png) = pixel_diff_png(&reference_bytes, &current)?;
+
+    let out_dir = std::env::temp_dir().join("neecoder_previews");
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("Cannot create preview dir: {}", e))?;
+    let out_path = out_dir.join(format!(
+        "diff_{}_{}.png",
+        reference.trim(),
+        chrono::Utc::now().timestamp_millis()
+    ));
+    std::fs::write(&out_path, &diff_png)
+        .map_err(|e| format!("Cannot write diff image: {}", e))?;
+
+    let verdict = if ratio < 0.001 {
+        "VISUALLY IDENTICAL"
+    } else if ratio < 0.05 {
+        "MINOR CHANGES"
+    } else {
+        "SIGNIFICANT CHANGES"
+    };
+    log::info!(
+        "[WebBrowser] Screenshot diff vs '{}': {:.2}% changed -> {}",
+        reference,
+        ratio * 100.0,
+        out_path.display()
+    );
+    Ok(format!(
+        "[SCREENSHOT] {}\nVisual diff vs '{}': {:.2}% of pixels changed ({verdict}). \
+         Red pixels mark differences; reference image: {}.",
+        out_path.to_string_lossy(),
+        reference,
+        ratio * 100.0,
+        ref_path.display()
+    ))
+}
+
+/// Dump the recorded action log as a JSON script for `replay`.
+async fn do_export_script() -> Result<String, String> {
+    let log = {
+        let guard = session()
+            .lock()
+            .map_err(|e| format!("Session lock poisoned: {}", e))?;
+        guard
+            .as_ref()
+            .map(|s| s.action_log.clone())
+            .unwrap_or_default()
+    };
+    if log.is_empty() {
+        return Ok("No actions recorded yet. Run navigate/click/type/screenshot first.".to_string());
+    }
+    let script = serde_json::to_string_pretty(&log)
+        .map_err(|e| format!("Failed to serialize action log: {}", e))?;
+    log::info!("[WebBrowser] Exported {} recorded actions", log.len());
+    Ok(format!(
+        "Recorded {} actions. Replay them with:\nweb_browser {{ action: 'replay', script: ... }}\n\n{}",
+        log.len(),
+        script
+    ))
+}
+
+/// Replay a recorded action script (JSON array of { action, ... } objects).
+async fn do_replay(script: &str) -> Result<String, String> {
+    let parsed: Value = if script.trim_start().starts_with('[') {
+        serde_json::from_str(script).map_err(|e| format!("Invalid replay script JSON: {}", e))?
+    } else {
+        serde_json::from_str(script).map_err(|e| format!("Invalid replay script JSON: {}", e))?
+    };
+    let actions = parsed
+        .as_array()
+        .ok_or_else(|| "Replay script must be a JSON array of action objects".to_string())?;
+
+    let mut results = Vec::new();
+    for (i, action) in actions.iter().enumerate() {
+        let a = action.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        let out = match a {
+            "navigate" => {
+                let url = action.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                if let Some(err) = url_error(url) {
+                    Err(err)
+                } else {
+                    let wait_ms = action.get("wait_ms").and_then(|v| v.as_u64()).unwrap_or(1500);
+                    do_navigate(url, wait_ms).await
+                }
+            }
+            "click" => {
+                let selector = action.get("selector").and_then(|v| v.as_str()).unwrap_or("");
+                if selector.is_empty() {
+                    Err("[ERROR] replay click requires a 'selector'".to_string())
+                } else {
+                    do_click(selector).await
+                }
+            }
+            "type" => {
+                let selector = action.get("selector").and_then(|v| v.as_str()).unwrap_or("");
+                let text = action.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                if selector.is_empty() || text.is_empty() {
+                    Err("[ERROR] replay type requires 'selector' and 'text'".to_string())
+                } else {
+                    do_type(selector, text).await
+                }
+            }
+            "screenshot" => {
+                let name = action.get("name").and_then(|v| v.as_str());
+                do_screenshot(name).await
+            }
+            "get_text" => do_get_text().await,
+            "wait" => {
+                let ms = action.get("ms").and_then(|v| v.as_u64()).unwrap_or(500);
+                tokio::time::sleep(Duration::from_millis(ms)).await;
+                Ok(format!("Waited {} ms", ms))
+            }
+            other => Err(format!("[ERROR] Unknown replay action '{}'", other)),
+        };
+        match out {
+            Ok(text) => {
+                results.push(format!("[{}] {}: {}", i + 1, a, first_line(&text)));
+            }
+            Err(e) => {
+                results.push(format!("[{}] {}: FAILED — {}", i + 1, a, e));
+            }
+        }
+    }
+
+    let ok = results.iter().filter(|r| !r.contains("FAILED")).count();
+    let failed = results.len() - ok;
+    let joined = results.join("\n");
+    Ok(format!(
+        "Replayed {} actions ({} ok, {} failed):\n{}",
+        results.len(),
+        ok,
+        failed,
+        joined
+    ))
+}
+
+/// First non-empty line of a (possibly multi-line) tool output.
+fn first_line(text: &str) -> &str {
+    text.lines().find(|l| !l.trim().is_empty()).unwrap_or("(no output)")
+}
+
+/// Record a successful recordable action into the session log.
+fn log_action(action: &Value) {
+    let a = action.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    if !matches!(a, "navigate" | "click" | "type" | "screenshot") {
+        return;
+    }
+    if let Ok(mut guard) = session().lock() {
+        if let Some(s) = guard.as_mut() {
+            s.action_log.push(action.clone());
+        }
+    }
 }
 
 async fn do_get_text() -> Result<String, String> {
@@ -390,16 +670,32 @@ impl Tool for WebBrowser {
                     do_type(selector, text).await
                 }
             }
-            "screenshot" => do_screenshot().await,
+            "screenshot" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                do_screenshot(name).await
+            }
+            "screenshot_diff" => {
+                let reference = args["reference"].as_str().unwrap_or("");
+                do_screenshot_diff(reference).await
+            }
             "get_text" => do_get_text().await,
+            "export_script" => do_export_script().await,
+            "replay" => {
+                let script = args["script"].as_str().unwrap_or("");
+                do_replay(script).await
+            }
             "close" => do_close().await,
             other => Err(format!(
-                "[ERROR] Unknown web_browser action '{}'. Valid actions: navigate, click, type, screenshot, get_text, close.",
+                "[ERROR] Unknown web_browser action '{}'. Valid actions: navigate, click, type, screenshot, \
+                 screenshot_diff, get_text, export_script, replay, close.",
                 other
             )),
         };
         match result {
-            Ok(text) => text,
+            Ok(text) => {
+                log_action(&args);
+                text
+            }
             Err(e) => e,
         }
     }
@@ -434,5 +730,42 @@ mod tests {
         let v = json!({ "id": 1, "error": { "message": "boom", "code": -32000 } });
         let err = match_cdp_response(&v, 1).expect("matching id").expect_err("error payload");
         assert!(err.contains("boom"), "{}", err);
+    }
+
+    #[test]
+    fn pixel_diff_detects_changes() {
+        use image::{Rgba, RgbaImage};
+        let make = |color: [u8; 4]| -> Vec<u8> {
+            let mut img = RgbaImage::new(8, 8);
+            for p in img.pixels_mut() {
+                *p = Rgba(color);
+            }
+            let mut buf = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+                .unwrap();
+            buf
+        };
+
+        // Identical images → no changed pixels
+        let a = make([10, 20, 30, 255]);
+        let (ratio, diff) = pixel_diff_png(&a, &a).expect("diff identical");
+        assert_eq!(ratio, 0.0);
+        assert!(diff.len() > 0);
+
+        // One pixel differs → small but nonzero ratio
+        let mut b_img = RgbaImage::new(8, 8);
+        for p in b_img.pixels_mut() {
+            *p = Rgba([10, 20, 30, 255]);
+        }
+        b_img.put_pixel(0, 0, Rgba([250, 250, 250, 255]));
+        let mut b_buf = Vec::new();
+        b_img
+            .write_to(&mut std::io::Cursor::new(&mut b_buf), image::ImageFormat::Png)
+            .unwrap();
+        let (ratio2, _) = pixel_diff_png(&a, &b_buf).expect("diff one pixel");
+        assert!(ratio2 > 0.0 && ratio2 < 0.1, "ratio {}", ratio2);
+
+        // Invalid PNG → Err, not panic
+        assert!(pixel_diff_png(b"not a png", &a).is_err());
     }
 }

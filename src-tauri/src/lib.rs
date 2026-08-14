@@ -115,13 +115,13 @@ pub fn run() {
                     settings.embedding_model.clone(),
                 ));
 
-                // Load persisted index from SQLite DB (if exists)
-                let db_path = config_path.join("code_index.db");
-                let db_path_str = db_path.to_string_lossy().to_string();
-                let load_result = tauri::async_runtime::block_on(indexer.load_from_db(&db_path_str));
+                // Load persisted index from the active workspace's per-workspace DB
+                // (falls back to the legacy global code_index.db when no workspace is active)
+                let db_path = workspace_index_db_path(&settings, &config_path);
+                let load_result = tauri::async_runtime::block_on(indexer.load_from_db(&db_path));
                 match load_result {
-                    Ok(n) if n > 0 => log::info!("Loaded {} chunks from index DB: {}", n, db_path_str),
-                    Ok(_) => log::info!("Index DB empty or not found: {}", db_path_str),
+                    Ok(n) if n > 0 => log::info!("Loaded {} chunks from index DB: {}", n, db_path),
+                    Ok(_) => log::info!("Index DB empty or not found: {}", db_path),
                     Err(e) => log::warn!("Failed to load index DB: {}", e),
                 }
 
@@ -246,15 +246,20 @@ pub fn run() {
             // Initialize file watcher
             app.manage::<Arc<std::sync::Mutex<FileWatcher>>>(Arc::new(std::sync::Mutex::new(FileWatcher::new())));
 
-            // Auto-start watching the most recent project (if any)
+            // Auto-start watching the active workspace (or most recent project)
             {
-                let project_path = app.state::<Arc<RwLock<config::AppSettings>>>()
-                    .inner()
-                    .blocking_read()
-                    .project_paths
-                    .first()
-                    .cloned();
-                if let Some(ref path) = project_path {
+                let watch_target = {
+                    let settings = app.state::<Arc<RwLock<config::AppSettings>>>()
+                        .inner()
+                        .blocking_read();
+                    settings
+                        .active_workspace_id
+                        .as_ref()
+                        .and_then(|id| settings.workspaces.iter().find(|w| &w.id == id))
+                        .map(|w| w.path.clone())
+                        .or_else(|| settings.project_paths.first().cloned())
+                };
+                if let Some(ref path) = watch_target {
                     let watcher_state = app.state::<Arc<std::sync::Mutex<FileWatcher>>>();
                     let mut w = watcher_state.inner().lock().unwrap_or_else(|e| e.into_inner());
                     if let Err(e) = w.start_watch(std::path::Path::new(path), true) {
@@ -265,15 +270,25 @@ pub fn run() {
                 }
             }
 
-            // Initialize Skill Manager (global + project-level)
+            // Initialize Skill Manager (global + active-workspace project level)
             {
                 let global_skills_dir = config_path.join("skills");
-                let project_skills_dir = app.state::<Arc<RwLock<config::AppSettings>>>()
-                    .inner()
-                    .blocking_read()
-                    .project_paths
-                    .first()
-                    .map(|p| std::path::Path::new(p).join(".neecoder").join("skills"));
+                let project_skills_dir = {
+                    let settings = app.state::<Arc<RwLock<config::AppSettings>>>()
+                        .inner()
+                        .blocking_read();
+                    settings
+                        .active_workspace_id
+                        .as_ref()
+                        .and_then(|id| settings.workspaces.iter().find(|w| &w.id == id))
+                        .map(|w| std::path::Path::new(&w.path).join(".neecoder").join("skills"))
+                        .or_else(|| {
+                            settings
+                                .project_paths
+                                .first()
+                                .map(|p| std::path::Path::new(p).join(".neecoder").join("skills"))
+                        })
+                };
 
                 let skill_manager = Arc::new(skill::SkillManager::new(
                     global_skills_dir,
@@ -287,10 +302,9 @@ pub fn run() {
             let watcher_for_reindex = app.state::<Arc<std::sync::Mutex<FileWatcher>>>().inner().clone();
             let indexer_for_reindex = app.state::<Arc<CodeIndexer>>().inner().clone();
             let edit_intent_bg = app.state::<Arc<completion::edit_intent::EditIntentTracker>>().inner().clone();
+            let settings_for_reindex = app.state::<Arc<RwLock<config::AppSettings>>>().inner().clone();
             let config_path_clone = config_path.clone();
             tauri::async_runtime::spawn(async move {
-                let db_path = config_path_clone.join("code_index.db");
-                let db_path_str = db_path.to_string_lossy().to_string();
                 loop {
                     tokio::time::sleep(Duration::from_secs(10)).await;
 
@@ -309,9 +323,13 @@ pub fn run() {
                             index_changed = true;
                         }
                     }
-                    // Persist index changes to DB (once per batch)
+                    // Persist index changes to the active workspace's DB (once per batch)
                     if index_changed {
-                        if let Err(e) = indexer_for_reindex.save_to_db(&db_path_str).await {
+                        let db_path = {
+                            let settings = settings_for_reindex.read().await;
+                            workspace_index_db_path(&settings, &config_path_clone)
+                        };
+                        if let Err(e) = indexer_for_reindex.save_to_db(&db_path).await {
                             log::warn!("Failed to save index to DB: {}", e);
                         }
                     }
@@ -339,6 +357,10 @@ pub fn run() {
             commands::chat::get_session_messages,
             commands::project::open_project,
             commands::project::get_file_tree,
+            commands::workspace::list_workspaces,
+            commands::workspace::activate_workspace,
+            commands::workspace::remove_workspace,
+            commands::workspace::rename_workspace,
             commands::project::read_file,
             commands::project::write_file,
             commands::project::create_file,
@@ -429,4 +451,19 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Resolve the code index DB path for the currently active workspace,
+/// falling back to the legacy global `code_index.db` when no workspace
+/// is active or the entry is missing.
+fn workspace_index_db_path(settings: &config::AppSettings, config_dir: &std::path::Path) -> String {
+    match settings
+        .active_workspace_id
+        .as_ref()
+        .and_then(|id| settings.workspaces.iter().find(|w| &w.id == id))
+    {
+        Some(ws) if !ws.index_db_path.is_empty() => ws.index_db_path.clone(),
+        Some(ws) => ws.index_db_path_for(config_dir),
+        None => config_dir.join("code_index.db").to_string_lossy().to_string(),
+    }
 }

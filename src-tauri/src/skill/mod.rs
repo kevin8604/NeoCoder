@@ -71,7 +71,7 @@ impl SkillVars {
 pub struct SkillManager {
     skills: Mutex<Vec<SkillDefinition>>,
     global_dir: PathBuf,
-    project_dir: Option<PathBuf>,
+    project_dir: Mutex<Option<PathBuf>>,
 }
 
 impl SkillManager {
@@ -80,7 +80,7 @@ impl SkillManager {
         let manager = Self {
             skills: Mutex::new(Vec::new()),
             global_dir,
-            project_dir,
+            project_dir: Mutex::new(project_dir),
         };
         manager.reload();
         manager
@@ -101,8 +101,10 @@ impl SkillManager {
         load_skills_from_dir(&self.global_dir, &mut all_skills);
 
         // 3. Load project-level skills (highest priority)
-        if let Some(ref proj_dir) = self.project_dir {
-            load_skills_from_dir(proj_dir, &mut all_skills);
+        if let Ok(guard) = self.project_dir.lock() {
+            if let Some(ref proj_dir) = *guard {
+                load_skills_from_dir(proj_dir, &mut all_skills);
+            }
         }
 
         let mut skills: Vec<SkillDefinition> = all_skills.into_values().collect();
@@ -111,6 +113,15 @@ impl SkillManager {
         if let Ok(mut guard) = self.skills.lock() {
             *guard = skills;
         }
+    }
+
+    /// Switch the project-level skills directory (e.g. on workspace activation) and
+    /// immediately reload skills from the new location.
+    pub fn update_project_dir(&self, project_dir: Option<PathBuf>) {
+        if let Ok(mut guard) = self.project_dir.lock() {
+            *guard = project_dir;
+        }
+        self.reload();
     }
 
     /// List all available Skills.

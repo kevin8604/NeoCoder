@@ -13,8 +13,9 @@ import TerminalPanel from "./components/TerminalPanel";
 import DependencyGraph from "./components/DependencyGraph";
 import MemoryPanel from "./components/MemoryPanel";
 import InsightsPanel from "./components/InsightsPanel";
+import WorkspacePicker from "./components/WorkspacePicker";
 import { PanelLeft, Search, ListTree, Square, MessageSquare, Sparkles, BookOpen, Wrench, Landmark, Shapes, Box, Layers, MapPin, Folder, Tag, Zap, Target, Circle, Braces, FileCode, FileCode2, FileJson, FileText, File, Globe, Database, Coffee, Palette, FileCog, FileType } from "lucide-react";
-import { openProject, getLspSymbols, requestCompletion, cycleCompletion, triggerAutoReview, checkLocalModel, type LSPSymbol } from "./hooks/useTauri";
+import { openProject, getLspSymbols, requestCompletion, cycleCompletion, triggerAutoReview, checkLocalModel, activateWorkspace, removeWorkspace, renameWorkspace, type LSPSymbol, type Workspace } from "./hooks/useTauri";
 
 type View = "editor" | "chat" | "settings" | "search" | "cloud" | "graph" | "memory" | "insights" | "checkpoints" | "timeline";
 type Theme = "dark" | "light";
@@ -28,6 +29,9 @@ interface OpenFile {
 function App() {
   const [activeView, setActiveView] = useState<View>("editor");
   const [projectPath, setProjectPath] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
+  const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
   const [llmConnected, setLlmConnected] = useState(false);
   /** null = local models disabled; true/false = Ollama health probe result */
   const [localModelRunning, setLocalModelRunning] = useState<boolean | null>(null);
@@ -82,7 +86,14 @@ function App() {
         const t = (s.theme === "Light" ? "light" : "dark") as Theme;
         setTheme(t);
         document.documentElement.setAttribute("data-theme", t);
-        if (Array.isArray(s.project_paths) && s.project_paths.length > 0) {
+        // Load workspace list + activate the most recent one (if any)
+        if (Array.isArray(s.workspaces) && s.workspaces.length > 0) {
+          setWorkspaces(s.workspaces);
+          const active = s.workspaces.find((w: Workspace) => w.id === s.active_workspace_id)
+            ?? s.workspaces[0];
+          setActiveWorkspace(active);
+          setProjectPath(active.path);
+        } else if (Array.isArray(s.project_paths) && s.project_paths.length > 0) {
           setProjectPath(s.project_paths[0]);
         }
       } catch {
@@ -268,9 +279,14 @@ function App() {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true, title: "Select Project" });
       if (selected) {
-        const success = await openProject(selected);
-        if (success) {
-          setProjectPath(selected);
+        const ws = await openProject(selected);
+        if (ws) {
+          setActiveWorkspace(ws);
+          setWorkspaces((prev) => {
+            const rest = prev.filter((w) => w.id !== ws.id);
+            return [ws, ...rest];
+          });
+          setProjectPath(ws.path);
           setOpenFiles([]);
           setActiveFile(null);
         }
@@ -284,7 +300,49 @@ function App() {
         setActiveFile(null);
       }
     }
+    setShowWorkspacePicker(false);
   }, [projectPath]);
+
+  /** Switch to a registered workspace (swaps watcher / index / skills). */
+  const handleActivateWorkspace = useCallback(async (ws: Workspace) => {
+    const result = await activateWorkspace(ws.id);
+    if (result) {
+      setActiveWorkspace(result);
+      setWorkspaces((prev) => {
+        const rest = prev.filter((w) => w.id !== result.id);
+        return [result, ...rest];
+      });
+      setProjectPath(result.path);
+      setOpenFiles([]);
+      setActiveFile(null);
+    }
+    setShowWorkspacePicker(false);
+  }, []);
+
+  const handleRemoveWorkspace = useCallback(async (id: string) => {
+    const ok = await removeWorkspace(id);
+    if (ok) {
+      setWorkspaces((prev) => {
+        const rest = prev.filter((w) => w.id !== id);
+        if (activeWorkspace?.id === id) {
+          const next = rest[0] ?? null;
+          setActiveWorkspace(next);
+          setProjectPath(next?.path ?? null);
+        }
+        return rest;
+      });
+    }
+  }, [activeWorkspace]);
+
+  const handleRenameWorkspace = useCallback(async (id: string, name: string) => {
+    const ok = await renameWorkspace(id, name);
+    if (ok) {
+      setWorkspaces((prev) =>
+        prev.map((w) => (w.id === id ? { ...w, name } : w))
+      );
+      setActiveWorkspace((prev) => (prev?.id === id ? { ...prev, name } : prev));
+    }
+  }, []);
 
   const closeFile = useCallback((path: string) => {
     setOpenFiles((prev) => {
@@ -352,6 +410,21 @@ function App() {
       setCompletionText(null);
       setCompletionId(null);
     }
+  }, [completionText]);
+
+  // Accept only the first line of the completion (line-level acceptance, Ctrl/Cmd+Right).
+  // The trailing newline is kept so the cursor lands at the start of the next line,
+  // matching the classic Copilot-style "accept current line" behaviour.
+  const handleAcceptCompletionLine = useCallback(() => {
+    if (!completionText) return;
+    const editor = (window as any).__neecoder_editor;
+    const newlineIdx = completionText.indexOf("\n");
+    const lineText = newlineIdx === -1 ? completionText : completionText.slice(0, newlineIdx + 1);
+    if (editor?.insertCompletion) {
+      editor.insertCompletion(lineText);
+    }
+    setCompletionText(null);
+    setCompletionId(null);
   }, [completionText]);
 
   // Dismiss completion
@@ -705,6 +778,7 @@ function App() {
                       onCursorMove={handleCursorMove}
                       completionText={completionText}
                       onAcceptCompletion={handleAcceptCompletion}
+                      onAcceptLineCompletion={handleAcceptCompletionLine}
                       onDismissCompletion={handleDismissCompletion}
                       onCycleCompletion={handleCycleCompletion}
                       candidateInfo={candidatesCount > 1 ? { index: candidateIndex, total: candidatesCount } : null}
@@ -818,6 +892,7 @@ function App() {
         activeView={activeView}
         theme={theme}
         onToggleTheme={toggleTheme}
+        onWorkspaceClick={() => setShowWorkspacePicker((v) => !v)}
         onChatClick={() =>
           setActiveView(activeView === "chat" ? "editor" : "chat")
         }
@@ -847,6 +922,19 @@ function App() {
         }
         onExplorerClick={() => setShowExplorer(!showExplorer)}
       />
+
+      {/* Workspace Picker (anchored above the status bar) */}
+      {showWorkspacePicker && (
+        <WorkspacePicker
+          workspaces={workspaces}
+          active={activeWorkspace}
+          onSelect={handleActivateWorkspace}
+          onOpenProject={handleOpenProject}
+          onRename={handleRenameWorkspace}
+          onRemove={handleRemoveWorkspace}
+          onClose={() => setShowWorkspacePicker(false)}
+        />
+      )}
 
       {/* Tab Context Menu */}
       {contextMenu && (

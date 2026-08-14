@@ -64,6 +64,83 @@ fn summarize_test_output(stdout: &str) -> String {
     summary
 }
 
+/// Extract the source lines around failing locations (up to 3 files) so the
+/// agent sees the failing code inline — no extra `read_file` round-trip needed.
+///
+/// Handles the common compiler/test formats: `path.rs:LINE`, `path.ts(LINE,col)`,
+/// `File "path.py", line N` and bare `path.go:LINE`.
+fn extract_failing_code(stdout: &str, stderr: &str) -> String {
+    use std::collections::HashSet;
+
+    let combined = format!("{}\n{}", stdout, stderr);
+    let mut out = String::new();
+    let mut seen: HashSet<(String, usize)> = HashSet::new();
+
+    // 1. Compiler-style locations: path.rs:LINE / path.ts(LINE,col) / path.go:LINE
+    let re = regex::Regex::new(
+        r"(?m)([A-Za-z]:[\\/][^\\s:()]+|(?:\.[\\/])?[^\\s:()]+\.(?:rs|ts|tsx|js|jsx|py|go))[:(](\d+)",
+    )
+    .expect("valid location regex");
+    for cap in re.captures_iter(&combined) {
+        let raw_path = cap[1].replace('/', std::path::MAIN_SEPARATOR_STR);
+        let line: usize = cap[2].parse().unwrap_or(0);
+        if line == 0 {
+            continue;
+        }
+        // Skip vendored/dependency paths (target/, node_modules/, ~/.cargo)
+        let lower = raw_path.to_lowercase();
+        if lower.contains("target\\") || lower.contains("node_modules") || lower.contains(".cargo") {
+            continue;
+        }
+        append_code_snippet(&mut out, &mut seen, &raw_path, line);
+        if seen.len() >= 3 {
+            return out;
+        }
+    }
+
+    // 2. Python traceback: File "foo.py", line N
+    let py_re = regex::Regex::new(r#"File \"([^\"]+)\", line (\d+)"#).expect("valid python regex");
+    for cap in py_re.captures_iter(&combined) {
+        let raw_path = cap[1].replace('/', std::path::MAIN_SEPARATOR_STR);
+        let line: usize = cap[2].parse().unwrap_or(0);
+        if line == 0 {
+            continue;
+        }
+        append_code_snippet(&mut out, &mut seen, &raw_path, line);
+        if seen.len() >= 3 {
+            return out;
+        }
+    }
+
+    out
+}
+
+/// Read the file (when it exists) and append lines `line-3..=line+3` to `out`.
+fn append_code_snippet(
+    out: &mut String,
+    seen: &mut std::collections::HashSet<(String, usize)>,
+    path: &str,
+    line: usize,
+) {
+    if !seen.insert((path.to_string(), line)) {
+        return;
+    }
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let lines: Vec<&str> = content.lines().collect();
+    if line > lines.len() {
+        return;
+    }
+    out.push_str(&format!("\n--- failing code at {}:{} ---\n", path, line));
+    let start = line.saturating_sub(4);
+    let end = (line + 3).min(lines.len());
+    for i in start..end {
+        let marker = if i + 1 == line { ">" } else { " " };
+        out.push_str(&format!("{} {:>4} | {}\n", marker, i + 1, lines[i]));
+    }
+}
+
 #[async_trait::async_trait]
 impl Tool for RunTests {
     fn name(&self) -> &str {
@@ -127,6 +204,14 @@ impl Tool for RunTests {
                 let errors = parse_error_locations(stderr_str, stdout_str);
                 if !errors.is_empty() {
                     result.push_str(&errors);
+                }
+
+                // Failing-code extraction (self-heal: no extra read_file needed)
+                if exit_code != 0 {
+                    let failing = extract_failing_code(stdout_str, stderr_str);
+                    if !failing.is_empty() {
+                        result.push_str(&failing);
+                    }
                 }
 
                 push_terminal_entry(&command, &result, exit_code);

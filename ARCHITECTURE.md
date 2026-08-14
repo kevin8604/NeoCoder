@@ -65,7 +65,7 @@
 │  ┌──────────────────────┐ │  ┌──────────────────────────────┐ │
 │  │ App.tsx (根组件)      │ │  │ Commands (Tauri invoke)      │ │
 │  ├──────────────────────┤ │  ├──────────────────────────────┤ │
-│  │ ChatPanel            │ │  │ Agent 系统 (30 工具 + Hook)  │ │
+│  │ ChatPanel            │ │  │ Agent 系统 (41 工具 + Hook)  │ │
 │  │ CodeEditor           │◄┼─►│ LLM 通信层 (多 Provider)     │ │
 │  │ FileExplorer         │ │  │ RAG 代码索引 (BM25+向量)     │ │
 │  │ TerminalPanel (xterm)│ │  │ 记忆系统 (会话/长期/艾宾浩斯) │ │
@@ -141,13 +141,14 @@ NeeCoder/
 │   │   │   ├── token_count.rs        # tiktoken 精确 token 计数
 │   │   │   ├── definition.rs         # Agent 定义与注册表
 │   │   │   ├── sub_agent.rs          # 子 Agent 调度
-│   │   │   ├── tools/                # 30 个 Agent 工具
+│   │   │   ├── tools/                # 41 个 Agent 工具
 │   │   │   └── utils.rs              # 辅助函数
 │   │   ├── chat/mod.rs               # 对话消息模型与事件
-│   │   ├── commands/                  # Tauri 命令（10 个模块）
+│   │   ├── commands/                  # Tauri 命令（11 个模块）
 │   │   │   ├── agent.rs / chat.rs / cloud.rs / completion.rs
 │   │   │   ├── config.rs / edit_inline.rs / lsp.rs / mcp.rs
 │   │   │   ├── project.rs / pty.rs / search.rs / skill.rs
+│   │   │   ├── workspace.rs / review.rs / dependency_graph.rs
 │   │   ├── completion/               # 代码补全
 │   │   │   ├── mod.rs                # FIM 补全核心
 │   │   │   └── multi_file.rs         # 多文件上下文采集

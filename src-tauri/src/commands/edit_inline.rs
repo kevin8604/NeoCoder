@@ -7,6 +7,15 @@ use tokio::sync::RwLock;
 
 // ── Request / Response types ──────────────────────────────────────────────
 
+/// One prior turn of an inline-chat conversation: the instruction that was
+/// issued and the code the model produced for it (kept so later turns can
+/// refine that output instead of re-editing the original selection).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditTurn {
+    pub instruction: String,
+    pub edited: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditInlineRequest {
     pub instruction: String,
@@ -14,6 +23,9 @@ pub struct EditInlineRequest {
     pub selected_code: String,
     pub prefix_context: String,
     pub suffix_context: String,
+    /// Previous turns of this conversation (multi-turn inline chat).
+    #[serde(default)]
+    pub history: Vec<EditTurn>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,12 +94,29 @@ pub async fn edit_inline(
     let _ = app.emit("edit-inline-event", EditInlineEvent::Started);
 
     // Build the user message with full context
-    let user_prompt = format!(
+    let mut user_prompt = format!(
         "File: {}\n\nInstruction: {}\n\n--- Code to edit ---\n{}\n--- End code ---",
         request.file_path,
         request.instruction,
         request.selected_code
     );
+
+    // Multi-turn support: tell the model what was already produced in this
+    // conversation so it refines the latest output rather than redoing work.
+    if !request.history.is_empty() {
+        let mut history_block =
+            String::from("\n\nPrevious turns of this conversation (their results are already applied to the code above — do not redo them, refine the latest result):\n");
+        for (i, turn) in request.history.iter().enumerate() {
+            history_block.push_str(&format!(
+                "Turn {} instruction: {}\nTurn {} result:\n{}\n",
+                i + 1,
+                turn.instruction,
+                i + 1,
+                turn.edited
+            ));
+        }
+        user_prompt.push_str(&history_block);
+    }
 
     // Build context-enriched system prompt
     let mut system_prompt = INLINE_EDIT_SYSTEM_PROMPT.to_string();
@@ -148,6 +177,8 @@ pub async fn edit_inline(
 
             // Post-process: strip markdown code fences if present
             let edited = strip_code_fences(&edited);
+            // Trim a trailing newline the model often appends after a code block
+            let edited = edited.trim_end().to_string();
 
             let _ = app.emit(
                 "edit-inline-event",

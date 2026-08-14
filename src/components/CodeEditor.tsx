@@ -70,6 +70,8 @@ interface CodeEditorProps {
   onCursorMove?: (line: number, col: number) => void;
   completionText?: string | null;
   onAcceptCompletion?: () => void;
+  /** Accept only the first line of the ghost text (Ctrl/Cmd+Right) */
+  onAcceptLineCompletion?: () => void;
   onDismissCompletion?: () => void;
   onCycleCompletion?: () => void;
   candidateInfo?: { index: number; total: number } | null;
@@ -189,6 +191,7 @@ export default function CodeEditor({
   onCursorMove,
   completionText,
   onAcceptCompletion,
+  onAcceptLineCompletion,
   onDismissCompletion,
   onCycleCompletion,
   candidateInfo,
@@ -288,6 +291,12 @@ export default function CodeEditor({
               event.preventDefault();
               // Cycle to next completion — handled by parent
               onCycleCompletion?.();
+              return true;
+            } else if (event.key === "ArrowRight" && (event.ctrlKey || event.metaKey) && completionText) {
+              // Line-level acceptance: insert only the first line of the ghost text
+              event.preventDefault();
+              onAcceptLineCompletion?.();
+              view.dispatch({ effects: ghostTextEffect.of(null) });
               return true;
             }
             return false;
@@ -570,6 +579,7 @@ export default function CodeEditor({
       <InlineEditBar
         visible={inlineEditState.visible && !inlineEditState.edited}
         loading={inlineEditState.loading}
+        turn={inlineEditState.turn}
         onSubmit={handleInlineEditSubmit}
         onCancel={hideEditBar}
       />
@@ -579,8 +589,9 @@ export default function CodeEditor({
         <InlineDiffView
           original={inlineEditState.original}
           edited={inlineEditState.edited}
+          turn={inlineEditState.turn}
           onAccept={handleInlineEditAccept}
-          onReject={rejectEdit}
+          onContinue={rejectEdit}
         />
       )}
 

@@ -17,6 +17,8 @@ interface StatusBarProps {
   onInsightsClick?: () => void;
   onCheckpointsClick?: () => void;
   onTimelineClick?: () => void;
+  /** Open the workspace picker dropdown (clicking the project name) */
+  onWorkspaceClick?: () => void;
   /** null = local models disabled; true/false = Ollama health probe result */
   localModelRunning?: boolean | null;
 }
@@ -38,6 +40,7 @@ export default function StatusBar({
   onInsightsClick,
   onCheckpointsClick,
   onTimelineClick,
+  onWorkspaceClick,
   localModelRunning,
 }: StatusBarProps) {
   const projectName = projectPath
@@ -61,7 +64,12 @@ export default function StatusBar({
 
       <div className="status-center">
         {projectName && (
-          <div className="status-item" title={projectPath}>
+          <div
+            className="status-item"
+            title={`${projectPath} — click to switch workspace`}
+            onClick={onWorkspaceClick}
+            style={{ cursor: "pointer" }}
+          >
             <FolderOpen size={13} />
             <span>{projectName}</span>
           </div>

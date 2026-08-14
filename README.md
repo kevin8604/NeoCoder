@@ -23,9 +23,15 @@ NeeCoder is a desktop AI coding assistant built with **Tauri 2.0 + React + Rust*
 - **MCP Protocol** — Connect to external MCP servers for extended tool capabilities
 - **Cloud Agent** — Background task execution with status tracking and cancellation
 - **Browser Automation** — Persistent CDP session (navigate / click / type / screenshot / text extraction) for UI verification
+- **Browser Recording & Replay** — `web_browser` logs every successful action; `export_script` / `replay` re-runs a UI flow; `screenshot_diff` does pixel-level visual regression with a red-highlighted diff image
+- **Test Failure Locating** — `run_tests` extracts failing `path:line` locations from compiler/test output and attaches the surrounding source lines
 - **Test-Driven Loop** — `generate_tests` + line-coverage guidance (`coverage`) + TDD state machine, closed with `run_tests` / `run_build` verification
 - **Error Self-Healing** — `auto_fix` diagnoses failed commands (root cause + fix steps + retry command), driving the fail → diagnose → fix → retry loop
 - **Agent Timeline** — Real-time event stream panel (tool calls, thinking, checkpoints, retries) for execution visibility
+- **Multi-Workspace Runtime** — Independent workspaces with per-project code index, watchers and skills; switch via a picker in the status bar (list / rename / remove)
+- **Inline Chat** — Multi-turn conversational editing: Ctrl+K on a selection, then keep refining the result with follow-up instructions before accepting
+- **Symbol Mentions** — `@symbolName` in chat resolves document symbols via LSP and attaches the file at the definition line
+- **Line-Level Completion** — Tab accepts the whole ghost text; Ctrl/Cmd+Right accepts only the current line
 - **Security** — Dangerous command interception, operation confirmation dialogs, API key encryption
 
 ### Tech Stack
@@ -124,7 +130,7 @@ NeeCoder/
 | `web_search` | Web search | |
 | `web_fetch` | Fetch web page content | |
 | `web_preview` | Screenshot a running web app (headless) | |
-| `web_browser` | Persistent CDP browser automation (navigate/click/type/screenshot) | |
+| `web_browser` | Persistent CDP browser automation (navigate/click/type/screenshot) + recording / replay / screenshot diff | |
 | `generate_tests` | Generate unit/integration tests via LLM & run them | |
 | `coverage` | Line-coverage guidance (`cargo llvm-cov` uncovered lines) | |
 | `tdd` | TDD state machine (start/stop/inspect) | |
@@ -166,9 +172,15 @@ NeeCoder 是一款基于 **Tauri 2.0 + React + Rust** 构建的桌面 AI 编程�
 - **MCP 协议** — 连接外部 MCP 服务器以扩展工具能力
 - **云 Agent** — 后台任务执行，状态跟踪与取消支持
 - **浏览器自动化** — 持久化 CDP 会话（导航/点击/输入/截图/文本提取），用于 UI 验证
+- **浏览器录制回放** — `web_browser` 记录每次成功动作，`export_script`/`replay` 重新执行 UI 流程；`screenshot_diff` 做像素级视觉回归（diff 图红色高亮变更像素）
+- **测试失败定位** — `run_tests` 从编译/测试输出中提取失败位置 `path:line` 并附上周围源码行
 - **测试驱动闭环** — `generate_tests` + 行覆盖率引导（`coverage`）+ TDD 状态机，由 `run_tests` / `run_build` 验证闭环
 - **错误自愈** — `auto_fix` 诊断失败命令（根因 + 修复步骤 + 重试命令），驱动"失败→诊断→修复→重试"循环
 - **Agent 执行时间线** — 实时事件流面板（工具调用、思考、检查点、重试），执行过程全程可见
+- **多工作区运行时** — 每个工作区独立代码索引/Watcher/Skills，状态栏选择器切换（列表/重命名/删除）
+- **Inline Chat** — 多轮对话式编辑：Ctrl+K 选中代码后，可反复追加指令优化结果再接受
+- **符号级 @ 引用** — 输入 `@符号名` 时通过 LSP 解析当前文件符号，按定义行附加文件
+- **行级补全接受** — Tab 接受整段幽灵文本，Ctrl/Cmd+Right 仅接受当前行
 - **安全机制** — 危险命令拦截、操作确认对话框、API Key 加密存储
 
 ### 技术栈

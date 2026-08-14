@@ -23,7 +23,9 @@ import {
   flattenFileTree,
   listSkills,
   executeSkill,
+  getLspSymbols,
   type UnlistenFn,
+  type LSPSymbol,
   type AgentDefinition,
   type SessionInfo,
   type FlatFileItem,
@@ -35,6 +37,42 @@ import { ChevronRight, Brain, ClipboardList, HelpCircle, X, AlertTriangle, Check
 // ── Image attachment helpers ────────────────────────────────────────
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+
+// ── Symbol mention helpers ────────────────────────────────────────────
+
+/// Map a file path to the LSP language key used by the backend `get_symbols`.
+function inferLanguage(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  switch (ext) {
+    case "rs":
+      return "rust";
+    case "ts":
+    case "tsx":
+      return "typescript";
+    case "js":
+    case "jsx":
+      return "javascript";
+    case "py":
+      return "python";
+    case "go":
+      return "go";
+    case "java":
+      return "java";
+    case "rb":
+      return "ruby";
+    case "php":
+      return "php";
+    case "c":
+    case "h":
+      return "c";
+    case "cpp":
+    case "cc":
+    case "hpp":
+      return "cpp";
+    default:
+      return "plaintext";
+  }
+}
 
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -1076,6 +1114,8 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
   const [mentionTriggerPos, setMentionTriggerPos] = useState<{ top: number; left: number }>({ top: 60, left: 0 });
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionTriggerStart, setMentionTriggerStart] = useState(-1); // position of @ or # in input
+  // Guards stale async symbol results (a newer query supersedes older ones)
+  const symbolSearchRef = useRef(0);
   const [attachedFiles, setAttachedFiles] = useState<FlatFileItem[]>([]);
   const [attachedImages, setAttachedImages] = useState<string[]>([]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -1438,6 +1478,38 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
     { id: "codebase", label: "codebase", type: "codebase", description: "Search the entire codebase (RAG)" },
   ];
 
+    // Fetch document symbols of the open file matching the current query.
+    const loadMentionSymbols = useCallback((matchQuery: string) => {
+      const requestId = ++symbolSearchRef.current;
+      const editor = (window as any).__neecoder_editor;
+      const filePath = editor?.getFilePath?.();
+      if (!filePath || !matchQuery) return;
+  
+      getLspSymbols(inferLanguage(filePath), filePath)
+        .then((symbols) => {
+          // Drop stale results (a newer query or a closed menu superseded us)
+          if (symbolSearchRef.current !== requestId) return;
+          const filtered = symbols
+            .filter((s) => s.name.toLowerCase().includes(matchQuery.toLowerCase()))
+            .slice(0, 8);
+          setMentionItems((prev) => {
+            const fileItems = prev.filter((i) => i.type !== "symbol");
+            const symbolItems: MentionItem[] = filtered.map((s) => ({
+              id: `symbol:${s.file_path}:${s.name}`,
+              label: s.name,
+              type: "symbol",
+              description: `${s.file_path.split(/[\\/]/).pop()}:${s.start_line}`,
+              path: s.file_path,
+              line: s.start_line,
+            }));
+            return [...fileItems, ...symbolItems].slice(0, 15);
+          });
+        })
+        .catch(() => {
+          // LSP not active for this file — file-only mentions are fine
+        });
+    }, []);
+  
   const updateMentionMenu = useCallback((value: string, cursorPos: number) => {
     // Find the last @ or # before cursor
     const beforeCursor = value.slice(0, cursorPos);
@@ -1508,16 +1580,22 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
 
     setMentionItems(items.slice(0, 15));
     setMentionVisible(items.length > 0);
-  }, [projectFiles]);
+
+    // Async enrichment: merge symbols of the currently open file so the user
+    // can `@symbolName` a function/class. Best-effort — if the LSP is not
+    // running for this file, the menu simply keeps file results only.
+    loadMentionSymbols(matchQuery);
+  }, [projectFiles, loadMentionSymbols]);
 
   const handleMentionSelect = useCallback((item: MentionItem) => {
     const before = input.slice(0, mentionTriggerStart);
     const afterTrigger = input.slice(mentionTriggerStart + 1 + mentionQuery.length);
 
-    if ((item.type === "file" || item.type === "folder") && item.path) {
-      // Add to attached files (both files and directories use the same state)
+    if ((item.type === "file" || item.type === "folder" || item.type === "symbol") && item.path) {
+      // Add to attached files (files, folders and symbols share this state)
       const isDir = item.type === "folder";
-      const refLabel = item.line ? `${item.label}:${item.line}` : item.label;
+      // Symbols attach the file at the definition line; show `@name:line` in text
+      const refLabel = item.type === "symbol" ? item.label : item.line ? `${item.label}:${item.line}` : item.label;
       if (!attachedFiles.find((f) => f.path === item.path && f.line === item.line)) {
         setAttachedFiles((prev) => [...prev, { name: item.label, path: item.path!, is_dir: isDir, line: item.line }]);
       }

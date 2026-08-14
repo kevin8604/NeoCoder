@@ -162,10 +162,54 @@ export async function writeFile(path: string, contents: string): Promise<boolean
   return result !== null;
 }
 
-export async function openProject(path: string): Promise<boolean> {
+/** A registered workspace in the multi-workspace runtime. */
+export interface Workspace {
+  id: string;
+  name: string;
+  path: string;
+  created_at: number;
+  last_opened_at: number;
+  index_db_path: string;
+}
+
+/**
+ * Open (create-or-activate) a workspace directory.
+ * Returns the activated workspace, or null on failure.
+ */
+export async function openProject(path: string): Promise<Workspace | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() => invoke<Workspace>("open_project", { path }));
+}
+
+/** List all registered workspaces, most recently opened first. */
+export async function listWorkspaces(): Promise<Workspace[]> {
+  if (!isTauri()) return [];
+  const { invoke } = await import("@tauri-apps/api/core");
+  const result = await tryInvoke(() => invoke<Workspace[]>("list_workspaces"));
+  return result ?? [];
+}
+
+/** Activate a registered workspace (swaps watcher / index / project skills). */
+export async function activateWorkspace(workspaceId: string): Promise<Workspace | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() => invoke<Workspace>("activate_workspace", { workspaceId }));
+}
+
+/** Remove a workspace entry (and its per-workspace index DB). */
+export async function removeWorkspace(workspaceId: string): Promise<boolean> {
   if (!isTauri()) return true;
   const { invoke } = await import("@tauri-apps/api/core");
-  const result = await tryInvoke(() => invoke<void>("open_project", { path }));
+  const result = await tryInvoke(() => invoke<void>("remove_workspace", { workspaceId }));
+  return result !== null;
+}
+
+/** Rename a workspace entry. */
+export async function renameWorkspace(workspaceId: string, newName: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  const { invoke } = await import("@tauri-apps/api/core");
+  const result = await tryInvoke(() => invoke<void>("rename_workspace", { workspaceId, newName }));
   return result !== null;
 }
 

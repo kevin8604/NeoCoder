@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Manager, State};
 use crate::commands::config::ConfigState;
+use crate::commands::skill::SkillState;
+use crate::config::Workspace;
 use crate::fs_watcher::FileWatcher;
 use crate::fs_service::FileService;
+use crate::rag::CodeIndexer;
 
 /// Global file snapshots for EditDiff accept/reject
 pub type FileSnapshots = Arc<std::sync::Mutex<HashMap<String, String>>>;
@@ -67,12 +70,20 @@ fn list_directory(path: &std::path::Path, max_depth: u32, current_depth: u32) ->
     items
 }
 
+/// Open (create-or-activate) a workspace directory.
+///
+/// If the canonical path is not yet registered as a workspace it is created;
+/// either way the workspace becomes active: watcher + code index + project
+/// skills are switched atomically (see `commands::workspace::activate_ws`).
 #[tauri::command]
 pub async fn open_project(
     path: String,
+    app: tauri::AppHandle,
     state: State<'_, ConfigState>,
     watcher: State<'_, Arc<std::sync::Mutex<FileWatcher>>>,
-) -> Result<(), String> {
+    indexer: State<'_, Arc<CodeIndexer>>,
+    skill_state: State<'_, SkillState>,
+) -> Result<Workspace, String> {
     let p = std::path::Path::new(&path);
     if !p.exists() {
         return Err(format!("Path does not exist: {}", path));
@@ -83,28 +94,47 @@ pub async fn open_project(
 
     let canonical = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let canonical_str = canonical.to_string_lossy().to_string();
-
-    let manager = state.manager.write().await;
-    let mut settings = manager.get_settings().await;
-
     let canonical_lower = canonical_str.to_lowercase();
+
+    let mut settings = state.manager.write().await.get_settings().await;
+
+    // Create the workspace entry if this path is new
+    let workspace_id = {
+        let existing = settings
+            .workspaces
+            .iter()
+            .find(|w| w.path.to_lowercase() == canonical_lower)
+            .map(|w| w.id.clone());
+        match existing {
+            Some(id) => id,
+            None => {
+                let ws = Workspace::new(canonical_str.clone());
+                let id = ws.id.clone();
+                settings.workspaces.push(ws);
+                log::info!("[Workspace] Registered new workspace: {}", canonical_str);
+                id
+            }
+        }
+    };
+
+    // Keep legacy project_paths list in sync (MRU, max 10) for older consumers
     settings.project_paths.retain(|pp| pp.to_lowercase() != canonical_lower);
     settings.project_paths.insert(0, canonical_str.clone());
     settings.project_paths.truncate(10);
 
-    manager.update_settings(settings).await?;
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let result = crate::commands::workspace::activate_ws(
+        &mut settings,
+        &workspace_id,
+        watcher.inner(),
+        indexer.inner(),
+        skill_state.inner(),
+        &config_dir,
+    )
+    .await?;
 
-    // Start file watching for RAG incremental indexing
-    {
-        let mut w = watcher.lock().unwrap_or_else(|e| e.into_inner());
-        if let Err(e) = w.start_watch(&canonical, true) {
-            log::warn!("[FsWatcher] Failed to watch project '{}': {}", canonical_str, e);
-        } else {
-            log::info!("[FsWatcher] Watching project: {}", canonical_str);
-        }
-    }
-
-    Ok(())
+    state.manager.write().await.update_settings(settings).await?;
+    Ok(result)
 }
 
 #[tauri::command]

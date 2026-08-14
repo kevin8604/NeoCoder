@@ -489,41 +489,54 @@ impl CodeIndexer {
 
     /// Load indexed chunks from SQLite database.
     pub async fn load_from_db(&self, db_path: &str) -> Result<usize, String> {
-        let conn = rusqlite::Connection::open(db_path)
-            .map_err(|e| format!("Failed to open DB: {}", e))?;
+        // rusqlite Statement/MappedRows are !Send, so run the whole query
+        // synchronously and collect rows *before* the first .await point —
+        // this keeps the future Send (required inside tauri commands).
+        let rows: Vec<(
+            String, String, i64, i64, String, ChunkType, String, String, Vec<f32>,
+        )> = {
+            let conn = rusqlite::Connection::open(db_path)
+                .map_err(|e| format!("Failed to open DB: {}", e))?;
 
-        let mut stmt = conn
-            .prepare("SELECT id, file_path, start_line, end_line, language, chunk_type, content, summary, embedding FROM chunks")
-            .map_err(|e| format!("Prepare: {}", e))?;
+            let mut stmt = conn
+                .prepare("SELECT id, file_path, start_line, end_line, language, chunk_type, content, summary, embedding FROM chunks")
+                .map_err(|e| format!("Prepare: {}", e))?;
 
-        let rows = stmt
-            .query_map([], |row| {
-                let id: String = row.get(0)?;
-                let file_path: String = row.get(1)?;
-                let start_line: i64 = row.get(2)?;
-                let end_line: i64 = row.get(3)?;
-                let language: String = row.get(4)?;
-                let chunk_type_str: String = row.get(5)?;
-                let content: String = row.get(6)?;
-                let summary: String = row.get(7)?;
-                let embedding_blob: Vec<u8> = row.get(8)?;
+            let mapped = stmt
+                .query_map([], |row| {
+                    let id: String = row.get(0)?;
+                    let file_path: String = row.get(1)?;
+                    let start_line: i64 = row.get(2)?;
+                    let end_line: i64 = row.get(3)?;
+                    let language: String = row.get(4)?;
+                    let chunk_type_str: String = row.get(5)?;
+                    let content: String = row.get(6)?;
+                    let summary: String = row.get(7)?;
+                    let embedding_blob: Vec<u8> = row.get(8)?;
 
-                let chunk_type = match chunk_type_str.as_str() {
-                    "File" => ChunkType::File,
-                    "Function" => ChunkType::Function,
-                    "Class" => ChunkType::Class,
-                    "Module" => ChunkType::Module,
-                    _ => ChunkType::Block,
-                };
+                    let chunk_type = match chunk_type_str.as_str() {
+                        "File" => ChunkType::File,
+                        "Function" => ChunkType::Function,
+                        "Class" => ChunkType::Class,
+                        "Module" => ChunkType::Module,
+                        _ => ChunkType::Block,
+                    };
 
-                let embedding: Vec<f32> = embedding_blob
-                    .chunks_exact(4)
-                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                    .collect();
+                    let embedding: Vec<f32> = embedding_blob
+                        .chunks_exact(4)
+                        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                        .collect();
 
-                Ok((id, file_path, start_line, end_line, language, chunk_type, content, summary, embedding))
-            })
-            .map_err(|e| format!("Query: {}", e))?;
+                    Ok((id, file_path, start_line, end_line, language, chunk_type, content, summary, embedding))
+                })
+                .map_err(|e| format!("Query: {}", e))?;
+
+            let mut out = Vec::new();
+            for row in mapped {
+                out.push(row.map_err(|e| format!("Row: {}", e))?);
+            }
+            out
+        };
 
         let mut chunks = self.chunks.write().await;
         let mut file_map = self.file_map.write().await;
@@ -531,9 +544,7 @@ impl CodeIndexer {
         file_map.clear();
 
         let mut count = 0usize;
-        for row in rows {
-            let (id, file_path, start_line, end_line, language, chunk_type, content, summary, embedding) =
-                row.map_err(|e| format!("Row: {}", e))?;
+        for (id, file_path, start_line, end_line, language, chunk_type, content, summary, embedding) in rows {
             let idx = chunks.len();
             chunks.push(IndexedChunk {
                 chunk: CodeChunk {

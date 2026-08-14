@@ -5,12 +5,19 @@ import { listen } from "@tauri-apps/api/event";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+interface EditTurn {
+  instruction: string;
+  edited: string;
+}
+
 interface InlineEditRequest {
   instruction: string;
   file_path: string;
   selected_code: string;
   prefix_context: string;
   suffix_context: string;
+  /** Previous turns of this conversation (multi-turn inline chat) */
+  history?: EditTurn[];
 }
 
 interface InlineEditResponse {
@@ -34,6 +41,9 @@ export interface InlineEditState {
   edited: string;
   selectionStart: number;
   selectionEnd: number;
+  /** Conversation turns: each entry records the instruction + produced code */
+  history: EditTurn[];
+  turn: number;
 }
 
 // ── Inline Edit Bar Component ──────────────────────────────────────────────
@@ -41,11 +51,12 @@ export interface InlineEditState {
 interface InlineEditBarProps {
   visible: boolean;
   loading: boolean;
+  turn: number;
   onSubmit: (instruction: string) => void;
   onCancel: () => void;
 }
 
-export function InlineEditBar({ visible, loading, onSubmit, onCancel }: InlineEditBarProps) {
+export function InlineEditBar({ visible, loading, turn, onSubmit, onCancel }: InlineEditBarProps) {
   const [instruction, setInstruction] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -93,7 +104,7 @@ export function InlineEditBar({ visible, loading, onSubmit, onCancel }: InlineEd
       }}
     >
       <span style={{ color: "var(--accent, #89b4fa)", fontSize: 12, fontWeight: 600 }}>
-        <Sparkles size={12} /> Edit
+        <Sparkles size={12} /> Edit {turn + 1}
       </span>
       <input
         ref={inputRef}
@@ -101,7 +112,11 @@ export function InlineEditBar({ visible, loading, onSubmit, onCancel }: InlineEd
         value={instruction}
         onChange={(e) => setInstruction(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Describe the edit (e.g., 'add error handling')..."
+        placeholder={
+          turn === 0
+            ? "Describe the edit (e.g., 'add error handling')..."
+            : "Refine the previous edit (e.g., 'also handle empty input')..."
+        }
         disabled={loading}
         style={{
           flex: 1,
@@ -154,11 +169,13 @@ export function InlineEditBar({ visible, loading, onSubmit, onCancel }: InlineEd
 interface InlineDiffViewProps {
   original: string;
   edited: string;
+  turn: number;
   onAccept: () => void;
-  onReject: () => void;
+  /** Reject this version and go back to the input bar to refine it further */
+  onContinue: () => void;
 }
 
-export function InlineDiffView({ original, edited, onAccept, onReject }: InlineDiffViewProps) {
+export function InlineDiffView({ original, edited, turn, onAccept, onContinue }: InlineDiffViewProps) {
   const originalLines = original.split("\n");
   const editedLines = edited.split("\n");
 
@@ -189,7 +206,7 @@ export function InlineDiffView({ original, edited, onAccept, onReject }: InlineD
         }}
       >
         <span style={{ color: "var(--text-primary, #cdd6f4)", fontSize: 12 }}>
-          Review changes:
+          Review changes{turn > 0 ? ` (turn ${turn + 1})` : ""}:
         </span>
         <button
           onClick={onAccept}
@@ -207,19 +224,20 @@ export function InlineDiffView({ original, edited, onAccept, onReject }: InlineD
           <Check size={12} /> Accept (Tab)
         </button>
         <button
-          onClick={onReject}
+          onClick={onContinue}
+          title="Reject this version and keep refining it with another instruction"
           style={{
             padding: "4px 12px",
-            background: "var(--error, #f38ba8)",
-            color: "#1e1e2e",
-            border: "none",
+            background: "transparent",
+            color: "var(--text-primary, #cdd6f4)",
+            border: "1px solid var(--border, #313244)",
             borderRadius: 4,
             fontSize: 12,
             fontWeight: 600,
             cursor: "pointer",
           }}
         >
-          <X size={12} /> Reject (Esc)
+          <X size={12} /> Reject & refine (Esc)
         </button>
       </div>
 
@@ -293,6 +311,8 @@ export function useInlineEdit(filePath: string) {
     edited: "",
     selectionStart: 0,
     selectionEnd: 0,
+    history: [],
+    turn: 0,
   });
 
   // Listen for edit-inline events
@@ -318,6 +338,8 @@ export function useInlineEdit(filePath: string) {
       edited: "",
       selectionStart: start,
       selectionEnd: end,
+      history: [],
+      turn: 0,
     });
   }, []);
 
@@ -330,6 +352,8 @@ export function useInlineEdit(filePath: string) {
       edited: "",
       selectionStart: 0,
       selectionEnd: 0,
+      history: [],
+      turn: 0,
     });
   }, []);
 
@@ -337,12 +361,17 @@ export function useInlineEdit(filePath: string) {
     async (instruction: string, prefixContext: string, suffixContext: string) => {
       setState((prev) => ({ ...prev, loading: true, error: null }));
 
+      // Multi-turn: base the next edit on the latest produced version (the
+      // original selection is only used on the first turn).
+      const latest = state.history.length > 0 ? state.history[state.history.length - 1].edited : state.original;
+
       const request: InlineEditRequest = {
         instruction,
         file_path: filePath,
-        selected_code: state.original,
+        selected_code: latest,
         prefix_context: prefixContext,
         suffix_context: suffixContext,
+        history: state.history,
       };
 
       try {
@@ -351,6 +380,8 @@ export function useInlineEdit(filePath: string) {
           ...prev,
           loading: false,
           edited: response.edited,
+          history: [...prev.history, { instruction, edited: response.edited }],
+          turn: prev.turn + 1,
         }));
       } catch (err) {
         setState((prev) => ({
@@ -360,7 +391,7 @@ export function useInlineEdit(filePath: string) {
         }));
       }
     },
-    [filePath, state.original]
+    [filePath, state.original, state.history]
   );
 
   const acceptEdit = useCallback((): { edited: string; start: number; end: number } | null => {
@@ -370,9 +401,12 @@ export function useInlineEdit(filePath: string) {
     return result;
   }, [state.edited, state.selectionStart, state.selectionEnd, hideEditBar]);
 
+  // Reject the current diff and go back to the input bar, keeping the
+  // conversation history so the user can refine the previous result.
+  // (Press Esc again on the bar to fully close.)
   const rejectEdit = useCallback(() => {
-    hideEditBar();
-  }, [hideEditBar]);
+    setState((prev) => ({ ...prev, visible: true, edited: "" }));
+  }, []);
 
   return {
     state,
