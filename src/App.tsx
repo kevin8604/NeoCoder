@@ -843,32 +843,55 @@ function App() {
           {activeView !== "editor" && (
             <div className="side-panel-resizer" onMouseDown={startPanelResize} title="Drag to resize" />
           )}
-          {activeView === "chat" && <ChatPanel projectPath={projectPath} />}
-          {activeView === "settings" && <Settings />}
-          {activeView === "cloud" && <CloudAgentPanel />}
-          {activeView === "checkpoints" && projectPath && <CheckpointPanel projectPath={projectPath} />}
-                    {activeView === "timeline" && <AgentTimelinePanel />}
-          {activeView === "search" && projectPath && (
-            <SearchPanel
-              projectPath={projectPath}
-              onFileSelect={handleSearchSelect}
-            />
+          {/* Side-panel views stay mounted (visibility toggled via display) so
+              switching views never loses in-flight agent state: messages,
+              todo list, streaming events and running session all persist. */}
+          <div className="side-panel-view" style={{ display: activeView === "chat" ? "flex" : "none" }}>
+            <ChatPanel projectPath={projectPath} />
+          </div>
+          <div className="side-panel-view" style={{ display: activeView === "settings" ? "flex" : "none" }}>
+            <Settings />
+          </div>
+          <div className="side-panel-view" style={{ display: activeView === "cloud" ? "flex" : "none" }}>
+            <CloudAgentPanel />
+          </div>
+          {projectPath && (
+            <div className="side-panel-view" style={{ display: activeView === "checkpoints" ? "flex" : "none" }}>
+              <CheckpointPanel projectPath={projectPath} />
+            </div>
           )}
-          {activeView === "graph" && projectPath && (
-            <DependencyGraph
-              projectPath={projectPath}
-              onFileSelect={(label) => {
-                // Try to find and open the file by label
-                const file = openFiles.find((f) => f.name === label);
-                if (file) {
-                  setActiveFile(file.path);
-                  setActiveView("editor");
-                }
-              }}
-            />
+          <div className="side-panel-view" style={{ display: activeView === "timeline" ? "flex" : "none" }}>
+            <AgentTimelinePanel />
+          </div>
+          {projectPath && (
+            <div className="side-panel-view" style={{ display: activeView === "search" ? "flex" : "none" }}>
+              <SearchPanel
+                projectPath={projectPath}
+                onFileSelect={handleSearchSelect}
+              />
+            </div>
           )}
-          {activeView === "memory" && <MemoryPanel />}
-          {activeView === "insights" && <InsightsPanel />}
+          {projectPath && (
+            <div className="side-panel-view" style={{ display: activeView === "graph" ? "flex" : "none" }}>
+              <DependencyGraph
+                projectPath={projectPath}
+                onFileSelect={(label) => {
+                  // Try to find and open the file by label
+                  const file = openFiles.find((f) => f.name === label);
+                  if (file) {
+                    setActiveFile(file.path);
+                    setActiveView("editor");
+                  }
+                }}
+              />
+            </div>
+          )}
+          <div className="side-panel-view" style={{ display: activeView === "memory" ? "flex" : "none" }}>
+            <MemoryPanel />
+          </div>
+          <div className="side-panel-view" style={{ display: activeView === "insights" ? "flex" : "none" }}>
+            <InsightsPanel />
+          </div>
         </div>
       </div>
 
