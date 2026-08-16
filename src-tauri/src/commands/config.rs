@@ -31,7 +31,7 @@ pub async fn get_app_logs(
     lines: Option<usize>,
 ) -> Result<String, String> {
     let app_data = app.path().app_config_dir()
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(".neecoder"));
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(".neocoder"));
     let content = crate::logging::read_recent_logs(&app_data, lines.unwrap_or(200));
     Ok(content)
 }
@@ -42,6 +42,6 @@ pub async fn get_log_path(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let app_data = app.path().app_config_dir()
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(".neecoder"));
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(".neocoder"));
     Ok(crate::logging::log_file_path(&app_data).to_string_lossy().to_string())
 }

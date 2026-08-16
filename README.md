@@ -1,4 +1,4 @@
-# NeeCoder
+# NeoCoder
 
 **AI-Powered Coding Assistant Desktop Application**
 **AI 驱动的编程助手桌面应用**
@@ -9,7 +9,7 @@
 
 ## English
 
-NeeCoder is a desktop AI coding assistant built with **Tauri 2.0 + React + Rust**. It combines a full-featured code editor with an AI chat panel, intelligent code completion, RAG-based code search, multi-agent orchestration, and LSP integration.
+NeoCoder is a desktop AI coding assistant built with **Tauri 2.0 + React + Rust**. It combines a full-featured code editor with an AI chat panel, intelligent code completion, RAG-based code search, multi-agent orchestration, and LSP integration.
 
 ### Features
 
@@ -57,8 +57,8 @@ NeeCoder is a desktop AI coding assistant built with **Tauri 2.0 + React + Rust*
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/NeeCoder.git
-cd NeeCoder
+git clone https://github.com/your-username/NeoCoder.git
+cd NeoCoder
 
 # Install frontend dependencies
 npm install
@@ -73,7 +73,7 @@ npm run tauri build
 ### Project Structure
 
 ```
-NeeCoder/
+NeoCoder/
 ├── src/                          # Frontend (React + TypeScript)
 │   ├── components/               # UI components
 │   │   ├── ChatPanel.tsx         # AI chat panel (Ask/Edit/Agent)
@@ -158,7 +158,7 @@ MIT
 
 ## 中文
 
-NeeCoder 是一款基于 **Tauri 2.0 + React + Rust** 构建的桌面 AI 编程助手。它将全功能代码编辑器与 AI 对话面板、智能代码补全、RAG 代码搜索、多 Agent 协作和 LSP 语言服务器集成于一体。
+NeoCoder 是一款基于 **Tauri 2.0 + React + Rust** 构建的桌面 AI 编程助手。它将全功能代码编辑器与 AI 对话面板、智能代码补全、RAG 代码搜索、多 Agent 协作和 LSP 语言服务器集成于一体。
 
 ### 核心功能
 
@@ -206,8 +206,8 @@ NeeCoder 是一款基于 **Tauri 2.0 + React + Rust** 构建的桌面 AI 编程�
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-username/NeeCoder.git
-cd NeeCoder
+git clone https://github.com/your-username/NeoCoder.git
+cd NeoCoder
 
 # 安装前端依赖
 npm install
@@ -222,7 +222,7 @@ npm run tauri build
 ### 项目结构
 
 ```
-NeeCoder/
+NeoCoder/
 ├── src/                          # 前端 (React + TypeScript)
 │   ├── components/               # UI 组件
 │   │   ├── ChatPanel.tsx         # AI 对话面板 (Ask/Edit/Agent)

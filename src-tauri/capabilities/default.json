@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capability for NeeCoder",
+  "description": "Default capability for NeoCoder",
   "windows": ["main"],
   "permissions": [
     "core:default",

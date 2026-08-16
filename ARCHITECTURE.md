@@ -1,12 +1,12 @@
-# NeeCoder 项目架构文档
+# NeoCoder 项目架构文档
 
-> NeeCoder 是一款基于 **Tauri 2.0 + React + Rust** 构建的 AI 编程助手桌面应用，集成了代码编辑器、AI 对话面板、智能代码补全、RAG 代码搜索、多 Agent 协作、MCP 协议桥接、沙箱安全、Skill 系统、终端 PTY 和 LSP 语言服务器等功能。
+> NeoCoder 是一款基于 **Tauri 2.0 + React + Rust** 构建的 AI 编程助手桌面应用，集成了代码编辑器、AI 对话面板、智能代码补全、RAG 代码搜索、多 Agent 协作、MCP 协议桥接、沙箱安全、Skill 系统、终端 PTY 和 LSP 语言服务器等功能。
 
 ---
 
 ## 目录
 
-- [NeeCoder 项目架构文档](#neecoder-项目架构文档)
+- [NeoCoder 项目架构文档](#neocoder-项目架构文档)
   - [目录](#目录)
   - [1. 总体架构](#1-总体架构)
   - [2. 技术栈](#2-技术栈)
@@ -108,7 +108,7 @@
 ## 3. 目录结构
 
 ```
-NeeCoder/
+NeoCoder/
 ├── src/                              # 前端源码
 │   ├── main.tsx                      # React 入口
 │   ├── App.tsx                       # 根组件（布局、文件标签页管理）
@@ -239,7 +239,7 @@ NeeCoder/
 
 ### 4.3 Agent 系统 ([agent/mod.rs](src-tauri/src/agent/mod.rs))
 
-Agent 是 NeeCoder 的核心 AI 执行引擎，采用**迭代循环**模式：
+Agent 是 NeoCoder 的核心 AI 执行引擎，采用**迭代循环**模式：
 
 ```
 用户消息 → LLM 推理 → 工具调用 → Hook 链处理 → 工具结果反馈 → LLM 再推理 → ... → 完成
@@ -536,7 +536,7 @@ Agent Loop → ToolExecutor → McpToolBridge → McpClient ──stdin──►
 
 **核心组件：**
 - `McpClient` — 生成子进程，通过 stdin/stdout 通信
-- `McpToolBridge` — 将 MCP 工具桥接为 NeeCoder 的 `Tool` trait 实现
+- `McpToolBridge` — 将 MCP 工具桥接为 NeoCoder 的 `Tool` trait 实现
 - `McpRegistry` — 管理多个 MCP 服务器连接
 
 **工具发现：** 启动时自动连接配置的 MCP 服务器，发现工具后注入 Agent 工具注册表
@@ -577,7 +577,7 @@ Review the following PR: $SELECTION
 
 **模板变量：** `$SELECTION` / `$FILE_PATH` / `$FILE_CONTENT` / `$PROJECT_PATH` / `$ARGUMENTS` / `$LANGUAGE`
 
-**加载路径：** 全局 `skills/` 目录 + 项目 `.neecoder/skills/` 目录
+**加载路径：** 全局 `skills/` 目录 + 项目 `.neocoder/skills/` 目录
 
 ### 4.20 遥测系统 ([telemetry/mod.rs](src-tauri/src/telemetry/mod.rs))
 
@@ -623,7 +623,7 @@ pub struct AppSettings {
 
 ### 4.23 日志系统 ([logging/mod.rs](src-tauri/src/logging/mod.rs))
 
-`DualLogger` 双输出：控制台（`RUST_LOG` 控制，彩色）+ 文件（`{app_data}/logs/neecoder.log`，自动轮转，保留 5 个历史文件）
+`DualLogger` 双输出：控制台（`RUST_LOG` 控制，彩色）+ 文件（`{app_data}/logs/neocoder.log`，自动轮转，保留 5 个历史文件）
 
 ### 4.24 命令层 (Tauri Commands)
 
@@ -688,7 +688,7 @@ pub struct AppSettings {
 **[CodeEditor.tsx](src/components/CodeEditor.tsx)** — CodeMirror 6
 - 动态语言扩展 + 幽灵文本补全
 - `Tab` 接受 / `Esc` 拒绝 / `Alt+]` 下一候选
-- 通过 `window.__neecoder_editor` 暴露 API
+- 通过 `window.__neocoder_editor` 暴露 API
 
 **[TerminalPanel.tsx](src/components/TerminalPanel.tsx)** — xterm.js + PTY
 - 连接后端 `portable-pty` 的真实终端

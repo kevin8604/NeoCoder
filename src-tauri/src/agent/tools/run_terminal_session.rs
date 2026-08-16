@@ -9,7 +9,7 @@
 //! - Uses `portable-pty` (same backend as the frontend terminal panel) but a
 //!   dedicated per-session instance, so it never interferes with the UI.
 //! - Completion detection uses a unique echo marker with exit code:
-//!   `echo __NEECODER_DONE_<id>__<exitcode>` (syntax adapted per shell).
+//!   `echo __NEOCODER_DONE_<id>__<exitcode>` (syntax adapted per shell).
 //! - Reads on a background thread and bridges to async via mpsc, so the
 //!   tokio executor is never blocked by PTY I/O.
 
@@ -82,7 +82,7 @@ async fn read_until_marker(
     mid: &str,
     timeout_secs: u64,
 ) -> (String, Option<i32>) {
-    let marker = format!("__NEECODER_DONE_{}__", mid);
+    let marker = format!("__NEOCODER_DONE_{}__", mid);
 
     // Bridge blocking PTY reads to async via mpsc on a background thread
     let reader = session.reader.clone();
@@ -142,12 +142,12 @@ async fn read_until_marker(
 /// Write a command to the PTY followed by the completion marker command.
 fn send_command(session: &AgentPtySession, mid: &str, command: &str) -> Result<(), String> {
     let mut writer = session.writer.lock().map_err(|e| e.to_string())?;
-    let payload = if session.marker_cmd.contains("%NEECODER_MID%") {
-        format!("set NEECODER_MID={}&{}&{}", mid, command, session.marker_cmd)
-    } else if session.marker_cmd.contains("$env:NEECODER_MID") {
-        format!("$env:NEECODER_MID='{}'; {}; {}", mid, command, session.marker_cmd)
+    let payload = if session.marker_cmd.contains("%NEOCODER_MID%") {
+        format!("set NEOCODER_MID={}&{}&{}", mid, command, session.marker_cmd)
+    } else if session.marker_cmd.contains("$env:NEOCODER_MID") {
+        format!("$env:NEOCODER_MID='{}'; {}; {}", mid, command, session.marker_cmd)
     } else {
-        format!("export NEECODER_MID={}; {}; {}", mid, command, session.marker_cmd)
+        format!("export NEOCODER_MID={}; {}; {}", mid, command, session.marker_cmd)
     };
     writer
         .write_all(payload.as_bytes())
@@ -215,8 +215,8 @@ impl Tool for RunTerminalSession {
         if !lines.is_empty() {
             lines.remove(0);
         }
-        // Drop the marker line (contains __NEECODER_DONE_)
-        lines.retain(|l| !l.contains("__NEECODER_DONE_") && !l.trim().is_empty());
+        // Drop the marker line (contains __NEOCODER_DONE_)
+        lines.retain(|l| !l.contains("__NEOCODER_DONE_") && !l.trim().is_empty());
 
         // Detect exit status via marker code or keywords
         let status = match exit_code {

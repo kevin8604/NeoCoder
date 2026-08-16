@@ -24,7 +24,7 @@ pub fn load_agents_from_disk() -> Vec<AgentDefinition> {
     let mut agents = load_agents_from_disk_except_custom();
 
     // Also try to load user-custom agents from app config dir
-    if let Some(proj_dirs) = directories::ProjectDirs::from("com", "neecoder", "NeeCoder") {
+    if let Some(proj_dirs) = directories::ProjectDirs::from("com", "neocoder", "NeoCoder") {
         let custom_path = proj_dirs.config_dir().join("custom_agents.json");
         if let Ok(content) = std::fs::read_to_string(&custom_path) {
             if let Ok(custom_agents) = serde_json::from_str::<Vec<AgentDefinition>>(&content) {

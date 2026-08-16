@@ -127,7 +127,7 @@ impl McpClient {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
             "clientInfo": {
-                "name": "NeeCoder",
+                "name": "NeoCoder",
                 "version": "0.1.0"
             }
         });

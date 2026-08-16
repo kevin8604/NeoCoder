@@ -150,7 +150,7 @@ export async function getFileTree(path: string, maxDepth?: number): Promise<File
 }
 
 export async function readFile(path: string): Promise<string | null> {
-  if (!isTauri()) return "// Mock file content\nconsole.log('Hello from NeeCoder!');\n";
+  if (!isTauri()) return "// Mock file content\nconsole.log('Hello from NeoCoder!');\n";
   const { invoke } = await import("@tauri-apps/api/core");
   return tryInvoke(() => invoke<string>("read_file", { path }));
 }

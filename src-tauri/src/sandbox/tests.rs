@@ -61,7 +61,7 @@ fn test_strict_blocks_path_outside_project() {
 fn test_strict_allows_path_inside_project() {
     // Use a temp directory that exists
     let tmp = std::env::temp_dir();
-    let project_dir = tmp.join("neecoder_test_sandbox_project");
+    let project_dir = tmp.join("neocoder_test_sandbox_project");
     let _ = std::fs::create_dir_all(&project_dir);
 
     let checker = strict_checker();
@@ -76,7 +76,7 @@ fn test_strict_allows_path_inside_project() {
 #[test]
 fn test_strict_blocks_dotdot_escape() {
     let tmp = std::env::temp_dir();
-    let project_dir = tmp.join("neecoder_test_sandbox_escape");
+    let project_dir = tmp.join("neocoder_test_sandbox_escape");
     let _ = std::fs::create_dir_all(&project_dir);
 
     let checker = strict_checker();
@@ -108,7 +108,7 @@ fn test_strict_allows_read_without_project_path() {
 #[test]
 fn test_blocked_paths_take_priority() {
     let tmp = std::env::temp_dir();
-    let project_dir = tmp.join("neecoder_test_sandbox_blocked");
+    let project_dir = tmp.join("neocoder_test_sandbox_blocked");
     let blocked_dir = project_dir.join("secrets");
     let _ = std::fs::create_dir_all(&blocked_dir);
 
@@ -154,8 +154,8 @@ fn test_permissive_blocks_write_outside_project() {
 #[test]
 fn test_allowed_paths_extra() {
     let tmp = std::env::temp_dir();
-    let project_dir = tmp.join("neecoder_test_sandbox_extra_proj");
-    let extra_dir = tmp.join("neecoder_test_sandbox_extra_allowed");
+    let project_dir = tmp.join("neocoder_test_sandbox_extra_proj");
+    let extra_dir = tmp.join("neocoder_test_sandbox_extra_allowed");
     let _ = std::fs::create_dir_all(&project_dir);
     let _ = std::fs::create_dir_all(&extra_dir);
 
@@ -283,7 +283,7 @@ fn test_permissive_allows_private_urls() {
 #[test]
 fn test_file_size_limit() {
     let tmp = std::env::temp_dir();
-    let test_file = tmp.join("neecoder_test_sandbox_size.txt");
+    let test_file = tmp.join("neocoder_test_sandbox_size.txt");
     // Create a small file
     let _ = std::fs::write(&test_file, "hello");
 

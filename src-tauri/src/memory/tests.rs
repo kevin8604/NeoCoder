@@ -7,7 +7,7 @@ use chrono::NaiveDate;
 /// Create a temporary directory for test data (no tempfile crate needed)
 fn temp_test_dir(prefix: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "neecoder_test_{}_{}", prefix, std::process::id()
+        "neocoder_test_{}_{}", prefix, std::process::id()
     ));
     let _ = std::fs::create_dir_all(&dir);
     dir
@@ -38,7 +38,7 @@ fn test_add_and_get_messages() {
 
     let user_msg = ChatMessage {
         role: Role::User,
-        content: "Hello, NeeCoder!".to_string(),
+        content: "Hello, NeoCoder!".to_string(),
         tool_calls: None,
         images: None,
     };

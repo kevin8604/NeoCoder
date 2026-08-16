@@ -40,7 +40,7 @@ fn entry_to_sample(entry: &MemoryEntry) -> String {
         ],
         // Auxiliary fields consumed by pipelines that support metadata
         "category": entry.category.to_tag(),
-        "source": "neecoder-memory",
+        "source": "neocoder-memory",
     });
     record.to_string()
 }
@@ -70,7 +70,7 @@ pub fn export_training_data(
     if output_path.is_none() {
         fs::create_dir_all(&out_dir).map_err(|e| format!("Failed to create finetune dir: {}", e))?;
     }
-    let out_file = out_dir.join("neecoder_memory.jsonl");
+    let out_file = out_dir.join("neocoder_memory.jsonl");
 
     let mut total_chars = 0usize;
     let mut lines = Vec::with_capacity(entries.len());

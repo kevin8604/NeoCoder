@@ -154,7 +154,7 @@ impl LspClient {
         let init_params = serde_json::json!({
             "processId": null,
             "clientInfo": {
-                "name": "NeeCoder",
+                "name": "NeoCoder",
                 "version": "0.1.0"
             },
             "capabilities": {

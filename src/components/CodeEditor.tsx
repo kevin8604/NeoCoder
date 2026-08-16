@@ -385,7 +385,7 @@ export default function CodeEditor({
   // Expose insertCompletion via ref pattern
   useEffect(() => {
     if (viewRef.current) {
-      (window as any).__neecoder_editor = {
+      (window as any).__neocoder_editor = {
         insertCompletion,
         openFind: () => {
           const view = viewRef.current;
@@ -453,7 +453,7 @@ export default function CodeEditor({
       };
     }
     return () => {
-      delete (window as any).__neecoder_editor;
+      delete (window as any).__neocoder_editor;
     };
   }, [insertCompletion, filePath, projectPath]);
 
@@ -537,7 +537,7 @@ export default function CodeEditor({
         renameInput.trim()
       );
       if (edits && edits.length > 0) {
-        (window as any).__neecoder_editor?.applyTextEdits(edits);
+        (window as any).__neocoder_editor?.applyTextEdits(edits);
         setRenameDlg(null);
       } else {
         setLspError("未找到该位置的符号（或 LSP 不可用）");
@@ -558,7 +558,7 @@ export default function CodeEditor({
     try {
       const edits = await formatDocument(getLspLanguage(filePath), filePath);
       if (edits && edits.length > 0) {
-        (window as any).__neecoder_editor?.applyTextEdits(edits);
+        (window as any).__neocoder_editor?.applyTextEdits(edits);
       } else {
         setLspError("格式化没有产生变化（或 LSP 不可用）");
       }

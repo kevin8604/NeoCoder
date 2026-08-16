@@ -57,10 +57,16 @@ pub(crate) async fn activate_ws(
         Err(e) => log::warn!("[Workspace] Failed to load index DB {}: {}", db_path, e),
     }
 
-    // 3. Project skills: point at <workspace>/.neecoder/skills and reload
-    skill_manager.update_project_dir(Some(
-        std::path::Path::new(&ws_path).join(".neecoder").join("skills"),
-    ));
+    // 3. Project skills: point at <workspace>/.neocoder/skills and reload.
+    //    Fall back to the legacy `.neecoder` dir so pre-rename projects keep
+    //    their existing skills.
+    let project_dir = std::path::Path::new(&ws_path);
+    let skills_dir = if project_dir.join(".neocoder").exists() {
+        project_dir.join(".neocoder").join("skills")
+    } else {
+        project_dir.join(".neecoder").join("skills")
+    };
+    skill_manager.update_project_dir(Some(skills_dir));
 
     settings.active_workspace_id = Some(workspace_id.to_string());
     log::info!(

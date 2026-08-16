@@ -519,10 +519,10 @@ mod tests {
 
     #[test]
     fn test_is_src_file_filters() {
-        assert!(is_src_file("d:/workspace/NeeCoder/src-tauri/src/agent/hooks.rs"));
+        assert!(is_src_file("d:/workspace/NeoCoder/src-tauri/src/agent/hooks.rs"));
         assert!(is_src_file("src/agent/hooks.rs"));
-        assert!(!is_src_file("d:/workspace/NeeCoder/target/debug/foo.rs"));
-        assert!(!is_src_file("d:/workspace/NeeCoder/src-tauri/tests/integration.rs"));
+        assert!(!is_src_file("d:/workspace/NeoCoder/target/debug/foo.rs"));
+        assert!(!is_src_file("d:/workspace/NeoCoder/src-tauri/tests/integration.rs"));
     }
 
     fn sample_cache() -> CoverageCache {

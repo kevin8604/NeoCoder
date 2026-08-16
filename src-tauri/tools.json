@@ -514,7 +514,7 @@
   },
   {
     "name": "generate_diagram",
-    "description": "Generate a Mermaid diagram from code. Saves the diagram to a temp file (neecoder_diagrams) and returns its path with a preview. Use this to visualize architectures, flows, and relationships. Example: generate_diagram { mermaid: 'graph TD; A-->B', type: 'mermaid' }",
+    "description": "Generate a Mermaid diagram from code. Saves the diagram to a temp file (neocoder_diagrams) and returns its path with a preview. Use this to visualize architectures, flows, and relationships. Example: generate_diagram { mermaid: 'graph TD; A-->B', type: 'mermaid' }",
     "parameters": {
       "type": "object",
       "properties": {

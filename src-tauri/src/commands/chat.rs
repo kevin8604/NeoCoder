@@ -460,7 +460,7 @@ pub async fn send_message(
         .or_else(|| settings.project_paths.first().cloned());
     let project_instructions = {
         if let Some(ref pp) = effective_project_path {
-            let file_path = std::path::Path::new(pp).join(".neecoder").join("instructions.md");
+            let file_path = std::path::Path::new(pp).join(".neocoder").join("instructions.md");
             std::fs::read_to_string(&file_path).ok().filter(|c| !c.trim().is_empty())
         } else {
             None
@@ -725,14 +725,14 @@ pub(crate) async fn spawn_agent_pipeline(
     let agent_def: Option<crate::agent::definition::AgentDefinition> = app.try_state::<AgentRegistry>()
         .and_then(|registry| crate::agent::definition::find_agent(registry.inner(), &effective_agent_id));
 
-    // Load custom instructions from settings + .neecoder/instructions.md
+    // Load custom instructions from settings + .neocoder/instructions.md
     let mut custom_instructions = String::new();
     if !settings.custom_instructions.trim().is_empty() {
         custom_instructions.push_str(&settings.custom_instructions);
     }
     // Try loading project-level instructions
     if let Some(ref pp) = project_path {
-        let file_path = std::path::Path::new(pp).join(".neecoder").join("instructions.md");
+        let file_path = std::path::Path::new(pp).join(".neocoder").join("instructions.md");
         if let Ok(content) = std::fs::read_to_string(&file_path) {
             if !content.trim().is_empty() {
                 if !custom_instructions.is_empty() {
@@ -1623,7 +1623,7 @@ fn parse_unified_diff(raw: &str) -> Vec<crate::chat::FileChange> {
 // ── Conversation Branching Commands ──────────────────────────────────────
 
 fn get_session_storage() -> Result<crate::memory::session_store::SessionStorage, String> {
-    let base_dir = directories::ProjectDirs::from("com", "neecoder", "NeeCoder")
+    let base_dir = directories::ProjectDirs::from("com", "neocoder", "NeoCoder")
         .map(|dirs| dirs.data_dir().to_path_buf())
         .ok_or_else(|| "Failed to get project data dir".to_string())?;
     Ok(crate::memory::session_store::SessionStorage::new(&base_dir))

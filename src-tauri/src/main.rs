@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    neecoder_tauri_lib::run()
+    neocoder_tauri_lib::run()
 }

@@ -1,4 +1,4 @@
-﻿//! Lifecycle Hooks framework for the Agent harness.
+//! Lifecycle Hooks framework for the Agent harness.
 //!
 //! Provides pre-tool / post-tool / post-tool-batch hook mechanisms,
 //! replacing hardcoded logic (snapshot, confirm, auto-diagnose) with
@@ -1732,7 +1732,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_log_writes_to_file() {
-        let tmp_dir = std::env::temp_dir().join("neecoder_test_audit");
+        let tmp_dir = std::env::temp_dir().join("neocoder_test_audit");
         let _ = std::fs::create_dir_all(&tmp_dir);
 
         let hook = AuditLogHook::new(Some(tmp_dir.clone()));

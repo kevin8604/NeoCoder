@@ -6,7 +6,7 @@
 //! ## Architecture
 //! - **In-memory counters**: Thread-safe atomics for real-time stats
 //! - **JSONL file**: Persistent append-only log at `{app_data}/telemetry/telemetry.jsonl`
-//!   (separate from `logs/neecoder.log` to avoid mixing)
+//!   (separate from `logs/neocoder.log` to avoid mixing)
 //! - **Query API**: `get_summary()` returns aggregated snapshot
 //!
 //! ## File Format
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_telemetry_collector_basic() {
-        let tmp = std::env::temp_dir().join("neecoder_telemetry_test");
+        let tmp = std::env::temp_dir().join("neocoder_telemetry_test");
         let _ = fs::create_dir_all(&tmp);
 
         let collector = TelemetryCollector::new(&tmp);
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_telemetry_file_persistence() {
-        let tmp = std::env::temp_dir().join("neecoder_telemetry_persist_test");
+        let tmp = std::env::temp_dir().join("neocoder_telemetry_persist_test");
         let _ = fs::create_dir_all(&tmp);
 
         {

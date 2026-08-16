@@ -172,7 +172,7 @@ fn test_detect_language() {
 
 #[test]
 fn test_skill_manager_load_builtins() {
-    let tmp = std::env::temp_dir().join("neecoder_skill_test_1");
+    let tmp = std::env::temp_dir().join("neocoder_skill_test_1");
     let _ = std::fs::remove_dir_all(&tmp);
     let manager = SkillManager::new(tmp.clone(), None);
     let skills = manager.list();
@@ -190,7 +190,7 @@ fn test_skill_manager_load_builtins() {
 
 #[test]
 fn test_skill_manager_find() {
-    let tmp = std::env::temp_dir().join("neecoder_skill_test_2");
+    let tmp = std::env::temp_dir().join("neocoder_skill_test_2");
     let _ = std::fs::remove_dir_all(&tmp);
     let manager = SkillManager::new(tmp.clone(), None);
 
@@ -204,8 +204,8 @@ fn test_skill_manager_find() {
 
 #[test]
 fn test_skill_manager_project_override() {
-    let global_tmp = std::env::temp_dir().join("neecoder_skill_global");
-    let project_tmp = std::env::temp_dir().join("neecoder_skill_project");
+    let global_tmp = std::env::temp_dir().join("neocoder_skill_global");
+    let project_tmp = std::env::temp_dir().join("neocoder_skill_project");
     let _ = std::fs::remove_dir_all(&global_tmp);
     let _ = std::fs::remove_dir_all(&project_tmp);
 
@@ -232,7 +232,7 @@ Custom review template."#;
 
 #[test]
 fn test_skill_manager_reload() {
-    let tmp = std::env::temp_dir().join("neecoder_skill_reload");
+    let tmp = std::env::temp_dir().join("neocoder_skill_reload");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
 
@@ -261,7 +261,7 @@ Do custom thing."#;
 
 #[test]
 fn test_ensure_default_files() {
-    let tmp = std::env::temp_dir().join("neecoder_skill_ensure");
+    let tmp = std::env::temp_dir().join("neocoder_skill_ensure");
     let _ = std::fs::remove_dir_all(&tmp);
 
     let manager = SkillManager::new(tmp.clone(), None);

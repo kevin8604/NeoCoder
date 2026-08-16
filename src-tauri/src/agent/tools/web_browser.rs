@@ -334,7 +334,7 @@ async fn do_screenshot(name: Option<&str>) -> Result<String, String> {
             .decode(b64)
             .map_err(|e| format!("Screenshot base64 decode failed: {}", e))?
     };
-    let out_dir = std::env::temp_dir().join("neecoder_previews");
+    let out_dir = std::env::temp_dir().join("neocoder_previews");
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| format!("Cannot create preview dir: {}", e))?;
     let file_name = match name {
@@ -455,7 +455,7 @@ async fn do_screenshot_diff(reference: &str) -> Result<String, String> {
 
     let (ratio, diff_png) = pixel_diff_png(&reference_bytes, &current)?;
 
-    let out_dir = std::env::temp_dir().join("neecoder_previews");
+    let out_dir = std::env::temp_dir().join("neocoder_previews");
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| format!("Cannot create preview dir: {}", e))?;
     let out_path = out_dir.join(format!(

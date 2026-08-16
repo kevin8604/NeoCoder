@@ -40,7 +40,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_file_success() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_read");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_read");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("test.txt");
         std::fs::write(&test_file, "Hello, World!").unwrap();
@@ -72,7 +72,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_file_relative_path() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_read_rel");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_read_rel");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("relative.txt");
         std::fs::write(&test_file, "Relative path content").unwrap();
@@ -105,7 +105,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_file_new_file() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_write");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_write");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("new_file.txt");
 
@@ -129,7 +129,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_file_overwrite() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_write_overwrite");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_write_overwrite");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("overwrite.txt");
         std::fs::write(&test_file, "Old content").unwrap();
@@ -153,7 +153,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_file_create_parent_dirs() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_write_nested");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_write_nested");
         // 清理可能的残留（Windows 上 remove_dir_all 可能失败被忽略，导致文件已存在）
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -179,7 +179,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_file_empty_contents() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_write_empty");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_write_empty");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("empty.txt");
 
@@ -203,7 +203,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_file_relative_path() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_write_rel");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_write_rel");
         // 清理可能的残留（Windows 上 remove_dir_all 可能失败被忽略，导致文件已存在）
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -229,7 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_file_unicode_content() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_write_unicode");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_write_unicode");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("unicode.txt");
 
@@ -255,7 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edit_success() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_edit");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_edit");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("edit.txt");
         std::fs::write(&test_file, "Hello World\nSecond line\nThird line").unwrap();
@@ -280,7 +280,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edit_old_string_not_found() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_edit_notfound");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_edit_notfound");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("notfound.txt");
         std::fs::write(&test_file, "Hello World").unwrap();
@@ -306,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edit_multiple_occurrences() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_edit_multi");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_edit_multi");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("multi.txt");
         std::fs::write(&test_file, "foo\nbar\nfoo\nbaz").unwrap();
@@ -332,7 +332,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edit_with_context() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_edit_ctx");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_edit_ctx");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("context.txt");
         let original = "fn foo() {\n    let x = 1;\n}\n\nfn bar() {\n    let x = 1;\n}";
@@ -358,7 +358,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edit_empty_old_string() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_edit_empty");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_edit_empty");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("empty_old.txt");
         std::fs::write(&test_file, "Some content").unwrap();
@@ -393,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edit_whitespace_sensitive() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_edit_ws");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_edit_ws");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("whitespace.txt");
         // Note the indentation - two similar lines with different indentation
@@ -433,7 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coverage_uncovered_reads_cached_report() {
-        let dir = std::env::temp_dir().join("neecoder_cov_uncovered");
+        let dir = std::env::temp_dir().join("neocoder_cov_uncovered");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("target")).unwrap();
 
@@ -478,7 +478,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coverage_scan_reuses_cache_without_force() {
-        let dir = std::env::temp_dir().join("neecoder_cov_reuse");
+        let dir = std::env::temp_dir().join("neocoder_cov_reuse");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("target")).unwrap();
 
@@ -507,7 +507,7 @@ mod tests {
         assert!(result.contains("force:true"), "result: {}", result);
 
         // 无缓存 → 提示先 scan（uncovered 报错路径）
-        let empty = std::env::temp_dir().join("neecoder_cov_empty");
+        let empty = std::env::temp_dir().join("neocoder_cov_empty");
         let _ = std::fs::remove_dir_all(&empty);
         std::fs::create_dir_all(&empty).unwrap();
         let ctx_empty = create_test_context(Some(empty.to_str().unwrap()));
@@ -522,7 +522,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coverage_status_no_cache() {
-        let dir = std::env::temp_dir().join("neecoder_cov_status");
+        let dir = std::env::temp_dir().join("neocoder_cov_status");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -537,7 +537,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_then_read_roundtrip() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_roundtrip");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_roundtrip");
         // 清理可能的残留（Windows 上 remove_dir_all 可能失败被忽略，导致文件已存在）
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -574,7 +574,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_then_edit_chain() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_chain");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_chain");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("chain.txt");
 
@@ -609,7 +609,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_large_file_write() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_large");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_large");
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_file = temp_dir.join("large.txt");
 
@@ -638,7 +638,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_git_status_in_non_repo() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_git_norepo");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_git_norepo");
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let ctx = create_test_context(temp_dir.to_str());
@@ -650,7 +650,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_git_diff_in_non_repo() {
-        let temp_dir = std::env::temp_dir().join("neecoder_test_gitdiff_norepo");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_gitdiff_norepo");
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let ctx = create_test_context(temp_dir.to_str());

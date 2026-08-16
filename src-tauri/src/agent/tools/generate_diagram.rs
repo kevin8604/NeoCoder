@@ -21,7 +21,7 @@ impl Tool for GenerateDiagram {
         let filename = format!("diagram_{}.mmd", timestamp);
 
         // Write to temp directory so frontend can read and render it
-        let temp_dir = std::env::temp_dir().join("neecoder_diagrams");
+        let temp_dir = std::env::temp_dir().join("neocoder_diagrams");
         let _ = std::fs::create_dir_all(&temp_dir);
         let file_path = temp_dir.join(&filename);
 

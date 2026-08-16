@@ -1,4 +1,4 @@
-//! MCP Tool Bridge — wraps an MCP tool as a NeeCoder `Tool` implementation.
+//! MCP Tool Bridge — wraps an MCP tool as a NeoCoder `Tool` implementation.
 //!
 //! Each MCP tool from a connected server gets an `McpToolWrapper` that implements
 //! the `Tool` trait. The wrapper delegates `execute()` to the `McpRegistry`.
@@ -10,7 +10,7 @@ use super::client::McpRegistry;
 use super::McpToolDef;
 use crate::agent::tools::{PostExecuteAction, Tool, ToolContext};
 
-/// A single MCP tool wrapped as a NeeCoder Tool.
+/// A single MCP tool wrapped as a NeoCoder Tool.
 ///
 /// Created per discovered tool. The prefixed name (e.g., `mcp_filesystem__read_file`)
 /// uniquely identifies this tool across all connected MCP servers.

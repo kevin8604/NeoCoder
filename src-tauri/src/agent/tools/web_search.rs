@@ -39,7 +39,7 @@ async fn tavily_search(api_key: &str, query: &str, max_results: usize) -> String
         "include_raw_content": false,
     });
 
-    match utils::http_client(30, "NeeCoder/1.0") {
+    match utils::http_client(30, "NeoCoder/1.0") {
         Ok(client) => {
             match client.post(url).json(&body).send().await {
                 Ok(resp) => {

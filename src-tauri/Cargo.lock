@@ -2342,7 +2342,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neecoder-tauri"
+name = "neocoder-tauri"
 version = "0.1.0"
 dependencies = [
  "anyhow",

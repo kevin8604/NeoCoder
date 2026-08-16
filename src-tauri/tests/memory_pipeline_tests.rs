@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 fn temp_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("neecoder_memory_{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("neocoder_memory_{}", uuid::Uuid::new_v4()));
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
@@ -20,7 +20,7 @@ fn cleanup(dir: &PathBuf) {
 #[test]
 fn test_session_full_lifecycle() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
     // Create multiple sessions
     let s1 = manager.create_session().expect("create s1");
@@ -28,14 +28,14 @@ fn test_session_full_lifecycle() {
     assert_ne!(s1, s2, "session IDs should be unique");
 
     // Add messages to both
-    let user_msg = neecoder_tauri_lib::chat::ChatMessage {
-        role: neecoder_tauri_lib::chat::Role::User,
+    let user_msg = neocoder_tauri_lib::chat::ChatMessage {
+        role: neocoder_tauri_lib::chat::Role::User,
         content: "msg1".into(),
         tool_calls: None,
         images: None,
     };
-    let assistant_msg = neecoder_tauri_lib::chat::ChatMessage {
-        role: neecoder_tauri_lib::chat::Role::Assistant,
+    let assistant_msg = neocoder_tauri_lib::chat::ChatMessage {
+        role: neocoder_tauri_lib::chat::Role::Assistant,
         content: "reply1".into(),
         tool_calls: None,
         images: None,
@@ -69,13 +69,13 @@ fn test_session_full_lifecycle() {
 #[test]
 fn test_context_window_respects_token_budget() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
     let sid = manager.create_session().expect("create");
 
     // Add 50 messages (each ~20 chars ≈ 5 tokens)
     for i in 0..50 {
-        let msg = neecoder_tauri_lib::chat::ChatMessage {
-            role: neecoder_tauri_lib::chat::Role::Assistant,
+        let msg = neocoder_tauri_lib::chat::ChatMessage {
+            role: neocoder_tauri_lib::chat::Role::Assistant,
             content: format!("This is message number {:04} with some extra text.", i),
             tool_calls: None,
             images: None,
@@ -99,7 +99,7 @@ fn test_context_window_respects_token_budget() {
 #[test]
 fn test_long_term_append_and_recall() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
     // Start with clean long_term
     manager.write_long_term("# Memory\n\n").expect("write empty");
@@ -120,7 +120,7 @@ fn test_long_term_append_and_recall() {
 
 #[test]
 fn test_ebbinghaus_retention_decay_over_time() {
-    use neecoder_tauri_lib::memory::ebbinghaus::{MemoryEntry, MemoryCategory, compute_retention};
+    use neocoder_tauri_lib::memory::ebbinghaus::{MemoryEntry, MemoryCategory, compute_retention};
 
     let today = chrono::Utc::now().date_naive();
 
@@ -162,7 +162,7 @@ fn test_ebbinghaus_retention_decay_over_time() {
 
 #[test]
 fn test_ebbinghaus_should_archive() {
-    use neecoder_tauri_lib::memory::ebbinghaus::{MemoryEntry, MemoryCategory, should_archive};
+    use neocoder_tauri_lib::memory::ebbinghaus::{MemoryEntry, MemoryCategory, should_archive};
 
     let today = chrono::Utc::now().date_naive();
 
@@ -202,7 +202,7 @@ fn test_ebbinghaus_should_archive() {
 #[test]
 fn test_context_injection_with_data() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
     // Empty → empty or minimal
     let ctx0 = manager.inject_memory_context();
@@ -229,7 +229,7 @@ fn test_context_injection_with_data() {
 #[test]
 fn test_memory_search_finds_relevant() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
     // Populate with distinct topics
     manager.append_long_term("Rust", "- [Lesson] Rust has no null. Use Option<T> instead.").expect("append");
@@ -257,12 +257,12 @@ fn test_memory_search_finds_relevant() {
 #[test]
 fn test_session_store_with_expiry_config() {
     let dir = temp_dir();
-    let storage = neecoder_tauri_lib::memory::session_store::SessionStorage::new(&dir);
+    let storage = neocoder_tauri_lib::memory::session_store::SessionStorage::new(&dir);
 
     // Create a session
     storage.create_session("expiry-test", "Test").expect("create");
-    let msg = neecoder_tauri_lib::chat::ChatMessage {
-        role: neecoder_tauri_lib::chat::Role::User,
+    let msg = neocoder_tauri_lib::chat::ChatMessage {
+        role: neocoder_tauri_lib::chat::Role::User,
         content: "test".into(),
         tool_calls: None,
         images: None,
@@ -290,7 +290,7 @@ fn test_session_store_with_expiry_config() {
 #[test]
 fn test_memory_manager_never_panics_on_empty_state() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("nonexistent"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("nonexistent"));
 
     // All operations should gracefully handle empty/non-existent state
     assert!(manager.read_long_term().is_ok());

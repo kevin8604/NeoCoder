@@ -575,7 +575,7 @@ export default function Settings() {
             update("theme", e.target.value);
             const t = e.target.value === "Light" ? "light" : "dark";
             document.documentElement.setAttribute("data-theme", t);
-            localStorage.setItem("neecoder-theme", t);
+            localStorage.setItem("neocoder-theme", t);
           }}
         >
           <option value="Dark">Dark</option>

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 fn temp_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("neecoder_smoke_{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("neocoder_smoke_{}", uuid::Uuid::new_v4()));
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
@@ -20,7 +20,7 @@ fn cleanup(dir: &PathBuf) {
 #[test]
 fn smoke_memory_manager_create_and_list_sessions() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
     let id = manager.create_session().expect("should create session");
     assert!(!id.is_empty(), "session id should not be empty");
@@ -39,11 +39,11 @@ fn smoke_memory_manager_create_and_list_sessions() {
 #[test]
 fn smoke_memory_add_and_read_messages() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
     let id = manager.create_session().expect("create");
 
-    let msg = neecoder_tauri_lib::chat::ChatMessage {
-        role: neecoder_tauri_lib::chat::Role::User,
+    let msg = neocoder_tauri_lib::chat::ChatMessage {
+        role: neocoder_tauri_lib::chat::Role::User,
         content: "Hello, agent!".into(),
         tool_calls: None,
         images: None,
@@ -62,7 +62,7 @@ fn smoke_memory_add_and_read_messages() {
 #[test]
 fn smoke_memory_long_term_read_write() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
     manager.write_long_term("# Test Memory\n\n- [Lesson] Always smoke test").expect("write");
     let content = manager.read_long_term().expect("read");
@@ -75,7 +75,7 @@ fn smoke_memory_long_term_read_write() {
 #[test]
 fn smoke_memory_context_injection_not_panicking() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
     // Should not panic even with empty memory
     let ctx = manager.inject_memory_context();
@@ -94,7 +94,7 @@ fn smoke_memory_context_injection_not_panicking() {
 #[test]
 fn smoke_memory_search() {
     let dir = temp_dir();
-    let manager = neecoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
+    let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
     manager.append_long_term("Searchable", "- [Lesson] Rust memory management tips").expect("append");
 
@@ -111,7 +111,7 @@ fn smoke_memory_search() {
 
 #[test]
 fn smoke_loop_detector_default_config() {
-    use neecoder_tauri_lib::agent::loop_detector::{LoopDetector, LoopDetectionConfig, LoopVerdict};
+    use neocoder_tauri_lib::agent::loop_detector::{LoopDetector, LoopDetectionConfig, LoopVerdict};
 
     let mut detector = LoopDetector::new(LoopDetectionConfig::default());
     assert_eq!(detector.history_len(), 0);
@@ -128,7 +128,7 @@ fn smoke_loop_detector_default_config() {
 
 #[test]
 fn smoke_loop_detector_repeat_detection() {
-    use neecoder_tauri_lib::agent::loop_detector::{LoopDetector, LoopDetectionConfig, LoopVerdict};
+    use neocoder_tauri_lib::agent::loop_detector::{LoopDetector, LoopDetectionConfig, LoopVerdict};
 
     let mut detector = LoopDetector::new(LoopDetectionConfig::default());
 
@@ -147,7 +147,7 @@ fn smoke_loop_detector_repeat_detection() {
 
 #[test]
 fn smoke_loop_detector_disabled() {
-    use neecoder_tauri_lib::agent::loop_detector::{LoopDetector, LoopDetectionConfig, LoopVerdict};
+    use neocoder_tauri_lib::agent::loop_detector::{LoopDetector, LoopDetectionConfig, LoopVerdict};
 
     let mut detector = LoopDetector::new(LoopDetectionConfig {
         no_progress_threshold: 0,
@@ -168,13 +168,13 @@ fn smoke_loop_detector_disabled() {
 #[test]
 fn smoke_session_store_create_load_delete() {
     let dir = temp_dir();
-    let storage = neecoder_tauri_lib::memory::session_store::SessionStorage::new(&dir);
+    let storage = neocoder_tauri_lib::memory::session_store::SessionStorage::new(&dir);
 
     let id = "test-session-smoke";
     storage.create_session(id, "Smoke Test").expect("create");
 
-    let msg = neecoder_tauri_lib::chat::ChatMessage {
-        role: neecoder_tauri_lib::chat::Role::User,
+    let msg = neocoder_tauri_lib::chat::ChatMessage {
+        role: neocoder_tauri_lib::chat::Role::User,
         content: "smoke message".into(),
         tool_calls: None,
         images: None,
@@ -200,7 +200,7 @@ fn smoke_session_store_create_load_delete() {
 #[test]
 fn smoke_session_store_cleanup_expired_zero_days_noop() {
     let dir = temp_dir();
-    let storage = neecoder_tauri_lib::memory::session_store::SessionStorage::new(&dir);
+    let storage = neocoder_tauri_lib::memory::session_store::SessionStorage::new(&dir);
 
     storage.create_session("keep-me", "Test").expect("create");
     let deleted = storage.cleanup_expired_sessions(0).expect("cleanup");
@@ -213,7 +213,7 @@ fn smoke_session_store_cleanup_expired_zero_days_noop() {
 
 #[test]
 fn smoke_ebbinghaus_retention_compute() {
-    use neecoder_tauri_lib::memory::ebbinghaus::{MemoryEntry, MemoryCategory};
+    use neocoder_tauri_lib::memory::ebbinghaus::{MemoryEntry, MemoryCategory};
 
     let today = chrono::Utc::now().date_naive();
     let yesterday = today - chrono::Duration::days(1);
@@ -231,7 +231,7 @@ fn smoke_ebbinghaus_retention_compute() {
         session_id: None,
     };
 
-    let retention = neecoder_tauri_lib::memory::ebbinghaus::compute_retention(&entry, today);
+    let retention = neocoder_tauri_lib::memory::ebbinghaus::compute_retention(&entry, today);
     // After 1 day with S=2.0: R = e^(-1/2) ≈ 0.606
     assert!(retention > 0.5 && retention < 0.8,
         "retention should be ~0.606, got {}", retention);
@@ -239,7 +239,7 @@ fn smoke_ebbinghaus_retention_compute() {
 
 #[test]
 fn smoke_memory_category_detect_from_text() {
-    use neecoder_tauri_lib::memory::ebbinghaus::MemoryCategory;
+    use neocoder_tauri_lib::memory::ebbinghaus::MemoryCategory;
 
     assert_eq!(
         MemoryCategory::detect_from_text("- [Lesson] Don't use unwrap in prod"),
@@ -263,7 +263,7 @@ fn smoke_memory_category_detect_from_text() {
 
 #[test]
 fn smoke_config_default_values() {
-    let settings = neecoder_tauri_lib::config::AppSettings::default();
+    let settings = neocoder_tauri_lib::config::AppSettings::default();
 
     assert_eq!(settings.loop_no_progress_threshold, 3);
     assert_eq!(settings.loop_ping_pong_cycles, 2);
@@ -276,7 +276,7 @@ fn smoke_config_default_values() {
 
 #[test]
 fn smoke_execution_phase_transitions() {
-    use neecoder_tauri_lib::agent::ExecutionPhase;
+    use neocoder_tauri_lib::agent::ExecutionPhase;
 
     let planning = ExecutionPhase::Planning;
     let executing = ExecutionPhase::Executing;

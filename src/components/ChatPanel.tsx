@@ -1103,7 +1103,7 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
   const [budgetExhausted, setBudgetExhausted] = useState<{ summary: string; maxIterations: number } | null>(null);
 
   const getEffectiveProjectPath = useCallback(() => {
-    const editor = (window as any).__neecoder_editor;
+    const editor = (window as any).__neocoder_editor;
     return editor?.getProjectPath?.() || projectPath || "";
   }, [projectPath]);
 
@@ -1481,7 +1481,7 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
     // Fetch document symbols of the open file matching the current query.
     const loadMentionSymbols = useCallback((matchQuery: string) => {
       const requestId = ++symbolSearchRef.current;
-      const editor = (window as any).__neecoder_editor;
+      const editor = (window as any).__neocoder_editor;
       const filePath = editor?.getFilePath?.();
       if (!filePath || !matchQuery) return;
   
@@ -1842,7 +1842,7 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
       const skill = skills.find((s) => s.trigger === trigger);
       if (skill) {
         // Gather template variables from the editor
-        const editor = (window as any).__neecoder_editor;
+        const editor = (window as any).__neocoder_editor;
         const selection = editor?.getSelection?.() || "";
         const filePath = editor?.getFilePath?.() || "";
         const projectPathFromEditor = editor?.getProjectPath?.() || getEffectiveProjectPath();
@@ -2228,9 +2228,9 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
             <div className="chat-message-header">
               <span className="chat-message-role">
                 {msg.role === "user" ? "You"
-                  : msg.role === "thinking" ? "NeeCoder"
+                  : msg.role === "thinking" ? "NeoCoder"
                   : msg.role === "tool" ? "Agent"
-                  : "NeeCoder"}
+                  : "NeoCoder"}
               </span>
               <div className="chat-message-actions">
                 {msg.role === "user" && editingIndex !== i && (
@@ -2339,7 +2339,7 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
         {streaming && messages[messages.length - 1]?.role !== "assistant" && (
           <div className="chat-message assistant">
             <div className="chat-message-header">
-              <span className="chat-message-role">NeeCoder</span>
+              <span className="chat-message-role">NeoCoder</span>
             </div>
             <div className="chat-typing">
               <span className="typing-dot" />
@@ -2546,7 +2546,7 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
 
 function mockResponse(message: string, mode: string): string {
   if (message.toLowerCase().includes("hello") || message.toLowerCase().includes("hi")) {
-    return "Hello! I'm **NeeCoder**, your AI coding assistant. How can I help you today?";
+    return "Hello! I'm **NeoCoder**, your AI coding assistant. How can I help you today?";
   }
   if (message.toLowerCase().includes("explain")) {
     return `Here's an explanation of the code:
@@ -2609,7 +2609,7 @@ Here's my analysis in **${mode}** mode:
 
 \`\`\`typescript
 function example() {
-  console.log("Hello from NeeCoder!");
+  console.log("Hello from NeoCoder!");
 }
 \`\`\`
 

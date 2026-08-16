@@ -13,7 +13,7 @@ fn main() {
     {
         let manifest =
             std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"))
-                .join("neecoder_test.manifest");
+                .join("neocoder_test.manifest");
         std::fs::write(
             &manifest,
             r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

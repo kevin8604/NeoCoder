@@ -1,4 +1,4 @@
-//! NeeCoder 日志系统
+//! NeoCoder 日志系统
 //!
 //! 提供双输出日志（控制台 + 文件），支持自动轮转和分级过滤。
 //!
@@ -8,8 +8,8 @@
 //! - 控制台输出受 `RUST_LOG` 控制
 //!
 //! ## 日志文件
-//! - 路径: `{app_data}/logs/neecoder.log`
-//! - 轮转: 启动时归档当前日志为 `neecoder.log.{timestamp}`
+//! - 路径: `{app_data}/logs/neocoder.log`
+//! - 轮转: 启动时归档当前日志为 `neocoder.log.{timestamp}`
 //! - 保留: 最多保留 5 个历史日志文件
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 const MAX_LOG_FILES: usize = 5;
-const LOG_FILE_NAME: &str = "neecoder.log";
+const LOG_FILE_NAME: &str = "neocoder.log";
 
 /// 双输出日志器：同时写入控制台（stderr）和文件
 pub struct DualLogger {
@@ -75,7 +75,7 @@ impl DualLogger {
 
         // 用时间戳命名归档
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let archive_name = format!("neecoder.{}.log", timestamp);
+        let archive_name = format!("neocoder.{}.log", timestamp);
         let archive_path = log_dir.join(&archive_name);
         let _ = fs::rename(&current, &archive_path);
 
@@ -91,7 +91,7 @@ impl DualLogger {
             .flatten()
             .filter(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
-                name.starts_with("neecoder.") && name.ends_with(".log") && name != LOG_FILE_NAME
+                name.starts_with("neocoder.") && name.ends_with(".log") && name != LOG_FILE_NAME
             })
             .collect();
 
@@ -172,7 +172,7 @@ impl Log for DualLogger {
 ///
 /// 应在 `lib.rs` 的 `run()` 中、`tauri::Builder` 之前调用。
 ///
-/// - `app_data_dir`: 应用数据目录（如 `~/.config/neecoder`）
+/// - `app_data_dir`: 应用数据目录（如 `~/.config/neocoder`）
 pub fn init(app_data_dir: &Path) {
     let log_dir = app_data_dir.join("logs");
 
@@ -200,7 +200,7 @@ pub fn init(app_data_dir: &Path) {
 
     let log_path = log_dir.join(LOG_FILE_NAME);
     eprintln!(
-        "[NeeCoder] Logging initialized: console={}, file={} -> {}",
+        "[NeoCoder] Logging initialized: console={}, file={} -> {}",
         console_level,
         logger.file_level,
         log_path.display()

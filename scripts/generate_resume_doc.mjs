@@ -22,7 +22,7 @@ const doc = new Document({
         new Paragraph({ spacing: { before: 2400 } }),
         new Paragraph({
           alignment: AlignmentType.CENTER,
-          children: [new TextRun({ text: "NeeCoder 系统架构与模块详解", size: 48, bold: true, color: "1F4E79" })],
+          children: [new TextRun({ text: "NeoCoder 系统架构与模块详解", size: 48, bold: true, color: "1F4E79" })],
         }),
         new Paragraph({
           alignment: AlignmentType.CENTER,
@@ -46,7 +46,7 @@ const doc = new Document({
         // 第1章：项目概述
         // ═══════════════════════════════════════════
         h1("一、项目概述"),
-        p("NeeCoder 是一款基于 Tauri 2.0 + React 19 + Rust (Edition 2024) 构建的 AI 编程助手桌面应用。"
+        p("NeoCoder 是一款基于 Tauri 2.0 + React 19 + Rust (Edition 2024) 构建的 AI 编程助手桌面应用。"
           + "项目实现了三模式对话（Ask/Edit/Agent）、AI Agent 自主工具执行、智能代码补全、RAG 代码搜索、"
           + "LSP 深度集成、MCP 协议桥接等核心功能，涵盖 50+ Tauri Command 和 30+ 内置工具。"),
         p("核心技术指标："),
@@ -363,7 +363,7 @@ const doc = new Document({
         p("基于 Fill-in-the-Middle 范式 + 多候选策略的智能代码补全。"),
 
         h2("7.1 多候选补全"),
-        p("传统补全只生成一个结果。NeeCoder 通过不同 temperature 一次生成 3 个候选，"
+        p("传统补全只生成一个结果。NeoCoder 通过不同 temperature 一次生成 3 个候选，"
           + "用户用 Alt+] 切换。"),
 
         codeBlock(
@@ -628,5 +628,5 @@ function architectureHighlightTable(rows) { return createTable(rows[0], rows.sli
 
 // ── Generate ──
 const buffer = await Packer.toBuffer(doc);
-fs.writeFileSync("F:\\简历\\NeeCoder系统模块详解_面试手册.docx", buffer);
-console.log("✅ 文档已生成: F:\\简历\\NeeCoder系统模块详解_面试手册.docx");
+fs.writeFileSync("F:\\简历\\NeoCoder系统模块详解_面试手册.docx", buffer);
+console.log("✅ 文档已生成: F:\\简历\\NeoCoder系统模块详解_面试手册.docx");

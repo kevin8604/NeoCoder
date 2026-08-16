@@ -234,7 +234,7 @@ impl ConversationMemory {
 
 /// System prompt for Chat
 pub const CHAT_SYSTEM_PROMPT: &str = "You are an expert AI coding assistant integrated into a code editor. \
-Your name is NeeCoder. You help developers write, understand, debug, and refactor code.
+Your name is NeoCoder. You help developers write, understand, debug, and refactor code.
 
 Guidelines:
 1. Provide concise, accurate answers with code examples when relevant

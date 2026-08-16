@@ -20,7 +20,7 @@ impl Tool for WebFetch {
             return format!("Error: Sandbox blocked: {}", e);
         }
 
-        match utils::http_client(30, "Mozilla/5.0 (compatible; NeeCoder/1.0)") {
+        match utils::http_client(30, "Mozilla/5.0 (compatible; NeoCoder/1.0)") {
             Ok(cl) => match cl.get(url).send().await {
                 Ok(resp) => {
                     let status = resp.status();

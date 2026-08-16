@@ -244,9 +244,9 @@ pub fn spawn_pty(shell: &str, rows: u16, cols: u16) -> Result<PtyHandles, String
 /// 根据 shell 风味生成命令完成标记（echo 返回码），供持久会话检测命令结束
 pub fn completion_marker_cmd(flavor: &str) -> String {
     match flavor {
-        "cmd" => "echo __NEECODER_DONE_%NEECODER_MID%__%errorlevel%",
-        "powershell" => "echo __NEECODER_DONE_$env:NEECODER_MID__$LASTEXITCODE",
-        _ => "echo __NEECODER_DONE_$NEECODER_MID__$?",
+        "cmd" => "echo __NEOCODER_DONE_%NEOCODER_MID%__%errorlevel%",
+        "powershell" => "echo __NEOCODER_DONE_$env:NEOCODER_MID__$LASTEXITCODE",
+        _ => "echo __NEOCODER_DONE_$NEOCODER_MID__$?",
     }
     .to_string()
 }

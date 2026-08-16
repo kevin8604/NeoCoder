@@ -38,11 +38,11 @@ use std::collections::HashMap;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化日志系统（替换 env_logger）
-    let app_data_dir = directories::ProjectDirs::from("com", "neecoder", "NeeCoder")
+    let app_data_dir = directories::ProjectDirs::from("com", "neocoder", "NeoCoder")
         .map(|dirs| dirs.data_dir().to_path_buf())
         .unwrap_or_else(|| {
-            // Fallback: 使用当前目录下的 .neecoder
-            std::env::current_dir().unwrap_or_default().join(".neecoder")
+            // Fallback: 使用当前目录下的 .neocoder
+            std::env::current_dir().unwrap_or_default().join(".neocoder")
         });
     logging::init(&app_data_dir);
 
@@ -281,12 +281,12 @@ pub fn run() {
                         .active_workspace_id
                         .as_ref()
                         .and_then(|id| settings.workspaces.iter().find(|w| &w.id == id))
-                        .map(|w| std::path::Path::new(&w.path).join(".neecoder").join("skills"))
+                        .map(|w| std::path::Path::new(&w.path).join(".neocoder").join("skills"))
                         .or_else(|| {
                             settings
                                 .project_paths
                                 .first()
-                                .map(|p| std::path::Path::new(p).join(".neecoder").join("skills"))
+                                .map(|p| std::path::Path::new(p).join(".neocoder").join("skills"))
                         })
                 };
 
@@ -336,7 +336,7 @@ pub fn run() {
                 }
             });
 
-            log::info!("NeeCoder initialized successfully");
+            log::info!("NeoCoder initialized successfully");
 
             Ok(())
         })

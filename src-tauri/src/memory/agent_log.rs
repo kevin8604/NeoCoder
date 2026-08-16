@@ -1,4 +1,4 @@
-﻿//! Append-only JSONL agent log for session persistence and replay.
+//! Append-only JSONL agent log for session persistence and replay.
 //!
 //! Each agent session gets its own log file that records every significant event:
 //! user messages, assistant responses, tool calls/results, compaction summaries,
@@ -258,7 +258,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_append_and_replay() {
-        let tmp_dir = std::env::temp_dir().join("neecoder_test_agent_log");
+        let tmp_dir = std::env::temp_dir().join("neocoder_test_agent_log");
         let _ = tokio::fs::create_dir_all(&tmp_dir).await;
 
         let mut log = AgentLog::new(&tmp_dir, "test-session-1", "test-agent")

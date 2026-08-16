@@ -1,24 +1,24 @@
 [package]
-name = "neecoder-tauri"
+name = "neocoder-tauri"
 version = "0.1.0"
 edition = "2024"
-description = "NeeCoder - AI Coding Assistant"
-default-run = "neecoder-tauri"
+description = "NeoCoder - AI Coding Assistant"
+default-run = "neocoder-tauri"
 
 [package.metadata]
 tauri-dev-url = "http://localhost:1420"
 
 [lib]
-name = "neecoder_tauri_lib"
+name = "neocoder_tauri_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 path = "src/lib.rs"
 
 [[bin]]
-name = "neecoder-tauri"
+name = "neocoder-tauri"
 path = "src/main.rs"
 
 [[bin]]
-name = "neecoder-cli"
+name = "neocoder-cli"
 path = "src/bin/cli.rs"
 
 [dependencies]

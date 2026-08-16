@@ -1,4 +1,4 @@
-//! A2A Server — exposes NeeCoder as an A2A agent over HTTP + JSON-RPC 2.0.
+//! A2A Server — exposes NeoCoder as an A2A agent over HTTP + JSON-RPC 2.0.
 //!
 //! Routes:
 //! - `GET  /.well-known/agent.json` — Agent Card (skills from AgentRegistry)
@@ -182,7 +182,7 @@ pub fn start_server(
     let skills = agents_to_skills(&agents);
     let server_url = format!("http://127.0.0.1:{}/a2a", port);
     let state = Arc::new(A2aServerState::new(
-        "NeeCoder",
+        "NeoCoder",
         server_url,
         token,
         skills,
@@ -561,7 +561,7 @@ mod tests {
 
     fn new_test_state(executor: Arc<dyn TaskExecutor>, token: Option<String>) -> Arc<A2aServerState> {
         Arc::new(A2aServerState::new(
-            "NeeCoder",
+            "NeoCoder",
             "http://127.0.0.1:0/a2a",
             token,
             test_skills(),
@@ -605,7 +605,7 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let card: Value = resp.json().await.unwrap();
-        assert_eq!(card["name"], "NeeCoder");
+        assert_eq!(card["name"], "NeoCoder");
         assert!(card["capabilities"]["streaming"].as_bool().unwrap());
         let skills = card["skills"].as_array().unwrap();
         assert_eq!(skills.len(), default_agents().len());

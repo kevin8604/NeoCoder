@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(updated2.a2a_agents.len(), 1);
 
         // 3) ConfigManager 持久化读回
-        let dir = std::env::temp_dir().join("neecoder_a2a_cmd_test");
+        let dir = std::env::temp_dir().join("neocoder_a2a_cmd_test");
         let _ = std::fs::remove_dir_all(&dir);
         let manager = crate::config::ConfigManager::new(dir.clone());
         let persist = async {

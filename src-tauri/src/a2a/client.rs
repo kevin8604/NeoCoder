@@ -44,7 +44,7 @@ impl A2aClient {
         Self {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
-                .user_agent("NeeCoder-A2A/1.0")
+                .user_agent("NeoCoder-A2A/1.0")
                 .build()
                 .unwrap_or_default(),
             base_url: base_url.into().trim_end_matches('/').to_string(),

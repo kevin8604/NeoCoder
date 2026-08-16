@@ -366,7 +366,7 @@ impl A2aError {
     }
 }
 
-/// Build an Agent Card for this NeeCoder instance.
+/// Build an Agent Card for this NeoCoder instance.
 /// Skills are derived from the agent registry (one skill per agent).
 pub fn build_agent_card(
     name: &str,
@@ -376,7 +376,7 @@ pub fn build_agent_card(
 ) -> AgentCard {
     AgentCard {
         name: name.to_string(),
-        description: "NeeCoder AI coding assistant - A2A interoperable agent".to_string(),
+        description: "NeoCoder AI coding assistant - A2A interoperable agent".to_string(),
         url: url.to_string(),
         version: "1.0.0".to_string(),
         capabilities: AgentCapabilities {
@@ -711,7 +711,7 @@ mod tests {
     #[test]
     fn test_build_agent_card_and_summarize() {
         let card = build_agent_card(
-            "NeeCoder",
+            "NeoCoder",
             "http://127.0.0.1:41234/a2a",
             true,
             vec![Skill {
@@ -721,7 +721,7 @@ mod tests {
                 tags: vec![],
             }],
         );
-        assert_eq!(card.name, "NeeCoder");
+        assert_eq!(card.name, "NeoCoder");
         assert!(card.capabilities.streaming);
         assert_eq!(
             card.authentication.as_ref().unwrap().schemes,

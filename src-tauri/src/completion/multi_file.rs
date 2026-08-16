@@ -365,7 +365,7 @@ mod tests {
     #[tokio::test]
     async fn test_find_related_files() {
         // Create temp directory with test files
-        let temp_dir = std::env::temp_dir().join("neecoder_test_multi_file");
+        let temp_dir = std::env::temp_dir().join("neocoder_test_multi_file");
         let _ = std::fs::create_dir_all(&temp_dir);
 
         // Create test files

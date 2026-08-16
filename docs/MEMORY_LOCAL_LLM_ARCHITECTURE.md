@@ -1,4 +1,4 @@
-# NeeCoder 记忆系统 × 本地大模型融合架构设计
+# NeoCoder 记忆系统 × 本地大模型融合架构设计
 
 > 将三层记忆系统与本地大模型深度集成，构建"使用 → 记忆 → 微调 → 进化"的自闭环系统。
 
@@ -156,7 +156,7 @@ MemoryManager
 ┌─────────────────────────────────────────────────────────────┐
 │  Layer 1: 短期记忆 (Session Context)                         │
 │  ─────────────────────────────────────────────────────────  │
-│  存储: ~/.neecoder/memory/sessions/<uuid>/messages/*.md     │
+│  存储: ~/.neocoder/memory/sessions/<uuid>/messages/*.md     │
 │  内容: 原始用户/助手/工具对话消息                              │
 │  生命周期: 会话期间活跃，结束后归档                             │
 │  Token 预算: 48,000 tokens (滑动窗口)                        │
@@ -168,7 +168,7 @@ MemoryManager
 ┌─────────────────────────────────────────────────────────────┐
 │  Layer 2: 中期记忆 (Daily Notes)                             │
 │  ─────────────────────────────────────────────────────────  │
-│  存储: ~/.neecoder/memory/notes/YYYY-MM-DD.md               │
+│  存储: ~/.neocoder/memory/notes/YYYY-MM-DD.md               │
 │  内容: 每次会话的结构化摘要                                    │
 │  格式: - [HH:MM:SS] - [Goal]: xxx                           │
 │         - [HH:MM:SS] - [Decision]: xxx                      │
@@ -182,7 +182,7 @@ MemoryManager
 ┌─────────────────────────────────────────────────────────────┐
 │  Layer 3: 长期记忆 (Long-term Memory)                        │
 │  ─────────────────────────────────────────────────────────  │
-│  存储: ~/.neecoder/memory/MEMORY.md                         │
+│  存储: ~/.neocoder/memory/MEMORY.md                         │
 │  内容: 精炼的可复用知识 (Lesson + Decision)                  │
 │  格式: ## Learned Patterns                                   │
 │         - [Lesson] HashMap > Vec for parallel results        │
@@ -582,7 +582,7 @@ Step 5: 写入 dataset.jsonl
 | **改写** | 本地小模型改写 instruction | "为什么用 HashMap？" → "Vec 和 HashMap 哪个适合存并行结果？" |
 | **补充示例** | 让模型生成更多代码示例 | 为 lesson 生成 2-3 个不同的代码示例 |
 | **反向提问** | 生成反向问题 | "什么时候不该用 HashMap？" |
-| **上下文注入** | 注入项目特定上下文 | "在 NeeCoder 项目中..." |
+| **上下文注入** | 注入项目特定上下文 | "在 NeoCoder 项目中..." |
 
 ---
 
@@ -682,7 +682,7 @@ Step 5: 写入 dataset.jsonl
 ### 8.3 Adapter 版本管理
 
 ```
-~/.neecoder/lora/
+~/.neocoder/lora/
 ├── adapters/
 │   ├── 2026-06-20/
 │   │   ├── adapter.safetensors
@@ -824,7 +824,7 @@ impl Default for FineTuneConfig {
             learning_rate: 2e-4,
             max_seq_length: 2048,
             use_gpu: true,
-            output_dir: "~/.neecoder/lora".into(),
+            output_dir: "~/.neocoder/lora".into(),
         }
     }
 }
@@ -1184,7 +1184,7 @@ ChatPanel 新增:
 ## 附录 A: 文件系统结构
 
 ```
-~/.neecoder/
+~/.neocoder/
 ├── memory/
 │   ├── MEMORY.md                    # Layer 3: 长期记忆
 │   ├── notes/                       # Layer 2: 每日笔记
@@ -1221,7 +1221,7 @@ ChatPanel 新增:
 │   └── settings.json                # 配置 (含 local_model + fine_tune)
 │
 └── logs/
-    └── neecoder.log                 # 日志
+    └── neocoder.log                 # 日志
 ```
 
 ## 附录 B: 新增 Rust 模块结构

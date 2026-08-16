@@ -1,7 +1,7 @@
 //! MCP (Model Context Protocol) Client
 //!
 //! Implements a JSON-RPC 2.0 client that spawns MCP server processes (stdio transport)
-//! and bridges their tools into NeeCoder's agent tool system.
+//! and bridges their tools into NeoCoder's agent tool system.
 //!
 //! ## Architecture
 //!

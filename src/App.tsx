@@ -61,7 +61,7 @@ function App() {
 
   // Side panel width (persisted across sessions)
   const [panelWidth, setPanelWidth] = useState(() => {
-    const saved = localStorage.getItem("neecoder-panel-width");
+    const saved = localStorage.getItem("neocoder-panel-width");
     const n = saved ? parseInt(saved, 10) : 400;
     return Number.isFinite(n) && n >= 300 && n <= 700 ? n : 400;
   });
@@ -70,7 +70,7 @@ function App() {
 
   // Terminal panel height (persisted across sessions)
   const [terminalHeight, setTerminalHeight] = useState(() => {
-    const saved = localStorage.getItem("neecoder-terminal-height");
+    const saved = localStorage.getItem("neocoder-terminal-height");
     const n = saved ? parseInt(saved, 10) : 280;
     return Number.isFinite(n) && n >= 100 && n <= 600 ? n : 280;
   });
@@ -98,7 +98,7 @@ function App() {
         }
       } catch {
         // Browser mode: use stored preference or system preference
-        const stored = localStorage.getItem("neecoder-theme");
+        const stored = localStorage.getItem("neocoder-theme");
         if (stored === "light" || stored === "dark") {
           setTheme(stored);
           document.documentElement.setAttribute("data-theme", stored);
@@ -147,7 +147,7 @@ function App() {
     setTheme((prev) => {
       const next = prev === "dark" ? "light" : "dark";
       document.documentElement.setAttribute("data-theme", next);
-      localStorage.setItem("neecoder-theme", next);
+      localStorage.setItem("neocoder-theme", next);
       // Also save to backend
       try {
         import("@tauri-apps/api/core").then(({ invoke }) => {
@@ -176,7 +176,7 @@ function App() {
       setResizingPanel(false);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
-      localStorage.setItem("neecoder-panel-width", String(panelWidthRef.current));
+      localStorage.setItem("neocoder-panel-width", String(panelWidthRef.current));
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -197,7 +197,7 @@ function App() {
       setResizingTerminal(false);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
-      localStorage.setItem("neecoder-terminal-height", String(terminalHeightRef.current));
+      localStorage.setItem("neocoder-terminal-height", String(terminalHeightRef.current));
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -221,7 +221,7 @@ function App() {
 
     // Debounce: wait 400ms after last cursor movement before requesting
     completionTimerRef.current = setTimeout(async () => {
-      const editor = (window as any).__neecoder_editor;
+      const editor = (window as any).__neocoder_editor;
       if (!editor?.getContext) return;
 
       try {
@@ -293,7 +293,7 @@ function App() {
       }
     } catch {
       // Fallback for browser
-      const path = prompt("Enter project path:", projectPath || "d:\\workspace\\NeeCoder");
+      const path = prompt("Enter project path:", projectPath || "d:\\workspace\\NeoCoder");
       if (path) {
         setProjectPath(path);
         setOpenFiles([]);
@@ -403,7 +403,7 @@ function App() {
   // Accept completion: insert text into editor
   const handleAcceptCompletion = useCallback(() => {
     if (completionText) {
-      const editor = (window as any).__neecoder_editor;
+      const editor = (window as any).__neocoder_editor;
       if (editor?.insertCompletion) {
         editor.insertCompletion(completionText);
       }
@@ -417,7 +417,7 @@ function App() {
   // matching the classic Copilot-style "accept current line" behaviour.
   const handleAcceptCompletionLine = useCallback(() => {
     if (!completionText) return;
-    const editor = (window as any).__neecoder_editor;
+    const editor = (window as any).__neocoder_editor;
     const newlineIdx = completionText.indexOf("\n");
     const lineText = newlineIdx === -1 ? completionText : completionText.slice(0, newlineIdx + 1);
     if (editor?.insertCompletion) {
@@ -473,14 +473,14 @@ function App() {
   }, [showOutline, activeFile]);
 
   const handleGotoSymbol = useCallback((line: number) => {
-    const editor = (window as any).__neecoder_editor;
+    const editor = (window as any).__neocoder_editor;
     if (editor?.goToLine) {
       editor.goToLine(line);
     }
   }, []);
 
   const handleFind = useCallback(() => {
-    const editor = (window as any).__neecoder_editor;
+    const editor = (window as any).__neocoder_editor;
     if (editor?.openFind) {
       editor.openFind();
     }
@@ -734,7 +734,7 @@ function App() {
           <div className="editor-content">
             {!projectPath ? (
               <div className="welcome-screen">
-                <div className="welcome-logo">NeeCoder</div>
+                <div className="welcome-logo">NeoCoder</div>
                 <p className="welcome-subtitle">Your AI Coding Assistant</p>
                 <p className="welcome-desc">
                   Open a project to start coding with AI-powered assistance

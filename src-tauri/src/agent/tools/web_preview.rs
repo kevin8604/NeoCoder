@@ -82,7 +82,7 @@ impl Tool for WebPreview {
 
         // Output file in a temp dir (never pollutes the project)
         let stamp = chrono::Utc::now().timestamp_millis();
-        let out_dir = std::env::temp_dir().join("neecoder_previews");
+        let out_dir = std::env::temp_dir().join("neocoder_previews");
         if let Err(e) = std::fs::create_dir_all(&out_dir) {
             return format!("[ERROR] Cannot create preview dir {}: {}", out_dir.display(), e);
         }

@@ -1,19 +1,19 @@
-//! NeeCoder CLI - Command-line interface for AI-assisted coding
+//! NeoCoder CLI - Command-line interface for AI-assisted coding
 //!
 //! Usage:
-//!   neecoder-cli                    # Start interactive REPL
-//!   neecoder-cli --help             # Show help
-//!   neecoder-cli --model gpt-4o     # Specify model
-//!   neecoder-cli --provider openai  # Specify provider
+//!   neocoder-cli                    # Start interactive REPL
+//!   neocoder-cli --help             # Show help
+//!   neocoder-cli --model gpt-4o     # Specify model
+//!   neocoder-cli --provider openai  # Specify provider
 
 use clap::Parser;
-use neecoder_tauri_lib::config::LlmProvider;
-use neecoder_tauri_lib::llm::{ChatMessage, ChatRequestParams, stream_chat};
+use neocoder_tauri_lib::config::LlmProvider;
+use neocoder_tauri_lib::llm::{ChatMessage, ChatRequestParams, stream_chat};
 use std::io::{self, Write};
 
 #[derive(Parser)]
-#[command(name = "neecoder-cli")]
-#[command(about = "NeeCoder AI Coding Assistant - CLI Mode")]
+#[command(name = "neocoder-cli")]
+#[command(about = "NeoCoder AI Coding Assistant - CLI Mode")]
 #[command(version)]
 struct Cli {
     /// LLM provider (openai, deepseek, anthropic, ollama)
@@ -24,7 +24,7 @@ struct Cli {
     #[arg(short, long, default_value = "gpt-4o")]
     model: String,
 
-    /// API key (or set via environment variable NEECODER_API_KEY)
+    /// API key (or set via environment variable NEOCODER_API_KEY)
     #[arg(short, long)]
     api_key: Option<String>,
 
@@ -56,17 +56,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Validate API key
-    let api_key = cli.api_key.or_else(|| std::env::var("NEECODER_API_KEY").ok()).unwrap_or_else(|| {
-        eprintln!("Error: API key is required. Set via --api-key or NEECODER_API_KEY env var.");
+    let api_key = cli.api_key.or_else(|| std::env::var("NEOCODER_API_KEY").ok()).unwrap_or_else(|| {
+        eprintln!("Error: API key is required. Set via --api-key or NEOCODER_API_KEY env var.");
         std::process::exit(1);
     });
 
     let provider = parse_provider(&cli.provider);
     let system_prompt = cli.system.unwrap_or_else(|| {
-        "You are NeeCoder, an AI coding assistant. Help users with programming tasks.".to_string()
+        "You are NeoCoder, an AI coding assistant. Help users with programming tasks.".to_string()
     });
 
-    println!("NeeCoder CLI v0.1.0");
+    println!("NeoCoder CLI v0.1.0");
     println!("Provider: {}, Model: {}", cli.provider, cli.model);
     println!("Type 'exit' or 'quit' to leave, 'help' for commands.\n");
 
