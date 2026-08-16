@@ -56,7 +56,10 @@ fn build_progress_prompt(middle: &[llm::ChatMessage]) -> String {
             _ => "System",
         };
         let content_preview = if msg.content.len() > 1500 {
-            format!("{}...", crate::agent::utils::safe_truncate(&msg.content, 1500))
+            format!(
+                "{}...",
+                crate::agent::utils::safe_truncate(&msg.content, 1500)
+            )
         } else {
             msg.content.clone()
         };
@@ -100,7 +103,7 @@ pub async fn summarize_task_progress_if_needed(
     max_context_tokens: usize,
     provider: &LlmProvider,
     api_key: &str,
-    base_url: Option<&str>,
+    _base_url: Option<&str>,
     model: &str,
     local: &LocalModelConfig,
 ) -> SummarizeOutcome {
@@ -127,7 +130,9 @@ pub async fn summarize_task_progress_if_needed(
 
     log::info!(
         "[TaskSummarizer] Triggered: {} tokens >= threshold {} (budget {})",
-        total_tokens, threshold, max_context_tokens
+        total_tokens,
+        threshold,
+        max_context_tokens
     );
 
     // Locate boundaries: keep first user message (task description) + recent tail.
@@ -145,15 +150,17 @@ pub async fn summarize_task_progress_if_needed(
                 // Walk back until we find the assistant that owns this chain,
                 // then keep everything from there on.
                 let mut start = boundary;
-                while start > middle_start && (messages[start].role == "tool"
-                    || (messages[start].role == "assistant" && messages[start].tool_calls.is_some()))
+                while start > middle_start
+                    && (messages[start].role == "tool"
+                        || (messages[start].role == "assistant"
+                            && messages[start].tool_calls.is_some()))
                 {
                     start -= 1;
                 }
                 boundary = start;
                 break;
             }
-            break;
+            boundary -= 1;
         }
         boundary
     } else {
@@ -208,11 +215,13 @@ pub async fn summarize_task_progress_if_needed(
     .await
     {
         Ok((llm::LlmResponse::Text(text), _usage)) => text,
-        Ok((llm::LlmResponse::ToolCalls { content, .. }, _usage)) => {
-            content.unwrap_or_default()
-        }
+        Ok((llm::LlmResponse::ToolCalls { content, .. }, _usage)) => content.unwrap_or_default(),
         Err(e) => {
-            log::warn!("[TaskSummarizer] LLM call failed ({:?}): {}", route.provider, e);
+            log::warn!(
+                "[TaskSummarizer] LLM call failed ({:?}): {}",
+                route.provider,
+                e
+            );
             return unchanged; // Never degrade destructively
         }
     };
@@ -243,7 +252,8 @@ pub async fn summarize_task_progress_if_needed(
     let removed = middle_messages.len();
     log::info!(
         "[TaskSummarizer] Replaced {} middle messages with task-progress summary ({} chars)",
-        removed, summary.len()
+        removed,
+        summary.len()
     );
 
     SummarizeOutcome {
@@ -293,7 +303,12 @@ mod tests {
     #[test]
     fn test_too_few_messages_skips() {
         let messages: Vec<llm::ChatMessage> = (0..5)
-            .map(|i| make_msg(if i % 2 == 0 { "user" } else { "assistant" }, &format!("m{}", i)))
+            .map(|i| {
+                make_msg(
+                    if i % 2 == 0 { "user" } else { "assistant" },
+                    &format!("m{}", i),
+                )
+            })
             .collect();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let outcome = rt.block_on(summarize_task_progress_if_needed(
@@ -351,12 +366,19 @@ mod tests {
             &make_local(),
         ));
         assert!(!outcome.performed);
-        assert_eq!(outcome.messages.len(), messages.len(), "Messages must be untouched on failure");
+        assert_eq!(
+            outcome.messages.len(),
+            messages.len(),
+            "Messages must be untouched on failure"
+        );
     }
 
     #[test]
     fn test_build_progress_prompt_contains_roles() {
-        let middle = vec![make_msg("assistant", "Edited src/lib.rs"), make_msg("tool", "ok")];
+        let middle = vec![
+            make_msg("assistant", "Edited src/lib.rs"),
+            make_msg("tool", "ok"),
+        ];
         let prompt = build_progress_prompt(&middle);
         assert!(prompt.contains("[Assistant]"));
         assert!(prompt.contains("Edited src/lib.rs"));

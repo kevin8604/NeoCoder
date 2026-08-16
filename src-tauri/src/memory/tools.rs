@@ -23,14 +23,12 @@ pub struct MemoryWrite;
 
 impl MemoryWrite {
     pub fn execute(args: serde_json::Value, manager: &MemoryManager) -> String {
-        let content = args.get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let action = args.get("action")
+        let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let action = args
+            .get("action")
             .and_then(|v| v.as_str())
             .unwrap_or("overwrite");
-        let section = args.get("section")
-            .and_then(|v| v.as_str());
+        let section = args.get("section").and_then(|v| v.as_str());
 
         if content.is_empty() {
             return "Error: content is required".to_string();
@@ -44,12 +42,10 @@ impl MemoryWrite {
                     Err(e) => format!("Error writing to memory: {}", e),
                 }
             }
-            _ => {
-                match manager.write_long_term(content) {
-                    Ok(()) => "MEMORY.md updated successfully.".to_string(),
-                    Err(e) => format!("Error writing to memory: {}", e),
-                }
-            }
+            _ => match manager.write_long_term(content) {
+                Ok(()) => "MEMORY.md updated successfully.".to_string(),
+                Err(e) => format!("Error writing to memory: {}", e),
+            },
         }
     }
 }
@@ -59,10 +55,9 @@ pub struct MemorySearch;
 
 impl MemorySearch {
     pub fn execute(args: serde_json::Value, manager: &MemoryManager) -> String {
-        let query = args.get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let max_results = args.get("max_results")
+        let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+        let max_results = args
+            .get("max_results")
             .and_then(|v| v.as_u64())
             .unwrap_or(5) as usize;
 
@@ -79,7 +74,11 @@ impl MemorySearch {
                     for (i, r) in results.iter().enumerate() {
                         output.push_str(&format!(
                             "{}. [{}:{}] (score: {:.1})\n   {}\n\n",
-                            i + 1, r.file_path, r.line_number, r.relevance, r.line_content.trim()
+                            i + 1,
+                            r.file_path,
+                            r.line_number,
+                            r.relevance,
+                            r.line_content.trim()
                         ));
                     }
                     output

@@ -11,7 +11,7 @@
 //! ```
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use super::{Tool, ToolContext};
 
@@ -21,7 +21,10 @@ pub struct AutoFix;
 fn build_auto_fix_prompt(command: &str, error: &str, file_snippet: Option<&str>) -> String {
     let file_section = match file_snippet {
         Some(snippet) if !snippet.is_empty() => {
-            format!("\nRelevant file content (truncated):\n```\n{}\n```\n", snippet)
+            format!(
+                "\nRelevant file content (truncated):\n```\n{}\n```\n",
+                snippet
+            )
         }
         _ => String::new(),
     };
@@ -75,28 +78,28 @@ fn extract_json_block(text: &str) -> Option<String> {
 /// Parse the LLM plan into a struct; falls back to a pass-through plan.
 fn parse_auto_fix(text: &str) -> AutoFixPlan {
     let block = extract_json_block(text);
-    if let Some(block) = block {
-        if let Ok(v) = serde_json::from_str::<Value>(&block) {
-            let root_cause = v["root_cause"].as_str().unwrap_or("").trim().to_string();
-            let retry_command = v["retry_command"].as_str().unwrap_or("").trim().to_string();
-            let fix_steps: Vec<String> = v["fix_steps"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|s| s.as_str())
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect()
-                })
-                .unwrap_or_default();
-            if !root_cause.is_empty() || !fix_steps.is_empty() {
-                return AutoFixPlan {
-                    root_cause,
-                    fix_steps,
-                    retry_command,
-                    raw: text.trim().to_string(),
-                };
-            }
+    if let Some(block) = block
+        && let Ok(v) = serde_json::from_str::<Value>(&block)
+    {
+        let root_cause = v["root_cause"].as_str().unwrap_or("").trim().to_string();
+        let retry_command = v["retry_command"].as_str().unwrap_or("").trim().to_string();
+        let fix_steps: Vec<String> = v["fix_steps"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| s.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !root_cause.is_empty() || !fix_steps.is_empty() {
+            return AutoFixPlan {
+                root_cause,
+                fix_steps,
+                retry_command,
+                raw: text.trim().to_string(),
+            };
         }
     }
     // Unstructured fallback: the whole answer is the analysis
@@ -217,15 +220,13 @@ impl Tool for AutoFix {
         .await
         {
             Ok((crate::llm::LlmResponse::Text(text), _)) => text,
-            Ok(_) => {
-                return "Error: LLM returned a non-text response during diagnosis".to_string()
-            }
+            Ok(_) => return "Error: LLM returned a non-text response during diagnosis".to_string(),
             Err(e) => {
                 return format!(
                     "Error: LLM call failed ({}). The command failed with:\n```\n{}\n```\n\
                      Re-run it after inspecting the output above.",
                     e, error_cut
-                )
+                );
             }
         };
 
@@ -235,7 +236,11 @@ impl Tool for AutoFix {
             command,
             plan.root_cause.chars().take(60).collect::<String>(),
             plan.fix_steps.len(),
-            if plan.retry_command.is_empty() { "none" } else { "yes" }
+            if plan.retry_command.is_empty() {
+                "none"
+            } else {
+                "yes"
+            }
         );
         plan.render()
     }

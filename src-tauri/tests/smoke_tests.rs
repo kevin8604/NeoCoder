@@ -27,11 +27,19 @@ fn smoke_memory_manager_create_and_list_sessions() {
     assert!(id.len() > 10, "session id should be UUID-length");
 
     let sessions = manager.get_all_sessions().expect("should list sessions");
-    assert!(sessions.iter().any(|s| s.id == id), "created session should appear in list");
+    assert!(
+        sessions.iter().any(|s| s.id == id),
+        "created session should appear in list"
+    );
 
     manager.delete_session(&id).expect("should delete session");
-    let after = manager.get_all_sessions().expect("should list after delete");
-    assert!(!after.iter().any(|s| s.id == id), "deleted session should be gone");
+    let after = manager
+        .get_all_sessions()
+        .expect("should list after delete");
+    assert!(
+        !after.iter().any(|s| s.id == id),
+        "deleted session should be gone"
+    );
 
     cleanup(&dir);
 }
@@ -52,9 +60,14 @@ fn smoke_memory_add_and_read_messages() {
     manager.add_message(&id, msg).expect("should add message");
 
     // Read back
-    let window = manager.get_context_window(&id, 100_000).expect("should read");
+    let window = manager
+        .get_context_window(&id, 100_000)
+        .expect("should read");
     assert!(!window.is_empty(), "should have messages");
-    assert!(window.iter().any(|m| m.content.contains("Hello")), "should find our message");
+    assert!(
+        window.iter().any(|m| m.content.contains("Hello")),
+        "should find our message"
+    );
 
     cleanup(&dir);
 }
@@ -64,7 +77,9 @@ fn smoke_memory_long_term_read_write() {
     let dir = temp_dir();
     let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
-    manager.write_long_term("# Test Memory\n\n- [Lesson] Always smoke test").expect("write");
+    manager
+        .write_long_term("# Test Memory\n\n- [Lesson] Always smoke test")
+        .expect("write");
     let content = manager.read_long_term().expect("read");
     assert!(content.contains("[Lesson]"), "should contain lesson");
     assert!(content.contains("smoke test"), "should contain content");
@@ -79,11 +94,16 @@ fn smoke_memory_context_injection_not_panicking() {
 
     // Should not panic even with empty memory
     let ctx = manager.inject_memory_context();
-    assert!(ctx.is_empty() || ctx.contains("Memory") || ctx.contains("Notes"),
-        "context should be empty or contain headers, got: {:?}", ctx.chars().take(100).collect::<String>());
+    assert!(
+        ctx.is_empty() || ctx.contains("Memory") || ctx.contains("Notes"),
+        "context should be empty or contain headers, got: {:?}",
+        ctx.chars().take(100).collect::<String>()
+    );
 
     // Add some memory and verify injection picks it up
-    manager.append_long_term("Test", "- [Lesson] Smoke test lesson").expect("append");
+    manager
+        .append_long_term("Test", "- [Lesson] Smoke test lesson")
+        .expect("append");
 
     let ctx2 = manager.inject_memory_context();
     assert!(!ctx2.is_empty(), "should have content after adding memory");
@@ -96,12 +116,16 @@ fn smoke_memory_search() {
     let dir = temp_dir();
     let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
-    manager.append_long_term("Searchable", "- [Lesson] Rust memory management tips").expect("append");
+    manager
+        .append_long_term("Searchable", "- [Lesson] Rust memory management tips")
+        .expect("append");
 
     let results = manager.search_memory("Rust", 10).expect("search");
     assert!(!results.is_empty(), "should find Rust-related memory");
 
-    let no_results = manager.search_memory("xyzzy_nonexistent_12345", 10).expect("search");
+    let no_results = manager
+        .search_memory("xyzzy_nonexistent_12345", 10)
+        .expect("search");
     assert!(no_results.is_empty(), "should not find nonsense query");
 
     cleanup(&dir);
@@ -111,7 +135,9 @@ fn smoke_memory_search() {
 
 #[test]
 fn smoke_loop_detector_default_config() {
-    use neocoder_tauri_lib::agent::loop_detector::{LoopDetector, LoopDetectionConfig, LoopVerdict};
+    use neocoder_tauri_lib::agent::loop_detector::{
+        LoopDetectionConfig, LoopDetector, LoopVerdict,
+    };
 
     let mut detector = LoopDetector::new(LoopDetectionConfig::default());
     assert_eq!(detector.history_len(), 0);
@@ -128,7 +154,9 @@ fn smoke_loop_detector_default_config() {
 
 #[test]
 fn smoke_loop_detector_repeat_detection() {
-    use neocoder_tauri_lib::agent::loop_detector::{LoopDetector, LoopDetectionConfig, LoopVerdict};
+    use neocoder_tauri_lib::agent::loop_detector::{
+        LoopDetectionConfig, LoopDetector, LoopVerdict,
+    };
 
     let mut detector = LoopDetector::new(LoopDetectionConfig::default());
 
@@ -147,7 +175,9 @@ fn smoke_loop_detector_repeat_detection() {
 
 #[test]
 fn smoke_loop_detector_disabled() {
-    use neocoder_tauri_lib::agent::loop_detector::{LoopDetector, LoopDetectionConfig, LoopVerdict};
+    use neocoder_tauri_lib::agent::loop_detector::{
+        LoopDetectionConfig, LoopDetector, LoopVerdict,
+    };
 
     let mut detector = LoopDetector::new(LoopDetectionConfig {
         no_progress_threshold: 0,
@@ -183,7 +213,11 @@ fn smoke_session_store_create_load_delete() {
 
     let loaded = storage.load_messages(id).expect("load");
     assert_eq!(loaded.len(), 1);
-    assert!(loaded[0].content.contains("smoke message"), "expected content to contain 'smoke message', got: {:?}", loaded[0].content);
+    assert!(
+        loaded[0].content.contains("smoke message"),
+        "expected content to contain 'smoke message', got: {:?}",
+        loaded[0].content
+    );
 
     // Load with token window
     let window = storage.load_context_window(id, 10).expect("context window");
@@ -213,7 +247,7 @@ fn smoke_session_store_cleanup_expired_zero_days_noop() {
 
 #[test]
 fn smoke_ebbinghaus_retention_compute() {
-    use neocoder_tauri_lib::memory::ebbinghaus::{MemoryEntry, MemoryCategory};
+    use neocoder_tauri_lib::memory::ebbinghaus::{MemoryCategory, MemoryEntry};
 
     let today = chrono::Utc::now().date_naive();
     let yesterday = today - chrono::Duration::days(1);
@@ -233,8 +267,11 @@ fn smoke_ebbinghaus_retention_compute() {
 
     let retention = neocoder_tauri_lib::memory::ebbinghaus::compute_retention(&entry, today);
     // After 1 day with S=2.0: R = e^(-1/2) ≈ 0.606
-    assert!(retention > 0.5 && retention < 0.8,
-        "retention should be ~0.606, got {}", retention);
+    assert!(
+        retention > 0.5 && retention < 0.8,
+        "retention should be ~0.606, got {}",
+        retention
+    );
 }
 
 #[test]

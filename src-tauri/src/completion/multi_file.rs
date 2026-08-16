@@ -27,8 +27,8 @@ pub struct RelatedFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolSignature {
     pub name: String,
-    pub kind: String,       // "function", "class", "trait", "struct", "interface", "type"
-    pub signature: String,  // The actual signature line(s)
+    pub kind: String, // "function", "class", "trait", "struct", "interface", "type"
+    pub signature: String, // The actual signature line(s)
 }
 
 // ── Collection ────────────────────────────────────────────────────────────
@@ -93,8 +93,14 @@ pub async fn collect_related_context(
 /// referencing (function calls, types, variables) at the completion point.
 pub fn extract_identifiers(prefix: &str, max: usize) -> Vec<String> {
     // Take only the last ~600 chars — identifiers far back are stale.
-    let tail: String = prefix.chars().rev().take(600).collect::<Vec<_>>()
-        .into_iter().rev().collect();
+    let tail: String = prefix
+        .chars()
+        .rev()
+        .take(600)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for token in tail.split(|c: char| !c.is_alphanumeric() && c != '_') {
@@ -122,13 +128,63 @@ pub fn extract_identifiers(prefix: &str, max: usize) -> Vec<String> {
 /// Common language keywords that carry no search signal.
 fn is_language_keyword(t: &str) -> bool {
     const KEYWORDS: &[&str] = &[
-        "fn", "pub", "use", "mod", "let", "mut", "impl", "struct", "enum",
-        "trait", "match", "if", "else", "for", "while", "loop", "return",
-        "async", "await", "const", "static", "type", "self", "super", "crate",
-        "function", "class", "const", "var", "let", "new", "this", "import",
-        "from", "export", "default", "def", "return", "None", "True", "False",
-        "and", "or", "not", "in", "is", "with", "as", "try", "except",
-        "func", "package", "interface", "select", "go", "defer", "chan",
+        "fn",
+        "pub",
+        "use",
+        "mod",
+        "let",
+        "mut",
+        "impl",
+        "struct",
+        "enum",
+        "trait",
+        "match",
+        "if",
+        "else",
+        "for",
+        "while",
+        "loop",
+        "return",
+        "async",
+        "await",
+        "const",
+        "static",
+        "type",
+        "self",
+        "super",
+        "crate",
+        "function",
+        "class",
+        "const",
+        "var",
+        "let",
+        "new",
+        "this",
+        "import",
+        "from",
+        "export",
+        "default",
+        "def",
+        "return",
+        "None",
+        "True",
+        "False",
+        "and",
+        "or",
+        "not",
+        "in",
+        "is",
+        "with",
+        "as",
+        "try",
+        "except",
+        "func",
+        "package",
+        "interface",
+        "select",
+        "go",
+        "defer",
+        "chan",
     ];
     KEYWORDS.contains(&t)
 }
@@ -165,7 +221,9 @@ pub async fn collect_rag_context(
         let chunk = &r.chunk;
         match by_file.get(&chunk.file_path) {
             Some((best, _)) if *best >= r.score => continue,
-            _ => { by_file.insert(chunk.file_path.clone(), (r.score, chunk)); }
+            _ => {
+                by_file.insert(chunk.file_path.clone(), (r.score, chunk));
+            }
         }
     }
 
@@ -231,15 +289,16 @@ fn find_related_files(dir: &Path, ext: &str, exclude_name: &str, max_files: usiz
         }
 
         // Skip hidden files and test files
-        if file_name.starts_with('.') || file_name.contains("_test") || file_name.contains(".test.") {
+        if file_name.starts_with('.') || file_name.contains("_test") || file_name.contains(".test.")
+        {
             continue;
         }
 
         // Skip very large files (> 100KB)
-        if let Ok(meta) = path.metadata() {
-            if meta.len() > 100 * 1024 {
-                continue;
-            }
+        if let Ok(meta) = path.metadata()
+            && meta.len() > 100 * 1024
+        {
+            continue;
         }
 
         if seen.insert(path.clone()) {
@@ -296,7 +355,10 @@ async fn extract_symbols(file_path: &Path, max_symbols: usize) -> Vec<SymbolSign
             ("type", r"(?m)^type\s+(\w+)\s+interface"),
         ],
         "java" | "kt" => &[
-            ("function", r"(?m)^\s*public\s+(?:static\s+)?(?:\w+\s+)?(?:<\w+>\s+)?(\w+)\s*\("),
+            (
+                "function",
+                r"(?m)^\s*public\s+(?:static\s+)?(?:\w+\s+)?(?:<\w+>\s+)?(\w+)\s*\(",
+            ),
             ("class", r"(?m)^(?:public\s+)?(?:abstract\s+)?class\s+(\w+)"),
             ("interface", r"(?m)^(?:public\s+)?interface\s+(\w+)"),
         ],
@@ -329,14 +391,16 @@ async fn extract_symbols(file_path: &Path, max_symbols: usize) -> Vec<SymbolSign
 
                     // Extract the full signature line
                     let full_match = cap.get(0).map(|m| m.as_str()).unwrap_or("");
-                    let line_start = content[..full_match.as_ptr() as usize - content.as_ptr() as usize]
+                    let line_start = content
+                        [..full_match.as_ptr() as usize - content.as_ptr() as usize]
                         .rfind('\n')
                         .map(|i| i + 1)
                         .unwrap_or(0);
 
                     // Find the end of the signature (next { or end of line for type aliases)
-                    let sig_end = content[full_match.as_ptr() as usize - content.as_ptr() as usize..]
-                        .find(|c: char| c == '{' || c == ';')
+                    let sig_end = content
+                        [full_match.as_ptr() as usize - content.as_ptr() as usize..]
+                        .find(['{', ';'])
                         .map(|i| full_match.as_ptr() as usize - content.as_ptr() as usize + i)
                         .unwrap_or(content.len());
 
@@ -436,8 +500,12 @@ fn private_fn() {}
 
     #[test]
     fn test_extract_identifiers_empty_and_keywords() {
-        assert!(extract_identifiers("fn main() { let mut x = 1; }", 10).is_empty()
-            || !extract_identifiers("fn main() { let mut x = 1; }", 10).iter().any(|i| i == "fn"));
+        assert!(
+            extract_identifiers("fn main() { let mut x = 1; }", 10).is_empty()
+                || !extract_identifiers("fn main() { let mut x = 1; }", 10)
+                    .iter()
+                    .any(|i| i == "fn")
+        );
         assert!(extract_identifiers("if for while return", 10).is_empty());
         assert!(extract_identifiers("123 456", 10).is_empty());
         assert!(extract_identifiers("", 10).is_empty());

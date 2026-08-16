@@ -4,11 +4,13 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 use tokio::sync::RwLock;
 
-use crate::agent::cloud::{CloudTask, CloudTaskManager, CloudTaskStatus, PrConfig, TaskId, create_github_pr};
 use crate::agent::AgentInstance;
+use crate::agent::cloud::{
+    CloudTask, CloudTaskManager, CloudTaskStatus, PrConfig, TaskId, create_github_pr,
+};
 use crate::chat::ConversationMemory;
-use crate::config::{AppSettings, LlmProvider};
 use crate::commands::chat::ChatState;
+use crate::config::{AppSettings, LlmProvider};
 
 /// Parameters for starting a cloud agent task.
 #[derive(serde::Deserialize)]
@@ -46,7 +48,9 @@ fn spawn_task_execution(
     memory_context: String,
 ) {
     tokio::spawn(async move {
-        task_manager.update_status(&task_id, CloudTaskStatus::Running).await;
+        task_manager
+            .update_status(&task_id, CloudTaskStatus::Running)
+            .await;
 
         // Build AgentInstance
         let agent_def = agent_id.as_deref().and_then(|id| {
@@ -95,19 +99,25 @@ fn spawn_task_execution(
                     }
                 }
 
-                let _ = app.emit("cloud-agent-event", serde_json::json!({
-                    "type": "completed",
-                    "task_id": task_id,
-                    "result": final_text,
-                }));
+                let _ = app.emit(
+                    "cloud-agent-event",
+                    serde_json::json!({
+                        "type": "completed",
+                        "task_id": task_id,
+                        "result": final_text,
+                    }),
+                );
             }
             Err(e) => {
                 task_manager.fail(&task_id, e.clone()).await;
-                let _ = app.emit("cloud-agent-event", serde_json::json!({
-                    "type": "failed",
-                    "task_id": task_id,
-                    "error": e,
-                }));
+                let _ = app.emit(
+                    "cloud-agent-event",
+                    serde_json::json!({
+                        "type": "failed",
+                        "task_id": task_id,
+                        "error": e,
+                    }),
+                );
             }
         }
 
@@ -115,15 +125,18 @@ fn spawn_task_execution(
         {
             let mem = memory_arc.write().await;
             let status = task_manager.get(&task_id).await;
-            if let Some(task) = status {
-                if let Some(ref result_text) = task.result {
-                    mem.add_message(&session_id, crate::chat::ChatMessage {
+            if let Some(task) = status
+                && let Some(ref result_text) = task.result
+            {
+                mem.add_message(
+                    &session_id,
+                    crate::chat::ChatMessage {
                         role: crate::chat::Role::Assistant,
                         content: format!("[Cloud Agent Result]\n\n{}", result_text),
                         images: None,
                         tool_calls: None,
-                    });
-                }
+                    },
+                );
             }
         }
     });
@@ -138,7 +151,14 @@ pub async fn start_cloud_agent(
     settings: State<'_, Arc<RwLock<AppSettings>>>,
     chat_state: State<'_, ChatState>,
 ) -> Result<TaskId, String> {
-    let task_id = format!("cloud-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("task"));
+    let task_id = format!(
+        "cloud-{}",
+        uuid::Uuid::new_v4()
+            .to_string()
+            .split('-')
+            .next()
+            .unwrap_or("task")
+    );
 
     let settings = settings.read().await;
     let provider = settings.llm_provider.clone();
@@ -206,7 +226,10 @@ pub async fn resume_cloud_task(
         .get(&task_id)
         .await
         .ok_or_else(|| format!("Task '{}' not found", task_id))?;
-    if !matches!(task.status, CloudTaskStatus::Interrupted | CloudTaskStatus::Failed(_)) {
+    if !matches!(
+        task.status,
+        CloudTaskStatus::Interrupted | CloudTaskStatus::Failed(_)
+    ) {
         return Err(format!(
             "Task '{}' is not resumable (status: {})",
             task_id,
@@ -270,6 +293,8 @@ pub async fn cancel_cloud_task(
     task_id: String,
     task_manager: State<'_, CloudTaskState>,
 ) -> Result<(), String> {
-    task_manager.update_status(&task_id, CloudTaskStatus::Cancelled).await;
+    task_manager
+        .update_status(&task_id, CloudTaskStatus::Cancelled)
+        .await;
     Ok(())
 }

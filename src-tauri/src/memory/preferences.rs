@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::fs;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Tracks user editing patterns and preferences for context injection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,17 +69,21 @@ impl UserPreferences {
 
     /// Record a tool usage event.
     pub fn record_tool_usage(&mut self, tool_name: &str, success: bool, duration_ms: u64) {
-        let stats = self.tool_stats.entry(tool_name.to_string()).or_insert(ToolStats {
-            total_calls: 0,
-            success_count: 0,
-            avg_duration_ms: 0,
-        });
+        let stats = self
+            .tool_stats
+            .entry(tool_name.to_string())
+            .or_insert(ToolStats {
+                total_calls: 0,
+                success_count: 0,
+                avg_duration_ms: 0,
+            });
         stats.total_calls += 1;
         if success {
             stats.success_count += 1;
         }
         // Rolling average
-        stats.avg_duration_ms = (stats.avg_duration_ms * (stats.total_calls as u64 - 1) + duration_ms)
+        stats.avg_duration_ms = (stats.avg_duration_ms * (stats.total_calls as u64 - 1)
+            + duration_ms)
             / stats.total_calls as u64;
         self.last_updated = chrono::Utc::now().to_rfc3339();
     }
@@ -105,7 +109,11 @@ impl UserPreferences {
     /// Record a task pattern (e.g., "refactored module", "added test", "fixed bug").
     pub fn record_task_pattern(&mut self, pattern: &str) {
         let now = chrono::Utc::now().to_rfc3339();
-        if let Some(existing) = self.task_patterns.iter_mut().find(|p| p.description == pattern) {
+        if let Some(existing) = self
+            .task_patterns
+            .iter_mut()
+            .find(|p| p.description == pattern)
+        {
             existing.frequency += 1;
             existing.last_seen = now.clone();
         } else {
@@ -125,7 +133,9 @@ impl UserPreferences {
         // Top file types
         let mut file_types: Vec<_> = self.file_type_counts.iter().collect();
         file_types.sort_by(|a, b| b.1.cmp(a.1));
-        let top_types: Vec<String> = file_types.iter().take(5)
+        let top_types: Vec<String> = file_types
+            .iter()
+            .take(5)
             .map(|(ext, count)| format!(".{} ({} files)", ext, count))
             .collect();
         if !top_types.is_empty() {
@@ -134,19 +144,28 @@ impl UserPreferences {
 
         // Preferred languages
         if !self.preferred_languages.is_empty() {
-            parts.push(format!("Preferred languages: {}", self.preferred_languages.join(", ")));
+            parts.push(format!(
+                "Preferred languages: {}",
+                self.preferred_languages.join(", ")
+            ));
         }
 
         // Most used tools (by success rate)
-        let mut tools: Vec<_> = self.tool_stats.iter()
+        let mut tools: Vec<_> = self
+            .tool_stats
+            .iter()
             .filter(|(_, s)| s.total_calls >= 3)
             .collect();
         tools.sort_by(|a, b| {
             let rate_a = a.1.success_count as f64 / a.1.total_calls as f64;
             let rate_b = b.1.success_count as f64 / b.1.total_calls as f64;
-            rate_b.partial_cmp(&rate_a).unwrap_or(std::cmp::Ordering::Equal)
+            rate_b
+                .partial_cmp(&rate_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
-        let top_tools: Vec<String> = tools.iter().take(5)
+        let top_tools: Vec<String> = tools
+            .iter()
+            .take(5)
             .map(|(name, stats)| {
                 let rate = (stats.success_count as f64 / stats.total_calls as f64 * 100.0) as u32;
                 format!("{} ({}% success, {} calls)", name, rate, stats.total_calls)
@@ -158,8 +177,10 @@ impl UserPreferences {
 
         // Task patterns
         let mut patterns = self.task_patterns.clone();
-        patterns.sort_by(|a, b| b.frequency.cmp(&a.frequency));
-        let top_patterns: Vec<String> = patterns.iter().take(3)
+        patterns.sort_by_key(|p| std::cmp::Reverse(p.frequency));
+        let top_patterns: Vec<String> = patterns
+            .iter()
+            .take(3)
             .map(|p| format!("{} ({}x)", p.description, p.frequency))
             .collect();
         if !top_patterns.is_empty() {

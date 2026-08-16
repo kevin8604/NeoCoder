@@ -1,38 +1,43 @@
+pub mod a2a;
 pub mod agent;
-pub mod config;
-pub mod completion;
 pub mod chat;
-pub mod rag;
-pub mod lsp;
+pub mod commands;
+pub mod completion;
+pub mod config;
+pub mod event_bus;
+pub mod fs_service;
 pub mod fs_watcher;
 pub mod llm;
-pub mod memory;
-pub mod commands;
 pub mod logging;
-pub mod skill;
-pub mod sandbox;
+pub mod lsp;
 pub mod mcp;
+pub mod memory;
+pub mod rag;
+pub mod sandbox;
+pub mod skill;
 pub mod telemetry;
-pub mod fs_service;
 pub mod terminal;
-pub mod event_bus;
-pub mod a2a;
+
+// Pure-logic tests executed under Miri (UB sanitizer) — compiled only when
+// running with a nightly toolchain and `cargo miri`.
+#[cfg(miri)]
+mod miri_safe_tests;
 
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
-use commands::pty::PtyState;
-use lsp::LspManager;
-use rag::CodeIndexer;
-use fs_watcher::FileWatcher;
-use agent::QuestionAwaiters;
 use agent::ConfirmAwaiters;
 use agent::PlanApprovalAwaiters;
+use agent::QuestionAwaiters;
 use agent::ToolRegistry;
 use agent::definition::AgentRegistry;
+use commands::pty::PtyState;
+use fs_watcher::FileWatcher;
+use lsp::LspManager;
 use mcp::client::McpRegistry;
+use rag::CodeIndexer;
 use std::collections::HashMap;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -42,7 +47,9 @@ pub fn run() {
         .map(|dirs| dirs.data_dir().to_path_buf())
         .unwrap_or_else(|| {
             // Fallback: 使用当前目录下的 .neocoder
-            std::env::current_dir().unwrap_or_default().join(".neocoder")
+            std::env::current_dir()
+                .unwrap_or_default()
+                .join(".neocoder")
         });
     logging::init(&app_data_dir);
 
@@ -66,8 +73,12 @@ pub fn run() {
             app.manage::<Arc<RwLock<config::AppSettings>>>(settings_handle);
 
             app.manage(commands::chat::ChatState {
-                memory: Arc::new(RwLock::new(chat::ConversationMemory::with_storage(sessions_dir))),
-                plan_mode_sessions: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+                memory: Arc::new(RwLock::new(chat::ConversationMemory::with_storage(
+                    sessions_dir,
+                ))),
+                plan_mode_sessions: Arc::new(std::sync::Mutex::new(
+                    std::collections::HashSet::new(),
+                )),
             });
 
             // Initialize completion cache (LRU, max 200 entries)
@@ -76,10 +87,14 @@ pub fn run() {
             ));
 
             // Initialize completion cancel map
-            app.manage::<commands::completion::CancelMap>(Arc::new(std::sync::Mutex::new(HashMap::new())));
+            app.manage::<commands::completion::CancelMap>(Arc::new(std::sync::Mutex::new(
+                HashMap::new(),
+            )));
 
             // Initialize completion candidates store
-            app.manage::<commands::completion::CompletionCandidates>(Arc::new(std::sync::Mutex::new(HashMap::new())));
+            app.manage::<commands::completion::CompletionCandidates>(Arc::new(
+                std::sync::Mutex::new(HashMap::new()),
+            ));
 
             // Initialize edit-intent tracker (recently edited files → completion signal)
             app.manage::<Arc<completion::edit_intent::EditIntentTracker>>(Arc::new(
@@ -87,7 +102,9 @@ pub fn run() {
             ));
 
             // Initialize Agent cancel map
-            app.manage::<commands::chat::AgentCancelMap>(Arc::new(std::sync::Mutex::new(HashMap::new())));
+            app.manage::<commands::chat::AgentCancelMap>(Arc::new(std::sync::Mutex::new(
+                HashMap::new(),
+            )));
 
             // Initialize Agent pause control (session-scoped flag + notify)
             app.manage::<agent::PauseControl>(std::sync::Mutex::new(HashMap::new()));
@@ -96,10 +113,14 @@ pub fn run() {
             app.manage::<agent::checkpoint::CheckpointStore>(agent::checkpoint::new_store());
 
             // Initialize FileSnapshotStore for file undo mechanism
-            app.manage::<commands::chat::FileSnapshotStore>(Arc::new(std::sync::Mutex::new(HashMap::new())));
+            app.manage::<commands::chat::FileSnapshotStore>(Arc::new(std::sync::Mutex::new(
+                HashMap::new(),
+            )));
 
             // Initialize EditDiff snapshots
-            app.manage::<commands::project::FileSnapshots>(Arc::new(std::sync::Mutex::new(HashMap::new())));
+            app.manage::<commands::project::FileSnapshots>(Arc::new(std::sync::Mutex::new(
+                HashMap::new(),
+            )));
 
             // Initialize LSP manager
             app.manage::<Arc<LspManager>>(Arc::new(LspManager::new()));
@@ -149,14 +170,17 @@ pub fn run() {
 
             // Initialize MCP Registry (initially empty, populated by background task)
             let mcp_registry = Arc::new(McpRegistry::new());
-            let mcp_tools: Arc<std::sync::Mutex<Vec<agent::ToolDefinition>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mcp_tools: Arc<std::sync::Mutex<Vec<agent::ToolDefinition>>> =
+                Arc::new(std::sync::Mutex::new(Vec::new()));
             app.manage::<Arc<McpRegistry>>(mcp_registry.clone());
             app.manage::<Arc<std::sync::Mutex<Vec<agent::ToolDefinition>>>>(mcp_tools.clone());
 
             // Initialize Cloud Agent task manager (persisted to disk so tasks
             // survive restarts; interrupted tasks can be resumed)
             let cloud_task_storage = config_path.join("cloud_tasks.json");
-            let cloud_task_manager = Arc::new(agent::cloud::CloudTaskManager::with_storage(cloud_task_storage));
+            let cloud_task_manager = Arc::new(agent::cloud::CloudTaskManager::with_storage(
+                cloud_task_storage,
+            ));
             app.manage::<commands::cloud::CloudTaskState>(cloud_task_manager);
 
             // Initialize PTY (terminal) state
@@ -216,7 +240,9 @@ pub fn run() {
                 for server_config in servers {
                     let name = server_config.name.clone();
                     match mcp_registry_bg.connect(server_config).await {
-                        Ok(count) => log::info!("[MCP] Connected to '{}', {} tools discovered", name, count),
+                        Ok(count) => {
+                            log::info!("[MCP] Connected to '{}', {} tools discovered", name, count)
+                        }
                         Err(e) => log::warn!("[MCP] Failed to connect to '{}': {}", name, e),
                     }
                 }
@@ -244,12 +270,15 @@ pub fn run() {
             });
 
             // Initialize file watcher
-            app.manage::<Arc<std::sync::Mutex<FileWatcher>>>(Arc::new(std::sync::Mutex::new(FileWatcher::new())));
+            app.manage::<Arc<std::sync::Mutex<FileWatcher>>>(Arc::new(std::sync::Mutex::new(
+                FileWatcher::new(),
+            )));
 
             // Auto-start watching the active workspace (or most recent project)
             {
                 let watch_target = {
-                    let settings = app.state::<Arc<RwLock<config::AppSettings>>>()
+                    let settings = app
+                        .state::<Arc<RwLock<config::AppSettings>>>()
                         .inner()
                         .blocking_read();
                     settings
@@ -261,7 +290,10 @@ pub fn run() {
                 };
                 if let Some(ref path) = watch_target {
                     let watcher_state = app.state::<Arc<std::sync::Mutex<FileWatcher>>>();
-                    let mut w = watcher_state.inner().lock().unwrap_or_else(|e| e.into_inner());
+                    let mut w = watcher_state
+                        .inner()
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
                     if let Err(e) = w.start_watch(std::path::Path::new(path), true) {
                         log::warn!("[FsWatcher] Failed to auto-watch '{}': {}", path, e);
                     } else {
@@ -274,14 +306,19 @@ pub fn run() {
             {
                 let global_skills_dir = config_path.join("skills");
                 let project_skills_dir = {
-                    let settings = app.state::<Arc<RwLock<config::AppSettings>>>()
+                    let settings = app
+                        .state::<Arc<RwLock<config::AppSettings>>>()
                         .inner()
                         .blocking_read();
                     settings
                         .active_workspace_id
                         .as_ref()
                         .and_then(|id| settings.workspaces.iter().find(|w| &w.id == id))
-                        .map(|w| std::path::Path::new(&w.path).join(".neocoder").join("skills"))
+                        .map(|w| {
+                            std::path::Path::new(&w.path)
+                                .join(".neocoder")
+                                .join("skills")
+                        })
                         .or_else(|| {
                             settings
                                 .project_paths
@@ -299,10 +336,19 @@ pub fn run() {
             }
 
             // Spawn background auto-reindex loop
-            let watcher_for_reindex = app.state::<Arc<std::sync::Mutex<FileWatcher>>>().inner().clone();
+            let watcher_for_reindex = app
+                .state::<Arc<std::sync::Mutex<FileWatcher>>>()
+                .inner()
+                .clone();
             let indexer_for_reindex = app.state::<Arc<CodeIndexer>>().inner().clone();
-            let edit_intent_bg = app.state::<Arc<completion::edit_intent::EditIntentTracker>>().inner().clone();
-            let settings_for_reindex = app.state::<Arc<RwLock<config::AppSettings>>>().inner().clone();
+            let edit_intent_bg = app
+                .state::<Arc<completion::edit_intent::EditIntentTracker>>()
+                .inner()
+                .clone();
+            let settings_for_reindex = app
+                .state::<Arc<RwLock<config::AppSettings>>>()
+                .inner()
+                .clone();
             let config_path_clone = config_path.clone();
             tauri::async_runtime::spawn(async move {
                 loop {
@@ -316,10 +362,17 @@ pub fn run() {
                     let mut index_changed = false;
                     for event in events {
                         // Record edit-intent for modified files (completion signal)
-                        if matches!(event.kind, fs_watcher::FileChangeKind::Modified | fs_watcher::FileChangeKind::Created) {
+                        if matches!(
+                            event.kind,
+                            fs_watcher::FileChangeKind::Modified
+                                | fs_watcher::FileChangeKind::Created
+                        ) {
                             edit_intent_bg.record_edit(&event.path.to_string_lossy());
                         }
-                        if indexer_for_reindex.handle_file_change(&event.path, event.kind).await {
+                        if indexer_for_reindex
+                            .handle_file_change(&event.path, event.kind)
+                            .await
+                        {
                             index_changed = true;
                         }
                     }
@@ -464,6 +517,9 @@ fn workspace_index_db_path(settings: &config::AppSettings, config_dir: &std::pat
     {
         Some(ws) if !ws.index_db_path.is_empty() => ws.index_db_path.clone(),
         Some(ws) => ws.index_db_path_for(config_dir),
-        None => config_dir.join("code_index.db").to_string_lossy().to_string(),
+        None => config_dir
+            .join("code_index.db")
+            .to_string_lossy()
+            .to_string(),
     }
 }

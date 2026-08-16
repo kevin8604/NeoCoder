@@ -31,6 +31,10 @@ Thumbs.db
 target188/
 *_out.txt
 
+# ── cargo-audit local advisory database clone ──
+src-tauri/.audit-db/
+src-tauri/.audit-db*.lock
+
 # ── Misc ──
 searxng/
 TEST_REPORT.md

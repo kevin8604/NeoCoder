@@ -1,6 +1,6 @@
-use crate::agent::utils::resolve_path;
-use crate::agent::utils::SKIP_DIRS;
 use super::{Tool, ToolContext};
+use crate::agent::utils::SKIP_DIRS;
+use crate::agent::utils::resolve_path;
 
 pub struct ListDirectory;
 
@@ -14,10 +14,15 @@ impl Tool for ListDirectory {
         let raw = args["path"].as_str().unwrap_or(".");
         let path = resolve_path(ctx.project_path.as_deref(), raw);
         let recursive = args["recursive"].as_bool().unwrap_or(false);
-        let max_depth = args["max_depth"].as_u64().unwrap_or(if recursive { 3 } else { 1 }) as usize;
+        let max_depth = args["max_depth"]
+            .as_u64()
+            .unwrap_or(if recursive { 3 } else { 1 }) as usize;
         let filter = args["filter"].as_str().unwrap_or("").to_lowercase();
 
-        if let Err(e) = ctx.sandbox.check_path(&path, ctx.project_path.as_deref(), false) {
+        if let Err(e) = ctx
+            .sandbox
+            .check_path(&path, ctx.project_path.as_deref(), false)
+        {
             return format!("Error: Sandbox blocked: {}", e);
         }
 
@@ -28,18 +33,31 @@ impl Tool for ListDirectory {
         let mut total_size = 0u64;
 
         list_dir_recursive(
-            &path, 0, max_depth, &filter, &skip_set,
-            &mut output, &mut file_count, &mut dir_count, &mut total_size,
+            &path,
+            0,
+            max_depth,
+            &filter,
+            &skip_set,
+            &mut output,
+            &mut file_count,
+            &mut dir_count,
+            &mut total_size,
         );
 
         if output.is_empty() {
-            return format!("Directory {} is empty or all entries filtered out", path.display());
+            return format!(
+                "Directory {} is empty or all entries filtered out",
+                path.display()
+            );
         }
 
         let size_str = format_size(total_size);
         let header = format!(
             "Directory listing for {} ({} files, {} dirs, {} total):\n",
-            path.display(), file_count, dir_count, size_str
+            path.display(),
+            file_count,
+            dir_count,
+            size_str
         );
         format!("{}{}", header, output)
     }
@@ -80,11 +98,18 @@ fn list_dir_recursive(
             continue;
         }
 
-        if !filter.is_empty() && !name.to_lowercase().contains(&*filter) {
+        if !filter.is_empty() && !name.to_lowercase().contains(filter) {
             if is_dir && depth + 1 < max_depth {
                 list_dir_recursive(
-                    &entry.path(), depth + 1, max_depth, filter, skip_set,
-                    output, file_count, dir_count, total_size,
+                    &entry.path(),
+                    depth + 1,
+                    max_depth,
+                    filter,
+                    skip_set,
+                    output,
+                    file_count,
+                    dir_count,
+                    total_size,
                 );
             }
             continue;
@@ -94,14 +119,26 @@ fn list_dir_recursive(
             *dir_count += 1;
             output.push_str(&format!("{}\u{1f4c1} {}/\n", indent, name));
             list_dir_recursive(
-                &entry.path(), depth + 1, max_depth, filter, skip_set,
-                output, file_count, dir_count, total_size,
+                &entry.path(),
+                depth + 1,
+                max_depth,
+                filter,
+                skip_set,
+                output,
+                file_count,
+                dir_count,
+                total_size,
             );
         } else {
             *file_count += 1;
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
             *total_size += size;
-            output.push_str(&format!("{}\u{1f4c4} {} ({})\n", indent, name, format_size(size)));
+            output.push_str(&format!(
+                "{}\u{1f4c4} {} ({})\n",
+                indent,
+                name,
+                format_size(size)
+            ));
         }
     }
 }

@@ -1,9 +1,10 @@
-use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 /// Shared checkpoint store, keyed by session_id.
 /// Managed as Tauri state for cross-command access.
-pub type CheckpointStore = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<Checkpoint>>>>;
+pub type CheckpointStore =
+    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<Checkpoint>>>>;
 
 /// Create a new empty CheckpointStore.
 pub fn new_store() -> CheckpointStore {
@@ -36,59 +37,68 @@ impl CheckpointManager {
     }
 
     /// Create a checkpoint by staging modified files and creating a git commit.
-    pub async fn create(&self, iteration: u32, files: Vec<String>, description: String) -> Result<Checkpoint, String> {
+    pub async fn create(
+        &self,
+        iteration: u32,
+        files: Vec<String>,
+        description: String,
+    ) -> Result<Checkpoint, String> {
         let timestamp = chrono::Utc::now().timestamp();
         let mut commit_hash: Option<String> = None;
 
-        if let Some(ref work_dir) = self.project_path {
-            if !files.is_empty() && Self::is_git_repo(work_dir).await {
-                // Stage modified files
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
+        if let Some(ref work_dir) = self.project_path
+            && !files.is_empty()
+            && Self::is_git_repo(work_dir).await
+        {
+            // Stage modified files
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                tokio::process::Command::new("git")
+                    .arg("add")
+                    .args(&files)
+                    .current_dir(work_dir)
+                    .output(),
+            )
+            .await;
+
+            // Create commit
+            let commit_msg = format!("checkpoint: iteration {} - {}", iteration, description);
+            let commit_output = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                tokio::process::Command::new("git")
+                    .arg("commit")
+                    .arg("-m")
+                    .arg(&commit_msg)
+                    .arg("--allow-empty")
+                    .current_dir(work_dir)
+                    .output(),
+            )
+            .await;
+
+            if let Ok(Ok(out)) = commit_output
+                && out.status.success()
+            {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                commit_hash = extract_commit_hash(&stdout);
+            }
+
+            // Get full hash if we got a short one
+            if let Some(ref short) = commit_hash {
+                let rev_output = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
                     tokio::process::Command::new("git")
-                        .arg("add")
-                        .args(&files)
+                        .arg("rev-parse")
+                        .arg(short)
                         .current_dir(work_dir)
                         .output(),
-                ).await;
-
-                // Create commit
-                let commit_msg = format!("checkpoint: iteration {} - {}", iteration, description);
-                let commit_output = tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    tokio::process::Command::new("git")
-                        .arg("commit")
-                        .arg("-m")
-                        .arg(&commit_msg)
-                        .arg("--allow-empty")
-                        .current_dir(work_dir)
-                        .output(),
-                ).await;
-
-                if let Ok(Ok(out)) = commit_output {
-                    if out.status.success() {
-                        let stdout = String::from_utf8_lossy(&out.stdout);
-                        commit_hash = extract_commit_hash(&stdout);
-                    }
-                }
-
-                // Get full hash if we got a short one
-                if let Some(ref short) = commit_hash {
-                    let rev_output = tokio::time::timeout(
-                        std::time::Duration::from_secs(5),
-                        tokio::process::Command::new("git")
-                            .arg("rev-parse")
-                            .arg(short)
-                            .current_dir(work_dir)
-                            .output(),
-                    ).await;
-                    if let Ok(Ok(out)) = rev_output {
-                        if out.status.success() {
-                            let hash = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                            if !hash.is_empty() {
-                                commit_hash = Some(hash);
-                            }
-                        }
+                )
+                .await;
+                if let Ok(Ok(out)) = rev_output
+                    && out.status.success()
+                {
+                    let hash = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !hash.is_empty() {
+                        commit_hash = Some(hash);
                     }
                 }
             }
@@ -109,14 +119,11 @@ impl CheckpointManager {
 
     /// Restore files to a previous checkpoint state.
     pub async fn restore(&self, checkpoint: &Checkpoint) -> Result<(), String> {
-        let work_dir = self.project_path.as_ref()
-            .ok_or("No project path set")?;
+        let work_dir = self.project_path.as_ref().ok_or("No project path set")?;
 
         if let Some(ref hash) = checkpoint.commit_hash {
             // Use git to restore files from the checkpoint commit
-            let files_args: Vec<&str> = checkpoint.files.iter()
-                .map(|s| s.as_str())
-                .collect();
+            let files_args: Vec<&str> = checkpoint.files.iter().map(|s| s.as_str()).collect();
 
             let output = tokio::time::timeout(
                 std::time::Duration::from_secs(15),
@@ -127,7 +134,8 @@ impl CheckpointManager {
                     .args(&files_args)
                     .current_dir(work_dir)
                     .output(),
-            ).await;
+            )
+            .await;
 
             match output {
                 Ok(Ok(out)) => {
@@ -168,7 +176,8 @@ impl CheckpointManager {
                 .arg("--is-inside-work-tree")
                 .current_dir(work_dir)
                 .output(),
-        ).await;
+        )
+        .await;
 
         matches!(output, Ok(Ok(out)) if out.status.success())
     }
@@ -177,13 +186,13 @@ impl CheckpointManager {
 /// Extract the short commit hash from git commit output.
 fn extract_commit_hash(output: &str) -> Option<String> {
     for line in output.lines() {
-        if line.starts_with('[') {
-            if let Some(close) = line.find(']') {
-                let inner = &line[1..close];
-                let parts: Vec<&str> = inner.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    return Some(parts[1].to_string());
-                }
+        if line.starts_with('[')
+            && let Some(close) = line.find(']')
+        {
+            let inner = &line[1..close];
+            let parts: Vec<&str> = inner.split_whitespace().collect();
+            if parts.len() >= 2 {
+                return Some(parts[1].to_string());
             }
         }
     }
@@ -207,7 +216,7 @@ mod tests {
 
         {
             let mut s = store.lock().unwrap();
-            s.entry("session1".to_string()).or_insert_with(Vec::new).push(cp);
+            s.entry("session1".to_string()).or_default().push(cp);
         }
 
         let s = store.lock().unwrap();

@@ -34,7 +34,11 @@ pub fn resolve_agent_url(
             Err(format!(
                 "unknown remote agent '{}' (configured: {})",
                 agent_name,
-                if names.is_empty() { "none".to_string() } else { names }
+                if names.is_empty() {
+                    "none".to_string()
+                } else {
+                    names
+                }
             ))
         }
     }
@@ -86,7 +90,7 @@ impl Tool for A2aInvoke {
                     return format!(
                         "Error: {} — configure it in Settings → A2A → Remote Agents first",
                         msg
-                    )
+                    );
                 }
             }
         };

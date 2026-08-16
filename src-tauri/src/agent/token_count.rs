@@ -14,26 +14,29 @@ static BPE_ENCODER: OnceLock<CoreBPE> = OnceLock::new();
 /// Falls back to `o200k_base` (GPT-4o tokenizer) which is a good approximation
 /// for DeepSeek, Claude, and other modern models.
 fn get_bpe() -> Option<&'static CoreBPE> {
-    BPE_ENCODER.get_or_init(|| {
-        tiktoken_rs::o200k_base().unwrap_or_else(|e| {
-            log::warn!("[TokenCount] Failed to init o200k_base, trying cl100k_base: {}", e);
-            tiktoken_rs::cl100k_base().unwrap_or_else(|e| {
-                log::error!("[TokenCount] Failed to init cl100k_base: {}", e);
-                // This should not happen in practice, but we return a dummy
-                // that will produce inaccurate but non-zero counts
-                tiktoken_rs::cl100k_base().expect("cl100k_base must succeed")
+    BPE_ENCODER
+        .get_or_init(|| {
+            tiktoken_rs::o200k_base().unwrap_or_else(|e| {
+                log::warn!(
+                    "[TokenCount] Failed to init o200k_base, trying cl100k_base: {}",
+                    e
+                );
+                tiktoken_rs::cl100k_base().unwrap_or_else(|e| {
+                    log::error!("[TokenCount] Failed to init cl100k_base: {}", e);
+                    // This should not happen in practice, but we return a dummy
+                    // that will produce inaccurate but non-zero counts
+                    tiktoken_rs::cl100k_base().expect("cl100k_base must succeed")
+                })
             })
         })
-    }).into()
+        .into()
 }
 
 /// Count tokens in a text string using tiktoken.
 /// Returns fallback `chars / 3` if tiktoken is unavailable.
 pub fn count_tokens(text: &str, _model: &str) -> usize {
     match get_bpe() {
-        Some(bpe) => {
-            bpe.encode_with_special_tokens(text).len()
-        }
+        Some(bpe) => bpe.encode_with_special_tokens(text).len(),
         None => {
             // Fallback: rough estimation
             text.chars().count() / 3
@@ -45,10 +48,14 @@ pub fn count_tokens(text: &str, _model: &str) -> usize {
 /// Uses tiktoken for precise counting when available.
 pub fn estimate_message_tokens(msg: &ChatMessage, model: &str) -> usize {
     let content_tokens = count_tokens(&msg.content, model);
-    let tool_calls_tokens = msg.tool_calls.as_ref()
+    let tool_calls_tokens = msg
+        .tool_calls
+        .as_ref()
         .map(|tc| count_tokens(&tc.to_string(), model))
         .unwrap_or(0);
-    let tool_call_id_tokens = msg.tool_call_id.as_ref()
+    let tool_call_id_tokens = msg
+        .tool_call_id
+        .as_ref()
         .map(|id| count_tokens(id, model))
         .unwrap_or(0);
     // Add ~4 tokens for message overhead (role, separators, etc.)
@@ -56,13 +63,10 @@ pub fn estimate_message_tokens(msg: &ChatMessage, model: &str) -> usize {
 }
 
 /// Estimate token count for a full message list including system prompt.
-pub fn estimate_total_tokens(
-    messages: &[ChatMessage],
-    system_prompt: &str,
-    model: &str,
-) -> usize {
+pub fn estimate_total_tokens(messages: &[ChatMessage], system_prompt: &str, model: &str) -> usize {
     let system_tokens = count_tokens(system_prompt, model) + 4;
-    let message_tokens: usize = messages.iter()
+    let message_tokens: usize = messages
+        .iter()
         .map(|m| estimate_message_tokens(m, model))
         .sum();
     system_tokens + message_tokens + 3 // +3 for assistant reply primer

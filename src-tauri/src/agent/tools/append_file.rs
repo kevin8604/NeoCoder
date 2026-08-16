@@ -1,5 +1,5 @@
-use crate::fs_service::FileService;
 use super::{Tool, ToolContext};
+use crate::fs_service::FileService;
 
 pub struct AppendFile;
 
@@ -21,12 +21,20 @@ impl Tool for AppendFile {
             .unwrap_or(0);
         let append_start_line = existing_lines + 1;
 
-        match FileService::append_text(&path, contents, ctx.project_path.as_deref(), Some(&ctx.sandbox)) {
+        match FileService::append_text(
+            &path,
+            contents,
+            ctx.project_path.as_deref(),
+            Some(&ctx.sandbox),
+        ) {
             Ok(()) => {
                 let appended_lines = contents.lines().count();
                 format!(
                     "Successfully appended {} bytes ({} lines) to {} starting at line {}",
-                    contents.len(), appended_lines, path.display(), append_start_line
+                    contents.len(),
+                    appended_lines,
+                    path.display(),
+                    append_start_line
                 )
             }
             Err(e) => format!("Error appending to {}: {}", path.display(), e),

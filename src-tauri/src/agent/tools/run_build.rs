@@ -38,7 +38,8 @@ impl Tool for RunBuild {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> String {
-        let work_dir = args["directory"].as_str()
+        let work_dir = args["directory"]
+            .as_str()
             .filter(|d| !d.is_empty())
             .or(ctx.project_path.as_deref())
             .unwrap_or(".");
@@ -47,7 +48,8 @@ impl Tool for RunBuild {
             return format!("Error: directory '{}' does not exist", work_dir);
         }
 
-        let command = args["command"].as_str()
+        let command = args["command"]
+            .as_str()
             .filter(|c| !c.is_empty())
             .map(|c| c.to_string())
             .or_else(|| detect_build_command(work_dir));
@@ -77,12 +79,20 @@ impl Tool for RunBuild {
                 const MAX_OUTPUT: usize = 80 * 1024;
                 if !stdout_str.is_empty() {
                     result.push_str("\n--- STDOUT ---\n");
-                    let s = if stdout_str.len() > MAX_OUTPUT { &stdout_str[..MAX_OUTPUT] } else { stdout_str };
+                    let s = if stdout_str.len() > MAX_OUTPUT {
+                        &stdout_str[..MAX_OUTPUT]
+                    } else {
+                        stdout_str
+                    };
                     result.push_str(s);
                 }
                 if !stderr_str.is_empty() {
                     result.push_str("\n--- STDERR ---\n");
-                    let s = if stderr_str.len() > MAX_OUTPUT { &stderr_str[..MAX_OUTPUT] } else { stderr_str };
+                    let s = if stderr_str.len() > MAX_OUTPUT {
+                        &stderr_str[..MAX_OUTPUT]
+                    } else {
+                        stderr_str
+                    };
                     result.push_str(s);
                 }
 

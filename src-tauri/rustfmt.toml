@@ -1,0 +1,3 @@
+# rustfmt configuration for NeoCoder.
+# Keep defaults except locking the edition so local and CI formatting agree.
+edition = "2024"

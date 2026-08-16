@@ -1,5 +1,5 @@
-use crate::agent::utils::SKIP_DIRS;
 use super::{Tool, ToolContext};
+use crate::agent::utils::SKIP_DIRS;
 
 pub struct Glob;
 
@@ -23,7 +23,10 @@ impl Tool for Glob {
         let base = base_owned.as_str();
         // Sandbox: check read access on base directory
         let base_path = std::path::Path::new(base);
-        if let Err(e) = ctx.sandbox.check_path(base_path, ctx.project_path.as_deref(), false) {
+        if let Err(e) = ctx
+            .sandbox
+            .check_path(base_path, ctx.project_path.as_deref(), false)
+        {
             return format!("Error: Sandbox blocked: {}", e);
         }
         let full_pattern = format!(
@@ -52,7 +55,11 @@ impl Tool for Glob {
         if results.is_empty() {
             format!("No files matching pattern '{}' found in {}", pattern, base)
         } else {
-            let mut output = format!("Files matching '{}' ({} results):\n", pattern, results.len());
+            let mut output = format!(
+                "Files matching '{}' ({} results):\n",
+                pattern,
+                results.len()
+            );
             for r in &results {
                 output.push_str(&format!("  {}\n", r));
             }

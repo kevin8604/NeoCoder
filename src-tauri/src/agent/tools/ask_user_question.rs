@@ -1,5 +1,5 @@
-use crate::chat::QuestionItem;
 use super::{PostExecuteAction, Tool, ToolContext};
+use crate::chat::QuestionItem;
 
 pub struct AskUserQuestion;
 

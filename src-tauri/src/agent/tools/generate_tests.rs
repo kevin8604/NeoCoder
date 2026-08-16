@@ -6,7 +6,7 @@
 //! failures and close the "generate → run → fix" loop.
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 use super::{Tool, ToolContext};
@@ -35,7 +35,10 @@ fn detect_language(work_dir: &str) -> Option<&'static str> {
 /// Conventional test file path for a target source file and language.
 /// Returns None when the layout is unknown.
 fn detect_test_file_path(work_dir: &str, lang: &str, target: &Path) -> Option<PathBuf> {
-    let stem = target.file_stem().and_then(|s| s.to_str()).unwrap_or("untitled");
+    let stem = target
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("untitled");
     let tests_dir = Path::new(work_dir).join("tests");
     match lang {
         "rust" => Some(tests_dir.join(format!("{}_tests.rs", stem))),
@@ -49,20 +52,33 @@ fn detect_test_file_path(work_dir: &str, lang: &str, target: &Path) -> Option<Pa
             };
             Some(target.with_file_name(format!("{}.test.{}", stem, test_ext)))
         }
-        "python" => Some(Path::new(work_dir).join("tests").join(format!("test_{}.py", stem))),
+        "python" => Some(
+            Path::new(work_dir)
+                .join("tests")
+                .join(format!("test_{}.py", stem)),
+        ),
         "go" => Some(target.with_file_name(format!("{}_test.go", stem))),
         _ => None,
     }
 }
 
 /// Build the LLM prompt that writes tests for a source file.
-fn build_generate_tests_prompt(content: &str, lang: &str, framework: Option<&str>, target_name: &str) -> String {
+fn build_generate_tests_prompt(
+    content: &str,
+    lang: &str,
+    framework: Option<&str>,
+    target_name: &str,
+) -> String {
     let framework_hint = framework
         .map(|f| format!(" Use the '{}' test framework.", f))
         .unwrap_or_default();
     let lang_hint = match lang {
-        "rust" => "Rust integration test file (tests/ dir, `#[test]` fns, `use` the crate under test)",
-        "javascript" => "JS/TS test file (describe/it or test() blocks, assert real behavior, no mocks unless needed)",
+        "rust" => {
+            "Rust integration test file (tests/ dir, `#[test]` fns, `use` the crate under test)"
+        }
+        "javascript" => {
+            "JS/TS test file (describe/it or test() blocks, assert real behavior, no mocks unless needed)"
+        }
         "python" => "Python pytest test module (plain `def test_*` functions, no unittest classes)",
         "go" => "Go test file (`func TestXxx(t *testing.T)`, table-driven where sensible)",
         _ => "appropriate tests for the language",
@@ -172,8 +188,9 @@ impl Tool for GenerateTests {
                 tool_calls: None,
                 tool_call_id: None,
             }],
-            system: "You are a senior test engineer. Write high-quality, runnable tests — nothing else."
-                .into(),
+            system:
+                "You are a senior test engineer. Write high-quality, runnable tests — nothing else."
+                    .into(),
             max_tokens: 2500,
             temperature: 0.2,
             thinking_enabled: false,
@@ -192,7 +209,8 @@ impl Tool for GenerateTests {
         {
             Ok((crate::llm::LlmResponse::Text(text), _)) => text,
             Ok(_) => {
-                return "Error: LLM returned a non-text response while generating tests".to_string()
+                return "Error: LLM returned a non-text response while generating tests"
+                    .to_string();
             }
             Err(e) => return format!("Error: LLM call failed: {}", e),
         };
@@ -216,10 +234,10 @@ impl Tool for GenerateTests {
                 lang, code
             );
         };
-        if let Some(parent) = test_path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                return format!("Error: cannot create test dir {}: {}", parent.display(), e);
-            }
+        if let Some(parent) = test_path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            return format!("Error: cannot create test dir {}: {}", parent.display(), e);
         }
         if let Err(e) = std::fs::write(&test_path, &code) {
             return format!(
@@ -242,26 +260,46 @@ impl Tool for GenerateTests {
         // Run the generated tests (tight loop, no full-suite detour for rust)
         let cmd = test_run_command(lang, &test_path);
         if cmd.is_empty() {
-            return format!("Generated tests written to {} (no test runner detected).", test_path.display());
+            return format!(
+                "Generated tests written to {} (no test runner detected).",
+                test_path.display()
+            );
         }
         let output = crate::terminal::run_one_shot(&cmd, work_dir, 180).await;
         match output {
             Ok(out) => {
-                let mut result = format!("Generated tests written to {}.\n$ {}\nExit code: {}\n", test_path.display(), cmd, out.exit_code);
+                let mut result = format!(
+                    "Generated tests written to {}.\n$ {}\nExit code: {}\n",
+                    test_path.display(),
+                    cmd,
+                    out.exit_code
+                );
                 const MAX: usize = 40 * 1024;
-                let stdout = if out.stdout.len() > MAX { &out.stdout[..MAX] } else { &out.stdout };
+                let stdout = if out.stdout.len() > MAX {
+                    &out.stdout[..MAX]
+                } else {
+                    &out.stdout
+                };
                 if !stdout.is_empty() {
                     result.push_str("\n--- Test Output ---\n");
                     result.push_str(stdout);
                 }
                 if !out.stderr.is_empty() {
-                    let stderr = if out.stderr.len() > MAX { &out.stderr[..MAX] } else { &out.stderr };
+                    let stderr = if out.stderr.len() > MAX {
+                        &out.stderr[..MAX]
+                    } else {
+                        &out.stderr
+                    };
                     result.push_str("\n--- STDERR ---\n");
                     result.push_str(stderr);
                 }
                 result
             }
-            Err(e) => format!("Generated tests written to {}.\nTest run failed: {}", test_path.display(), e),
+            Err(e) => format!(
+                "Generated tests written to {}.\nTest run failed: {}",
+                test_path.display(),
+                e
+            ),
         }
     }
 }
@@ -286,7 +324,10 @@ mod tests {
         let js_dir = temp_dir();
         std::fs::create_dir_all(&js_dir).unwrap();
         std::fs::write(js_dir.join("package.json"), "{}").unwrap();
-        assert_eq!(detect_language(js_dir.to_str().unwrap()), Some("javascript"));
+        assert_eq!(
+            detect_language(js_dir.to_str().unwrap()),
+            Some("javascript")
+        );
 
         let py_dir = temp_dir();
         std::fs::create_dir_all(&py_dir).unwrap();
@@ -349,7 +390,12 @@ mod tests {
 
     #[test]
     fn prompt_mentions_framework_and_target() {
-        let p = build_generate_tests_prompt("fn add(a: i32, b: i32) -> i32 { a + b }", "rust", Some("tokio"), "src/lib.rs");
+        let p = build_generate_tests_prompt(
+            "fn add(a: i32, b: i32) -> i32 { a + b }",
+            "rust",
+            Some("tokio"),
+            "src/lib.rs",
+        );
         assert!(p.contains("tokio"), "{}", p);
         assert!(p.contains("src/lib.rs"), "{}", p);
         assert!(p.contains("Do NOT modify the source file"), "{}", p);
@@ -366,6 +412,9 @@ mod tests {
             "npx jest util.test.ts --silent"
         );
         assert!(test_run_command("python", Path::new("tests/test_a.py")).contains("pytest"));
-        assert_eq!(test_run_command("go", Path::new("pkg/math_test.go")), "go test ./...");
+        assert_eq!(
+            test_run_command("go", Path::new("pkg/math_test.go")),
+            "go test ./..."
+        );
     }
 }

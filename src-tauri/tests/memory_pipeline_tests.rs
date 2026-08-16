@@ -53,7 +53,9 @@ fn test_session_full_lifecycle() {
 
     // Clear s1
     manager.clear_session(&s1).expect("clear s1");
-    let ctx1_after = manager.get_context_window(&s1, 100_000).expect("read s1 after");
+    let ctx1_after = manager
+        .get_context_window(&s1, 100_000)
+        .expect("read s1 after");
     assert!(ctx1_after.is_empty(), "s1 should be empty after clear");
 
     // Delete s1, verify gone from list
@@ -85,10 +87,16 @@ fn test_context_window_respects_token_budget() {
 
     // Request a small window (should trim older messages)
     let small = manager.get_context_window(&sid, 50).expect("small window");
-    assert!(small.len() < 50, "small token budget should trim messages: got {}", small.len());
+    assert!(
+        small.len() < 50,
+        "small token budget should trim messages: got {}",
+        small.len()
+    );
 
     // Request a large window (should return all)
-    let large = manager.get_context_window(&sid, 100_000).expect("large window");
+    let large = manager
+        .get_context_window(&sid, 100_000)
+        .expect("large window");
     assert_eq!(large.len(), 50, "large budget should return all messages");
 
     cleanup(&dir);
@@ -102,12 +110,23 @@ fn test_long_term_append_and_recall() {
     let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
     // Start with clean long_term
-    manager.write_long_term("# Memory\n\n").expect("write empty");
+    manager
+        .write_long_term("# Memory\n\n")
+        .expect("write empty");
 
     // Append entries with different categories
-    manager.append_long_term("Lessons", "- [Lesson] Use `Result<T, E>` for error handling").expect("append");
-    manager.append_long_term("Decisions", "- [Decision] Use PostgreSQL for storage").expect("append");
-    manager.append_long_term("Patterns", "- [Pattern] RAII ensures resource cleanup").expect("append");
+    manager
+        .append_long_term(
+            "Lessons",
+            "- [Lesson] Use `Result<T, E>` for error handling",
+        )
+        .expect("append");
+    manager
+        .append_long_term("Decisions", "- [Decision] Use PostgreSQL for storage")
+        .expect("append");
+    manager
+        .append_long_term("Patterns", "- [Pattern] RAII ensures resource cleanup")
+        .expect("append");
 
     // Read back
     let content = manager.read_long_term().expect("read");
@@ -120,7 +139,7 @@ fn test_long_term_append_and_recall() {
 
 #[test]
 fn test_ebbinghaus_retention_decay_over_time() {
-    use neocoder_tauri_lib::memory::ebbinghaus::{MemoryEntry, MemoryCategory, compute_retention};
+    use neocoder_tauri_lib::memory::ebbinghaus::{MemoryCategory, MemoryEntry, compute_retention};
 
     let today = chrono::Utc::now().date_naive();
 
@@ -139,7 +158,11 @@ fn test_ebbinghaus_retention_decay_over_time() {
 
     // After 5 days with S=1.0: R = e^(-5) ≈ 0.0067
     let r5 = compute_retention(&entry, today);
-    assert!(r5 < 0.05, "retention after 5 days at S=1.0 should be very low, got {}", r5);
+    assert!(
+        r5 < 0.05,
+        "retention after 5 days at S=1.0 should be very low, got {}",
+        r5
+    );
 
     // With higher stability (S=10): R = e^(-5/10) = e^(-0.5) ≈ 0.606
     let entry_high_s = MemoryEntry {
@@ -147,7 +170,11 @@ fn test_ebbinghaus_retention_decay_over_time() {
         ..entry.clone()
     };
     let r5_high = compute_retention(&entry_high_s, today);
-    assert!(r5_high > 0.5, "retention with S=10 should still be high, got {}", r5_high);
+    assert!(
+        r5_high > 0.5,
+        "retention with S=10 should still be high, got {}",
+        r5_high
+    );
 
     // Recent entry (same day): R = e^(-0/S) = 1.0
     let entry_today = MemoryEntry {
@@ -157,12 +184,16 @@ fn test_ebbinghaus_retention_decay_over_time() {
         ..entry.clone()
     };
     let r0 = compute_retention(&entry_today, today);
-    assert!((r0 - 1.0).abs() < 0.001, "same-day retention should be 1.0, got {}", r0);
+    assert!(
+        (r0 - 1.0).abs() < 0.001,
+        "same-day retention should be 1.0, got {}",
+        r0
+    );
 }
 
 #[test]
 fn test_ebbinghaus_should_archive() {
-    use neocoder_tauri_lib::memory::ebbinghaus::{MemoryEntry, MemoryCategory, should_archive};
+    use neocoder_tauri_lib::memory::ebbinghaus::{MemoryCategory, MemoryEntry, should_archive};
 
     let today = chrono::Utc::now().date_naive();
 
@@ -194,7 +225,10 @@ fn test_ebbinghaus_should_archive() {
         category: MemoryCategory::Lesson,
         session_id: None,
     };
-    assert!(should_archive(&stale, today), "very old entry should archive");
+    assert!(
+        should_archive(&stale, today),
+        "very old entry should archive"
+    );
 }
 
 // ── Context injection ───────────────────────────────────────────────────────
@@ -206,20 +240,38 @@ fn test_context_injection_with_data() {
 
     // Empty → empty or minimal
     let ctx0 = manager.inject_memory_context();
-    assert!(ctx0.len() < 100, "empty memory should produce minimal context");
+    assert!(
+        ctx0.len() < 100,
+        "empty memory should produce minimal context"
+    );
 
     // Populate long-term memory
-    manager.append_long_term("Rust", "- [Lesson] Rust ownership model prevents data races").expect("append");
-    manager.append_long_term("Python", "- [Pattern] Use context managers for file handling").expect("append");
+    manager
+        .append_long_term(
+            "Rust",
+            "- [Lesson] Rust ownership model prevents data races",
+        )
+        .expect("append");
+    manager
+        .append_long_term(
+            "Python",
+            "- [Pattern] Use context managers for file handling",
+        )
+        .expect("append");
 
     // Also add a daily note
-    manager.append_note("- [Learning] Explored async Rust patterns").expect("note");
+    manager
+        .append_note("- [Learning] Explored async Rust patterns")
+        .expect("note");
 
     // Context should now include memory
     let ctx = manager.inject_memory_context();
     assert!(!ctx.is_empty(), "context should not be empty");
-    assert!(ctx.contains("Memory") || ctx.contains("Notes") || ctx.contains("Rust"),
-        "context should reference memory, got: {}", ctx.chars().take(200).collect::<String>());
+    assert!(
+        ctx.contains("Memory") || ctx.contains("Notes") || ctx.contains("Rust"),
+        "context should reference memory, got: {}",
+        ctx.chars().take(200).collect::<String>()
+    );
 
     cleanup(&dir);
 }
@@ -232,9 +284,21 @@ fn test_memory_search_finds_relevant() {
     let manager = neocoder_tauri_lib::memory::MemoryManager::new(dir.join("memory"));
 
     // Populate with distinct topics
-    manager.append_long_term("Rust", "- [Lesson] Rust has no null. Use Option<T> instead.").expect("append");
-    manager.append_long_term("Python", "- [Pattern] Python uses keyword arguments for readability").expect("append");
-    manager.append_long_term("Rust", "- [Decision] Use tokio for async Rust").expect("append");
+    manager
+        .append_long_term(
+            "Rust",
+            "- [Lesson] Rust has no null. Use Option<T> instead.",
+        )
+        .expect("append");
+    manager
+        .append_long_term(
+            "Python",
+            "- [Pattern] Python uses keyword arguments for readability",
+        )
+        .expect("append");
+    manager
+        .append_long_term("Rust", "- [Decision] Use tokio for async Rust")
+        .expect("append");
 
     // Search for Rust-specific content
     let results = manager.search_memory("Rust async", 5).expect("search rust");
@@ -242,8 +306,15 @@ fn test_memory_search_finds_relevant() {
 
     // The tokio entry should be most relevant
     let has_tokio = results.iter().any(|r| r.line_content.contains("tokio"));
-    assert!(has_tokio || !results.iter().filter(|r| r.line_content.contains("Rust")).collect::<Vec<_>>().is_empty(),
-        "should find Rust-related content");
+    assert!(
+        has_tokio
+            || !results
+                .iter()
+                .filter(|r| r.line_content.contains("Rust"))
+                .collect::<Vec<_>>()
+                .is_empty(),
+        "should find Rust-related content"
+    );
 
     // Empty query should not crash
     let _empty = manager.search_memory("", 5).expect("empty search");
@@ -260,7 +331,9 @@ fn test_session_store_with_expiry_config() {
     let storage = neocoder_tauri_lib::memory::session_store::SessionStorage::new(&dir);
 
     // Create a session
-    storage.create_session("expiry-test", "Test").expect("create");
+    storage
+        .create_session("expiry-test", "Test")
+        .expect("create");
     let msg = neocoder_tauri_lib::chat::ChatMessage {
         role: neocoder_tauri_lib::chat::Role::User,
         content: "test".into(),

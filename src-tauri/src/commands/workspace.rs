@@ -83,7 +83,9 @@ pub(crate) async fn activate_ws(
 #[tauri::command]
 pub async fn list_workspaces(state: State<'_, ConfigState>) -> Result<Vec<Workspace>, String> {
     let mut settings = state.manager.read().await.get_settings().await;
-    settings.workspaces.sort_by(|a, b| b.last_opened_at.cmp(&a.last_opened_at));
+    settings
+        .workspaces
+        .sort_by_key(|w| std::cmp::Reverse(w.last_opened_at));
     Ok(settings.workspaces)
 }
 
@@ -108,7 +110,12 @@ pub async fn activate_workspace(
         &config_dir,
     )
     .await?;
-    state.manager.write().await.update_settings(settings).await?;
+    state
+        .manager
+        .write()
+        .await
+        .update_settings(settings)
+        .await?;
     Ok(result)
 }
 
@@ -143,7 +150,12 @@ pub async fn remove_workspace(
         log::info!("[Workspace] Removed index directory: {}", ws_dir.display());
     }
 
-    state.manager.write().await.update_settings(settings).await?;
+    state
+        .manager
+        .write()
+        .await
+        .update_settings(settings)
+        .await?;
     log::info!("[Workspace] Removed workspace '{}' ({})", ws.name, ws.path);
     Ok(())
 }
@@ -168,6 +180,11 @@ pub async fn rename_workspace(
         .ok_or_else(|| format!("Workspace '{}' not found", workspace_id))?;
     ws.name = new_name;
 
-    state.manager.write().await.update_settings(settings).await?;
+    state
+        .manager
+        .write()
+        .await
+        .update_settings(settings)
+        .await?;
     Ok(())
 }

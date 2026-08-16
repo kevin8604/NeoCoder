@@ -34,11 +34,7 @@ impl Tool for GitCheckout {
 
         cmd.current_dir(work_dir);
 
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            cmd.output(),
-        )
-        .await;
+        let output = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output()).await;
 
         match output {
             Ok(Ok(out)) => {

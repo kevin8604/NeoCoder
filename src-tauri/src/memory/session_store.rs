@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
-use std::fs;
 use crate::chat::{ChatMessage, Role};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 // ── SessionStore trait ──────────────────────────────────────────────────────
 
@@ -59,7 +59,8 @@ impl SessionStorage {
         fs::create_dir_all(&dir).map_err(|e| format!("Failed to create session dir: {}", e))?;
         // Create messages sub-directory
         let msg_dir = dir.join("messages");
-        fs::create_dir_all(&msg_dir).map_err(|e| format!("Failed to create messages dir: {}", e))?;
+        fs::create_dir_all(&msg_dir)
+            .map_err(|e| format!("Failed to create messages dir: {}", e))?;
 
         let meta = SessionMeta {
             id: id.to_string(),
@@ -69,13 +70,18 @@ impl SessionStorage {
         let yaml = serde_yaml::to_string(&meta)
             .map_err(|e| format!("Failed to serialize session meta: {}", e))?;
         let content = format!("---\n{}---\n", yaml);
-        fs::write(&dir.join("session.md"), &content)
+        fs::write(dir.join("session.md"), &content)
             .map_err(|e| format!("Failed to write session.md: {}", e))?;
         Ok(())
     }
 
     /// Save a message as a numbered markdown file with YAML frontmatter.
-    pub fn save_message(&self, session_id: &str, msg: &ChatMessage, seq: u32) -> Result<(), String> {
+    pub fn save_message(
+        &self,
+        session_id: &str,
+        msg: &ChatMessage,
+        seq: u32,
+    ) -> Result<(), String> {
         let msg_dir = self.message_dir(session_id);
         if !msg_dir.exists() {
             fs::create_dir_all(&msg_dir)
@@ -94,8 +100,7 @@ impl SessionStorage {
 
         let mut frontmatter = format!("role: {}\n", role_str);
         if let Some(ref calls) = msg.tool_calls {
-            let json = serde_json::to_string(calls)
-                .unwrap_or_else(|_| "[]".to_string());
+            let json = serde_json::to_string(calls).unwrap_or_else(|_| "[]".to_string());
             frontmatter.push_str(&format!("tool_calls: {}\n", json));
         }
 
@@ -133,7 +138,11 @@ impl SessionStorage {
     }
 
     /// Load messages with token budget (oldest-first, accumulated from most recent)
-    pub fn load_context_window(&self, session_id: &str, max_tokens: usize) -> Result<Vec<ChatMessage>, String> {
+    pub fn load_context_window(
+        &self,
+        session_id: &str,
+        max_tokens: usize,
+    ) -> Result<Vec<ChatMessage>, String> {
         let all = self.load_messages(session_id)?;
         let mut token_count: usize = 0usize;
         let mut result = Vec::new();
@@ -155,8 +164,7 @@ impl SessionStorage {
     pub fn delete_session(&self, session_id: &str) -> Result<(), String> {
         let dir = self.session_path(session_id);
         if dir.exists() {
-            fs::remove_dir_all(&dir)
-                .map_err(|e| format!("Failed to delete session dir: {}", e))?;
+            fs::remove_dir_all(&dir).map_err(|e| format!("Failed to delete session dir: {}", e))?;
         }
         Ok(())
     }
@@ -199,36 +207,41 @@ impl SessionStorage {
 
     /// Create a new branch from a given message sequence number.
     /// The new branch includes all messages up to (and including) `from_seq`.
-    pub fn create_branch(&self, session_id: &str, from_seq: u32, branch_name: &str) -> Result<String, String> {
+    pub fn create_branch(
+        &self,
+        session_id: &str,
+        from_seq: u32,
+        branch_name: &str,
+    ) -> Result<String, String> {
         let mut branches = self.load_branches(session_id);
 
         // Find the parent branch that contains from_seq
-        let parent_seqs = branches.get("main")
-            .cloned()
-            .unwrap_or_else(|| {
-                // If no branches file exists, all messages are in "main"
-                let msg_dir = self.message_dir(session_id);
-                if !msg_dir.exists() { return Vec::new(); }
-                let mut seqs: Vec<u32> = fs::read_dir(&msg_dir)
-                    .ok()
-                    .map(|entries| {
-                        entries.filter_map(|e| e.ok())
-                            .filter_map(|e| {
-                                e.file_name().to_str()
-                                    .and_then(|s| s.strip_suffix(".md"))
-                                    .and_then(|s| s.parse::<u32>().ok())
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                seqs.sort();
-                seqs
-            });
+        let parent_seqs = branches.get("main").cloned().unwrap_or_else(|| {
+            // If no branches file exists, all messages are in "main"
+            let msg_dir = self.message_dir(session_id);
+            if !msg_dir.exists() {
+                return Vec::new();
+            }
+            let mut seqs: Vec<u32> = fs::read_dir(&msg_dir)
+                .ok()
+                .map(|entries| {
+                    entries
+                        .filter_map(|e| e.ok())
+                        .filter_map(|e| {
+                            e.file_name()
+                                .to_str()
+                                .and_then(|s| s.strip_suffix(".md"))
+                                .and_then(|s| s.parse::<u32>().ok())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            seqs.sort();
+            seqs
+        });
 
         // New branch includes messages up to from_seq
-        let new_seqs: Vec<u32> = parent_seqs.into_iter()
-            .filter(|&s| s <= from_seq)
-            .collect();
+        let new_seqs: Vec<u32> = parent_seqs.into_iter().filter(|&s| s <= from_seq).collect();
 
         let branch_id = if branch_name.is_empty() {
             format!("branch_{}", branches.len() + 1)
@@ -256,29 +269,36 @@ impl SessionStorage {
             }]);
         }
 
-        let mut result: Vec<BranchInfo> = branches.iter().map(|(id, seqs)| {
-            BranchInfo {
+        let mut result: Vec<BranchInfo> = branches
+            .iter()
+            .map(|(id, seqs)| BranchInfo {
                 id: id.clone(),
                 name: id.clone(),
                 message_count: seqs.len() as u32,
                 is_active: id == "main",
-            }
-        }).collect();
+            })
+            .collect();
 
         result.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(result)
     }
 
     /// Load messages for a specific branch.
-    pub fn load_branch_messages(&self, session_id: &str, branch_id: &str) -> Result<Vec<ChatMessage>, String> {
+    pub fn load_branch_messages(
+        &self,
+        session_id: &str,
+        branch_id: &str,
+    ) -> Result<Vec<ChatMessage>, String> {
         let branches = self.load_branches(session_id);
-        let seqs = branches.get(branch_id)
+        let seqs = branches
+            .get(branch_id)
             .ok_or_else(|| format!("Branch '{}' not found", branch_id))?;
 
         let all_messages = self.load_messages(session_id)?;
         let seq_set: std::collections::HashSet<u32> = seqs.iter().copied().collect();
 
-        let filtered: Vec<ChatMessage> = all_messages.into_iter()
+        let filtered: Vec<ChatMessage> = all_messages
+            .into_iter()
             .enumerate()
             .filter(|(idx, _)| seq_set.contains(&(*idx as u32)))
             .map(|(_, msg)| msg)
@@ -305,25 +325,27 @@ impl SessionStorage {
         }
 
         let mut sessions = Vec::new();
-        let entries = fs::read_dir(dir)
-            .map_err(|e| format!("Failed to read sessions dir: {}", e))?;
+        let entries =
+            fs::read_dir(dir).map_err(|e| format!("Failed to read sessions dir: {}", e))?;
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_dir() { continue; }
-            let session_id = path.file_name()
+            if !path.is_dir() {
+                continue;
+            }
+            let session_id = path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
 
             let meta_path = path.join("session.md");
-            if meta_path.exists() {
-                if let Ok(content) = fs::read_to_string(&meta_path) {
-                    if let Some(smeta) = Self::parse_session_meta(&content) {
-                        sessions.push((session_id, smeta.title, smeta.created_at));
-                        continue;
-                    }
-                }
+            if meta_path.exists()
+                && let Ok(content) = fs::read_to_string(&meta_path)
+                && let Some(smeta) = Self::parse_session_meta(&content)
+            {
+                sessions.push((session_id, smeta.title, smeta.created_at));
+                continue;
             }
             // Fallback if no session.md
             sessions.push((session_id.clone(), session_id, String::new()));
@@ -390,32 +412,38 @@ impl SessionStorage {
         let cutoff = now - chrono::Duration::days(max_age_days as i64);
         let mut deleted = 0usize;
 
-        let entries = fs::read_dir(dir)
-            .map_err(|e| format!("Failed to read sessions dir: {}", e))?;
+        let entries =
+            fs::read_dir(dir).map_err(|e| format!("Failed to read sessions dir: {}", e))?;
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_dir() { continue; }
+            if !path.is_dir() {
+                continue;
+            }
 
             let meta_path = path.join("session.md");
-            if meta_path.exists() {
-                if let Ok(content) = fs::read_to_string(&meta_path) {
-                    if let Some(meta) = Self::parse_session_meta(&content) {
-                        if let Ok(created_at) = chrono::DateTime::parse_from_rfc3339(&meta.created_at) {
-                            if created_at < cutoff {
-                                if fs::remove_dir_all(&path).is_ok() {
-                                    deleted += 1;
-                                    log::info!("[SessionStore] Expired session '{}' (created {})", meta.id, meta.created_at);
-                                }
-                            }
-                        }
-                    }
-                }
+            if meta_path.exists()
+                && let Ok(content) = fs::read_to_string(&meta_path)
+                && let Some(meta) = Self::parse_session_meta(&content)
+                && let Ok(created_at) = chrono::DateTime::parse_from_rfc3339(&meta.created_at)
+                && created_at < cutoff
+                && fs::remove_dir_all(&path).is_ok()
+            {
+                deleted += 1;
+                log::info!(
+                    "[SessionStore] Expired session '{}' (created {})",
+                    meta.id,
+                    meta.created_at
+                );
             }
         }
 
         if deleted > 0 {
-            log::info!("[SessionStore] Cleaned up {} expired sessions (older than {} days)", deleted, max_age_days);
+            log::info!(
+                "[SessionStore] Cleaned up {} expired sessions (older than {} days)",
+                deleted,
+                max_age_days
+            );
         }
         Ok(deleted)
     }
@@ -449,10 +477,11 @@ impl SessionStorage {
                 role_str = val.trim();
             } else if let Some(val) = line.strip_prefix("tool_calls: ") {
                 let trimmed = val.trim();
-                if trimmed != "null" && trimmed != "~" {
-                    if let Ok(calls) = serde_json::from_str::<Vec<crate::chat::ToolCall>>(trimmed) {
-                        tool_calls = Some(calls);
-                    }
+                if trimmed != "null"
+                    && trimmed != "~"
+                    && let Ok(calls) = serde_json::from_str::<Vec<crate::chat::ToolCall>>(trimmed)
+                {
+                    tool_calls = Some(calls);
                 }
             }
         }
@@ -488,7 +517,9 @@ impl SessionStorage {
 
     fn estimate_tokens(msg: &ChatMessage) -> usize {
         let content_tokens = msg.content.chars().count() / 3;
-        let tool_call_tokens = msg.tool_calls.as_ref()
+        let tool_call_tokens = msg
+            .tool_calls
+            .as_ref()
             .map(|tcs| serde_json::to_string(tcs).unwrap_or_default().len() / 3)
             .unwrap_or(0);
         content_tokens + tool_call_tokens

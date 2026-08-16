@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use tauri::{State, Manager};
 use crate::config::AppSettings;
 use crate::rag::{CodeIndexer, SearchResult};
+use std::sync::Arc;
+use tauri::{Manager, State};
 use tokio::sync::RwLock;
 
 #[tauri::command]
@@ -44,7 +44,8 @@ pub async fn reindex_project(
                     Some(ws) => (ws.path.clone(), ws.index_db_path.clone()),
                     None => (
                         guard.project_paths.first().cloned().ok_or(
-                            "No project path: pass project_path or activate a workspace".to_string(),
+                            "No project path: pass project_path or activate a workspace"
+                                .to_string(),
                         )?,
                         legacy_db_path(&app),
                     ),
@@ -61,7 +62,10 @@ pub async fn reindex_project(
         log::warn!("Failed to persist index to DB {}: {}", db_path, e);
     }
 
-    Ok(format!("Indexing complete: {} files, {} chunks", files, chunks))
+    Ok(format!(
+        "Indexing complete: {} files, {} chunks",
+        files, chunks
+    ))
 }
 
 /// Index DB path of the currently active workspace (empty string if none).
@@ -109,8 +113,6 @@ pub async fn remove_from_index(
 }
 
 #[tauri::command]
-pub async fn get_index_stats(
-    indexer: State<'_, Arc<CodeIndexer>>,
-) -> Result<usize, String> {
+pub async fn get_index_stats(indexer: State<'_, Arc<CodeIndexer>>) -> Result<usize, String> {
     Ok(indexer.chunk_count().await)
 }

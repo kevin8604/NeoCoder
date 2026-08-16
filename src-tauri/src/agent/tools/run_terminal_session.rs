@@ -143,11 +143,20 @@ async fn read_until_marker(
 fn send_command(session: &AgentPtySession, mid: &str, command: &str) -> Result<(), String> {
     let mut writer = session.writer.lock().map_err(|e| e.to_string())?;
     let payload = if session.marker_cmd.contains("%NEOCODER_MID%") {
-        format!("set NEOCODER_MID={}&{}&{}", mid, command, session.marker_cmd)
+        format!(
+            "set NEOCODER_MID={}&{}&{}",
+            mid, command, session.marker_cmd
+        )
     } else if session.marker_cmd.contains("$env:NEOCODER_MID") {
-        format!("$env:NEOCODER_MID='{}'; {}; {}", mid, command, session.marker_cmd)
+        format!(
+            "$env:NEOCODER_MID='{}'; {}; {}",
+            mid, command, session.marker_cmd
+        )
     } else {
-        format!("export NEOCODER_MID={}; {}; {}", mid, command, session.marker_cmd)
+        format!(
+            "export NEOCODER_MID={}; {}; {}",
+            mid, command, session.marker_cmd
+        )
     };
     writer
         .write_all(payload.as_bytes())
@@ -174,22 +183,24 @@ impl Tool for RunTerminalSession {
         // Sandbox safety check (same policy as run_terminal_command)
         if let Err(reason) = ctx.sandbox.check_command(command) {
             log::warn!("Blocked dangerous command '{}': {}", command, reason);
-            return format!("Error: Command blocked for safety: {}. If you believe this is a false positive, ask the user to run it manually.", reason);
+            return format!(
+                "Error: Command blocked for safety: {}. If you believe this is a false positive, ask the user to run it manually.",
+                reason
+            );
         }
 
         let session_id = args["session_id"].as_str().unwrap_or("default");
         let reset = args["reset"].as_bool().unwrap_or(false);
         let timeout = args["timeout_seconds"].as_u64().unwrap_or(30).clamp(5, 300);
 
-        if reset {
-            if let Ok(mut sessions) = AGENT_SESSIONS.lock() {
-                if let Some(s) = sessions.remove(session_id) {
-                    if let Ok(mut child) = s.child.lock() {
-                        let _ = child.kill();
-                    }
-                    log::info!("[TermSession] Reset session '{}'", session_id);
-                }
+        if reset
+            && let Ok(mut sessions) = AGENT_SESSIONS.lock()
+            && let Some(s) = sessions.remove(session_id)
+        {
+            if let Ok(mut child) = s.child.lock() {
+                let _ = child.kill();
             }
+            log::info!("[TermSession] Reset session '{}'", session_id);
         }
 
         let session = match get_or_create_session(session_id) {
@@ -197,10 +208,13 @@ impl Tool for RunTerminalSession {
             Err(e) => return format!("Error: failed to start terminal session: {}", e),
         };
 
-        let mid = format!("{:x}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0));
+        let mid = format!(
+            "{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
 
         if let Err(e) = send_command(&session, &mid, command) {
             return format!("Error: failed to write to terminal session: {}", e);
@@ -229,7 +243,7 @@ impl Tool for RunTerminalSession {
         result.push_str(&format!("$ {} [session '{}']\n", command, session_id));
         result.push_str(&format!("Status: {}\n", status));
         if !lines.is_empty() {
-            result.push_str("\n");
+            result.push('\n');
             let joined = lines.join("\n");
             const MAX_OUTPUT: usize = 50 * 1024;
             if joined.len() > MAX_OUTPUT {
@@ -244,10 +258,12 @@ impl Tool for RunTerminalSession {
 
         // Remember the working directory hint for the next call (best effort)
         let cwd_hint = command.trim();
-        if cwd_hint.starts_with("cd ") || cwd_hint.starts_with("Set-Location") {
-            if let Ok(mut cwd) = session.cwd.lock() {
-                *cwd = cwd_hint[3..].trim_matches(|c| c == '"' || c == '\'').to_string();
-            }
+        if (cwd_hint.starts_with("cd ") || cwd_hint.starts_with("Set-Location"))
+            && let Ok(mut cwd) = session.cwd.lock()
+        {
+            *cwd = cwd_hint[3..]
+                .trim_matches(|c| c == '"' || c == '\'')
+                .to_string();
         }
 
         result

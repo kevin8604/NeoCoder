@@ -1,6 +1,6 @@
-use tauri::{State, Manager};
 use crate::config::{AppSettings, ConfigManager};
 use std::sync::Arc;
+use tauri::{Manager, State};
 use tokio::sync::RwLock;
 
 pub struct ConfigState {
@@ -8,9 +8,7 @@ pub struct ConfigState {
 }
 
 #[tauri::command]
-pub async fn get_settings(
-    state: State<'_, ConfigState>,
-) -> Result<AppSettings, String> {
+pub async fn get_settings(state: State<'_, ConfigState>) -> Result<AppSettings, String> {
     let manager = state.manager.read().await;
     Ok(manager.get_settings().await)
 }
@@ -26,22 +24,25 @@ pub async fn update_settings(
 
 /// 读取最近 N 行日志（默认 200 行）
 #[tauri::command]
-pub async fn get_app_logs(
-    app: tauri::AppHandle,
-    lines: Option<usize>,
-) -> Result<String, String> {
-    let app_data = app.path().app_config_dir()
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(".neocoder"));
+pub async fn get_app_logs(app: tauri::AppHandle, lines: Option<usize>) -> Result<String, String> {
+    let app_data = app.path().app_config_dir().unwrap_or_else(|_| {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(".neocoder")
+    });
     let content = crate::logging::read_recent_logs(&app_data, lines.unwrap_or(200));
     Ok(content)
 }
 
 /// 获取日志文件路径
 #[tauri::command]
-pub async fn get_log_path(
-    app: tauri::AppHandle,
-) -> Result<String, String> {
-    let app_data = app.path().app_config_dir()
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(".neocoder"));
-    Ok(crate::logging::log_file_path(&app_data).to_string_lossy().to_string())
+pub async fn get_log_path(app: tauri::AppHandle) -> Result<String, String> {
+    let app_data = app.path().app_config_dir().unwrap_or_else(|_| {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(".neocoder")
+    });
+    Ok(crate::logging::log_file_path(&app_data)
+        .to_string_lossy()
+        .to_string())
 }

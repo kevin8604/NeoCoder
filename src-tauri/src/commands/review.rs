@@ -13,7 +13,7 @@ pub async fn trigger_auto_review(
     project_path: String,
     settings: State<'_, Arc<RwLock<AppSettings>>>,
 ) -> Result<String, String> {
-    let settings = settings.read().await;
+    let _settings = settings.read().await;
 
     // Get git diff (prefer staged changes, fallback to unstaged)
     let diff = get_git_diff(&project_path)?;

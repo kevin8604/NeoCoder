@@ -114,7 +114,8 @@ pub async fn connect_mcp_server(
 
     log::info!(
         "[MCP] Connected to '{}', {} tools available",
-        server_name, tool_count
+        server_name,
+        tool_count
     );
 
     if let Ok(mut guard) = mcp_tools_state.lock() {
@@ -141,11 +142,13 @@ pub async fn disconnect_mcp_server(
     if servers_path.exists() {
         let content = std::fs::read_to_string(&servers_path).unwrap_or_default();
         let configs: Vec<McpServerConfig> = serde_json::from_str(&content).unwrap_or_default();
-        let updated: Vec<_> = configs.into_iter().filter(|c| c.name != server_name).collect();
+        let updated: Vec<_> = configs
+            .into_iter()
+            .filter(|c| c.name != server_name)
+            .collect();
         let json = serde_json::to_string_pretty(&updated)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        std::fs::write(&servers_path, json)
-            .map_err(|e| format!("Failed to write: {}", e))?;
+        std::fs::write(&servers_path, json).map_err(|e| format!("Failed to write: {}", e))?;
     }
 
     // Update MCP tool definitions

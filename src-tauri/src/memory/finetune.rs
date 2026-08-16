@@ -6,9 +6,9 @@
 //! phrase the user's personal development experience — the "personality" layer
 //! for a local LoRA fine-tune (docs/MEMORY_LOCAL_LLM_ARCHITECTURE.md Phase 4/5).
 
-use std::path::Path;
-use std::fs;
 use super::ebbinghaus::{self, MemoryEntry};
+use std::fs;
+use std::path::Path;
 
 const SYSTEM_PROMPT: &str = "You are a coding assistant with persistent memory of the user's \
 development experience. When asked about the user's own experience, recall it from memory \
@@ -61,14 +61,16 @@ pub fn export_training_data(
     let out_dir = match output_path {
         Some(p) => {
             if let Some(parent) = p.parent() {
-                fs::create_dir_all(parent).map_err(|e| format!("Failed to create output dir: {}", e))?;
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create output dir: {}", e))?;
             }
             p.to_path_buf()
         }
         None => base_dir.join("finetune"),
     };
     if output_path.is_none() {
-        fs::create_dir_all(&out_dir).map_err(|e| format!("Failed to create finetune dir: {}", e))?;
+        fs::create_dir_all(&out_dir)
+            .map_err(|e| format!("Failed to create finetune dir: {}", e))?;
     }
     let out_file = out_dir.join("neocoder_memory.jsonl");
 

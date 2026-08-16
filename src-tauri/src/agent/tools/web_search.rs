@@ -1,5 +1,5 @@
-use crate::agent::utils;
 use super::{Tool, ToolContext};
+use crate::agent::utils;
 
 pub struct WebSearch;
 
@@ -40,23 +40,25 @@ async fn tavily_search(api_key: &str, query: &str, max_results: usize) -> String
     });
 
     match utils::http_client(30, "NeoCoder/1.0") {
-        Ok(client) => {
-            match client.post(url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    match resp.text().await {
-                        Ok(text) => {
-                            if !status.is_success() {
-                                return format!("Error: Tavily API returned status {}: {}", status, text.chars().take(200).collect::<String>());
-                            }
-                            parse_tavily_response(&text, query)
+        Ok(client) => match client.post(url).json(&body).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                match resp.text().await {
+                    Ok(text) => {
+                        if !status.is_success() {
+                            return format!(
+                                "Error: Tavily API returned status {}: {}",
+                                status,
+                                text.chars().take(200).collect::<String>()
+                            );
                         }
-                        Err(e) => format!("Error: Failed to read Tavily response: {}", e),
+                        parse_tavily_response(&text, query)
                     }
+                    Err(e) => format!("Error: Failed to read Tavily response: {}", e),
                 }
-                Err(e) => format!("Error: Tavily search request failed: {}", e),
             }
-        }
+            Err(e) => format!("Error: Tavily search request failed: {}", e),
+        },
         Err(e) => format!("Error: Failed to create HTTP client: {}", e),
     }
 }

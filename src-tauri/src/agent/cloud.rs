@@ -4,10 +4,10 @@
 //! Tasks are tracked with status, and results can be retrieved later.
 //! Optionally, completed tasks can auto-create GitHub PRs.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
@@ -71,8 +71,12 @@ pub struct PrConfig {
     pub base_branch: String,
 }
 
-fn default_remote() -> String { "origin".to_string() }
-fn default_base_branch() -> String { "main".to_string() }
+fn default_remote() -> String {
+    "origin".to_string()
+}
+fn default_base_branch() -> String {
+    "main".to_string()
+}
 
 /// A single cloud agent task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +113,12 @@ pub struct CloudTaskManager {
     storage_path: Option<PathBuf>,
 }
 
+impl Default for CloudTaskManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CloudTaskManager {
     pub fn new() -> Self {
         Self {
@@ -122,16 +132,23 @@ impl CloudTaskManager {
     /// `Interrupted` so the user can resume them.
     pub fn with_storage(path: PathBuf) -> Self {
         let mut tasks = HashMap::new();
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(list) = serde_json::from_str::<Vec<CloudTask>>(&content) {
-                for mut task in list {
-                    if matches!(task.status, CloudTaskStatus::Pending | CloudTaskStatus::Running) {
-                        task.status = CloudTaskStatus::Interrupted;
-                    }
-                    tasks.insert(task.id.clone(), task);
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(list) = serde_json::from_str::<Vec<CloudTask>>(&content)
+        {
+            for mut task in list {
+                if matches!(
+                    task.status,
+                    CloudTaskStatus::Pending | CloudTaskStatus::Running
+                ) {
+                    task.status = CloudTaskStatus::Interrupted;
                 }
-                log::info!("[CloudTask] Loaded {} tasks from {}", tasks.len(), path.display());
+                tasks.insert(task.id.clone(), task);
             }
+            log::info!(
+                "[CloudTask] Loaded {} tasks from {}",
+                tasks.len(),
+                path.display()
+            );
         }
         Self {
             tasks: Mutex::new(tasks),
@@ -141,7 +158,9 @@ impl CloudTaskManager {
 
     /// Write the current task snapshot back to disk (no-op without storage).
     async fn persist(&self) {
-        let Some(path) = self.storage_path.clone() else { return; };
+        let Some(path) = self.storage_path.clone() else {
+            return;
+        };
         let tasks = self.tasks.lock().await;
         let snapshot: Vec<CloudTask> = tasks.values().cloned().collect();
         drop(tasks);
@@ -265,10 +284,21 @@ pub fn spawn_background_sub_agent(
             )
         })
         .unwrap_or_else(|| {
-            (crate::config::LlmProvider::OpenAI, String::new(), String::new())
+            (
+                crate::config::LlmProvider::OpenAI,
+                String::new(),
+                String::new(),
+            )
         });
 
-    let task_id = format!("bg-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("task"));
+    let task_id = format!(
+        "bg-{}",
+        uuid::Uuid::new_v4()
+            .to_string()
+            .split('-')
+            .next()
+            .unwrap_or("task")
+    );
     let app_clone = app.clone();
     let task_manager_clone = task_manager.clone();
     let task_id_clone = task_id.clone();
@@ -331,22 +361,30 @@ pub fn spawn_background_sub_agent(
 
         match result {
             Ok(final_text) => {
-                task_manager_clone.complete(&task_id_clone, final_text.clone()).await;
-                let _ = app_clone.emit("cloud-agent-event", serde_json::json!({
-                    "type": "completed",
-                    "task_id": task_id_clone,
-                    "source": "background_sub_agent",
-                    "result": final_text,
-                }));
+                task_manager_clone
+                    .complete(&task_id_clone, final_text.clone())
+                    .await;
+                let _ = app_clone.emit(
+                    "cloud-agent-event",
+                    serde_json::json!({
+                        "type": "completed",
+                        "task_id": task_id_clone,
+                        "source": "background_sub_agent",
+                        "result": final_text,
+                    }),
+                );
             }
             Err(e) => {
                 task_manager_clone.fail(&task_id_clone, e.clone()).await;
-                let _ = app_clone.emit("cloud-agent-event", serde_json::json!({
-                    "type": "failed",
-                    "task_id": task_id_clone,
-                    "source": "background_sub_agent",
-                    "error": e,
-                }));
+                let _ = app_clone.emit(
+                    "cloud-agent-event",
+                    serde_json::json!({
+                        "type": "failed",
+                        "task_id": task_id_clone,
+                        "source": "background_sub_agent",
+                        "error": e,
+                    }),
+                );
             }
         }
 
@@ -354,15 +392,21 @@ pub fn spawn_background_sub_agent(
         {
             let mem = memory_arc.write().await;
             let status = task_manager_clone.get(&task_id_clone).await;
-            if let Some(task_record) = status {
-                if let Some(ref result_text) = task_record.result {
-                    mem.add_message(&session_id_clone, crate::chat::ChatMessage {
+            if let Some(task_record) = status
+                && let Some(ref result_text) = task_record.result
+            {
+                mem.add_message(
+                    &session_id_clone,
+                    crate::chat::ChatMessage {
                         role: crate::chat::Role::Assistant,
-                        content: format!("[Background Agent Result: {}]\n\n{}", agent_id, result_text),
+                        content: format!(
+                            "[Background Agent Result: {}]\n\n{}",
+                            agent_id, result_text
+                        ),
                         images: None,
                         tool_calls: None,
-                    });
-                }
+                    },
+                );
             }
         }
     });
@@ -441,11 +485,7 @@ pub async fn create_github_pr(config: &PrConfig) -> Result<String, String> {
 
     let output = Command::new("gh")
         .args([
-            "pr", "create",
-            "--repo", repo,
-            "--head", branch,
-            "--base", base,
-            "--title", pr_title,
+            "pr", "create", "--repo", repo, "--head", branch, "--base", base, "--title", pr_title,
             "--body", &pr_body,
         ])
         .output()
@@ -489,8 +529,12 @@ mod tests {
         let path = dir.join("cloud_tasks.json");
 
         let manager = CloudTaskManager::with_storage(path.clone());
-        manager.register(sample_task("t1", CloudTaskStatus::Running)).await;
-        manager.register(sample_task("t2", CloudTaskStatus::Completed)).await;
+        manager
+            .register(sample_task("t1", CloudTaskStatus::Running))
+            .await;
+        manager
+            .register(sample_task("t2", CloudTaskStatus::Completed))
+            .await;
 
         // 状态变更后快照已写盘
         assert!(path.exists());
@@ -499,9 +543,15 @@ mod tests {
         let reloaded = CloudTaskManager::with_storage(path.clone());
         assert_eq!(reloaded.list().await.len(), 2);
         // 运行中的任务被标记为 Interrupted，等待用户恢复
-        assert_eq!(reloaded.get("t1").await.unwrap().status, CloudTaskStatus::Interrupted);
+        assert_eq!(
+            reloaded.get("t1").await.unwrap().status,
+            CloudTaskStatus::Interrupted
+        );
         // 已完成的任务原样保留
-        assert_eq!(reloaded.get("t2").await.unwrap().status, CloudTaskStatus::Completed);
+        assert_eq!(
+            reloaded.get("t2").await.unwrap().status,
+            CloudTaskStatus::Completed
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -513,7 +563,9 @@ mod tests {
         let path = dir.join("cloud_tasks.json");
 
         let manager = CloudTaskManager::with_storage(path.clone());
-        manager.register(sample_task("t1", CloudTaskStatus::Pending)).await;
+        manager
+            .register(sample_task("t1", CloudTaskStatus::Pending))
+            .await;
         manager.update_status("t1", CloudTaskStatus::Running).await;
         manager.complete("t1", "done".to_string()).await;
 
@@ -529,7 +581,9 @@ mod tests {
     #[tokio::test]
     async fn test_without_storage_skips_persistence() {
         let manager = CloudTaskManager::new();
-        manager.register(sample_task("t1", CloudTaskStatus::Pending)).await;
+        manager
+            .register(sample_task("t1", CloudTaskStatus::Pending))
+            .await;
         manager.update_status("t1", CloudTaskStatus::Running).await;
         assert_eq!(manager.list().await.len(), 1);
     }

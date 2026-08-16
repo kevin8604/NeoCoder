@@ -6,8 +6,8 @@
 //! project and injects them into the system prompt, so the model can apply a
 //! known fix directly instead of debugging the same problem from scratch.
 
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// A single learned failure pattern.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,7 +64,8 @@ fn extract_signature(result: &str) -> Option<String> {
     for line in result.lines().take(400) {
         for (re, _) in MATCHERS.iter() {
             if let Some(caps) = re.captures(line) {
-                let sig = caps.get(1)
+                let sig = caps
+                    .get(1)
                     .map(|m| m.as_str().to_string())
                     .unwrap_or_else(|| line.trim().to_string());
                 let sig = sig.trim().chars().take(60).collect::<String>();
@@ -169,7 +170,9 @@ impl FailureLessonsStore {
         if self.inner.lessons.len() <= MAX_LESSONS {
             return;
         }
-        self.inner.lessons.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        self.inner
+            .lessons
+            .sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
         self.inner.lessons.truncate(MAX_LESSONS);
     }
 
@@ -214,7 +217,11 @@ impl FailureLessonsStore {
                 l.count,
                 l.signature,
                 l.tool,
-                if l.snippet.is_empty() { "(no snippet)" } else { &l.snippet }
+                if l.snippet.is_empty() {
+                    "(no snippet)"
+                } else {
+                    &l.snippet
+                }
             ));
         }
         out
@@ -240,18 +247,27 @@ mod tests {
     #[test]
     fn extracts_python_signature() {
         let out = "ModuleNotFoundError: No module named 'requests'";
-        assert_eq!(extract_signature(out).as_deref(), Some("ModuleNotFoundError"));
+        assert_eq!(
+            extract_signature(out).as_deref(),
+            Some("ModuleNotFoundError")
+        );
     }
 
     #[test]
     fn falls_back_to_error_line() {
         let out = "error: could not compile `demo` (bin \"demo\")";
-        assert_eq!(extract_signature(out).as_deref(), Some("error: could not compile `demo` (bin \"demo\")"));
+        assert_eq!(
+            extract_signature(out).as_deref(),
+            Some("error: could not compile `demo` (bin \"demo\")")
+        );
     }
 
     #[test]
     fn ignores_clean_output() {
-        assert_eq!(extract_signature("All tests passed. 42 passed, 0 failed."), None);
+        assert_eq!(
+            extract_signature("All tests passed. 42 passed, 0 failed."),
+            None
+        );
         assert_eq!(extract_signature("Finished `dev` profile"), None);
     }
 

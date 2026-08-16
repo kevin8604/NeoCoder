@@ -2,14 +2,21 @@ use std::path::{Path, PathBuf};
 
 /// 在文件遍历和 glob 搜索中跳过的目录
 pub const SKIP_DIRS: &[&str] = &[
-    ".git", "node_modules", "target", "dist", "build",
-    ".next", "__pycache__", ".svn",
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    "__pycache__",
+    ".svn",
 ];
 
 /// 检查路径中是否包含应跳过的目录
 pub fn is_skipped_dir(path: &Path) -> bool {
     path.components().any(|c| {
-        c.as_os_str().to_str()
+        c.as_os_str()
+            .to_str()
             .map(|s| SKIP_DIRS.contains(&s))
             .unwrap_or(false)
     })
@@ -22,34 +29,35 @@ pub fn is_skipped_dir(path: &Path) -> bool {
 #[cfg(target_os = "windows")]
 pub fn normalize_cygwin_path(input: &str) -> String {
     // Case 1: /cygdrive/X/... → X:\...
-    if let Some(rest) = input.strip_prefix("/cygdrive/").or_else(|| input.strip_prefix("\\cygdrive\\")) {
-        if let Some(drive) = rest.chars().next() {
-            if drive.is_ascii_alphabetic() {
-                let remainder = &rest[1..]; // after drive letter
-                let win_path = format!(
-                    "{}:{}",
-                    drive.to_ascii_uppercase(),
-                    remainder.replace('/', "\\")
-                );
-                return win_path;
-            }
-        }
+    if let Some(rest) = input
+        .strip_prefix("/cygdrive/")
+        .or_else(|| input.strip_prefix("\\cygdrive\\"))
+        && let Some(drive) = rest.chars().next()
+        && drive.is_ascii_alphabetic()
+    {
+        let remainder = &rest[1..]; // after drive letter
+        let win_path = format!(
+            "{}:{}",
+            drive.to_ascii_uppercase(),
+            remainder.replace('/', "\\")
+        );
+        return win_path;
     }
     // Case 2: /X/foo (MSYS2 style, single letter at root)
     let trimmed = input.strip_prefix('/').or_else(|| input.strip_prefix('\\'));
-    if let Some(rest) = trimmed {
-        if rest.len() >= 2 {
-            let mut chars = rest.chars();
-            let maybe_drive = chars.next().unwrap();
-            let next = chars.next().unwrap();
-            if maybe_drive.is_ascii_alphabetic() && (next == '/' || next == '\\') {
-                let win_path = format!(
-                    "{}:{}",
-                    maybe_drive.to_ascii_uppercase(),
-                    rest[1..].replace('/', "\\")
-                );
-                return win_path;
-            }
+    if let Some(rest) = trimmed
+        && rest.len() >= 2
+    {
+        let mut chars = rest.chars();
+        let maybe_drive = chars.next().unwrap();
+        let next = chars.next().unwrap();
+        if maybe_drive.is_ascii_alphabetic() && (next == '/' || next == '\\') {
+            let win_path = format!(
+                "{}:{}",
+                maybe_drive.to_ascii_uppercase(),
+                rest[1..].replace('/', "\\")
+            );
+            return win_path;
         }
     }
     input.to_string()

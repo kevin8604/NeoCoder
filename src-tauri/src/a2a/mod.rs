@@ -13,20 +13,11 @@ use serde_json::Value;
 /// Client-side configuration of a remote A2A agent (persisted in AppSettings).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[derive(Default)]
 pub struct A2aAgentConfig {
     pub name: String,
     pub url: String,
     pub description: String,
-}
-
-impl Default for A2aAgentConfig {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            url: String::new(),
-            description: String::new(),
-        }
-    }
 }
 
 /// Agent Card — describes an A2A agent's identity, capabilities and skills.
@@ -53,6 +44,7 @@ pub struct AgentCard {
 /// Protocol capabilities advertised by an agent.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct AgentCapabilities {
     #[serde(default)]
     pub streaming: bool,
@@ -60,16 +52,6 @@ pub struct AgentCapabilities {
     pub push_notifications: bool,
     #[serde(default)]
     pub state_transition_history: bool,
-}
-
-impl Default for AgentCapabilities {
-    fn default() -> Self {
-        Self {
-            streaming: false,
-            push_notifications: false,
-            state_transition_history: false,
-        }
-    }
 }
 
 /// Authentication schemes an agent accepts.
@@ -498,7 +480,10 @@ mod tests {
             serde_json::to_string(&TaskState::Completed).unwrap(),
             "\"completed\""
         );
-        assert_eq!(serde_json::to_string(&TaskState::Failed).unwrap(), "\"failed\"");
+        assert_eq!(
+            serde_json::to_string(&TaskState::Failed).unwrap(),
+            "\"failed\""
+        );
         assert_eq!(
             serde_json::to_string(&TaskState::Canceled).unwrap(),
             "\"canceled\""
@@ -531,7 +516,9 @@ mod tests {
         let mut task = Task::new("t1", TaskStatus::new(TaskState::Working));
         task.artifacts = vec![Artifact {
             name: "result.txt".into(),
-            parts: vec![Part::Text { text: "done".into() }],
+            parts: vec![Part::Text {
+                text: "done".into(),
+            }],
             metadata: None,
         }];
         task.history = vec![Message::text(MessageRole::User, "hello")];
@@ -543,7 +530,7 @@ mod tests {
         assert_eq!(task, back);
         assert!(back.created_at.is_some());
         assert!(back.updated_at.is_some());
-        assert!(back.is_terminal() == false);
+        assert!(!back.is_terminal());
     }
 
     #[test]
@@ -560,7 +547,11 @@ mod tests {
         }))
         .unwrap();
         match file {
-            Part::File { ref name, ref bytes, .. } => {
+            Part::File {
+                ref name,
+                ref bytes,
+                ..
+            } => {
                 assert_eq!(name, "a.txt");
                 assert_eq!(bytes.as_deref(), Some("aGVsbG8="));
             }
@@ -592,9 +583,15 @@ mod tests {
         let m = Message {
             role: MessageRole::User,
             parts: vec![
-                Part::Text { text: "line1".into() },
-                Part::Data { data: json!({"a": 1}) },
-                Part::Text { text: "line2".into() },
+                Part::Text {
+                    text: "line1".into(),
+                },
+                Part::Data {
+                    data: json!({"a": 1}),
+                },
+                Part::Text {
+                    text: "line2".into(),
+                },
             ],
             message_id: None,
         };
@@ -605,7 +602,9 @@ mod tests {
     fn test_artifact_roundtrip() {
         let artifact = Artifact {
             name: "out".into(),
-            parts: vec![Part::Text { text: "data".into() }],
+            parts: vec![Part::Text {
+                text: "data".into(),
+            }],
             metadata: Some(json!({"lang": "rust"})),
         };
         let v = serde_json::to_value(&artifact).unwrap();
@@ -663,8 +662,7 @@ mod tests {
                 .unwrap();
         assert!(with_null.is_ok());
         let minimal: JsonRpcResponse =
-            serde_json::from_value(json!({"jsonrpc": "2.0", "id": 1, "result": {"a": 1}}))
-                .unwrap();
+            serde_json::from_value(json!({"jsonrpc": "2.0", "id": 1, "result": {"a": 1}})).unwrap();
         assert!(minimal.is_ok());
     }
 
@@ -678,8 +676,7 @@ mod tests {
     #[test]
     fn test_empty_message_parts() {
         // parts 为空数组合法
-        let m: Message =
-            serde_json::from_value(json!({"role": "user", "parts": []})).unwrap();
+        let m: Message = serde_json::from_value(json!({"role": "user", "parts": []})).unwrap();
         assert!(m.parts.is_empty());
         // 缺 parts 字段报错
         assert!(serde_json::from_value::<Message>(json!({"role": "user"})).is_err());
@@ -732,7 +729,9 @@ mod tests {
         let mut task = Task::new("t1", TaskStatus::with_message(TaskState::Completed, "ok"));
         task.artifacts = vec![Artifact {
             name: "result".into(),
-            parts: vec![Part::Text { text: "hello world".into() }],
+            parts: vec![Part::Text {
+                text: "hello world".into(),
+            }],
             metadata: None,
         }];
         let summary = summarize_task(&task);

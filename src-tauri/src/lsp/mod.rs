@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -109,7 +109,8 @@ fn path_to_uri(file_path: &str) -> String {
 
 // ── LSP Client ─────────────────────────────────────────────────────────────
 
-type PendingMap = Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>>>>;
+type PendingMap =
+    Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>>>>;
 
 pub struct LspClient {
     child: Option<Child>,
@@ -132,8 +133,14 @@ impl LspClient {
             .spawn()
             .map_err(|e| format!("Failed to start LSP server '{}': {}", cmd, e))?;
 
-        let stdin = child.stdin.take().ok_or("Failed to open stdin for LSP server")?;
-        let stdout = child.stdout.take().ok_or("Failed to open stdout for LSP server")?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or("Failed to open stdin for LSP server")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("Failed to open stdout for LSP server")?;
 
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let pending_clone = pending.clone();
@@ -181,7 +188,9 @@ impl LspClient {
         let _init_result = client.send_request("initialize", init_params).await?;
 
         // Send initialized notification
-        client.send_notification("initialized", serde_json::json!({})).await?;
+        client
+            .send_notification("initialized", serde_json::json!({}))
+            .await?;
 
         log::info!("LSP client started for {} with {}", language, cmd);
         Ok(client)
@@ -189,10 +198,7 @@ impl LspClient {
 
     // ── Background reader ──────────────────────────────────────────────────
 
-    async fn reader_task(
-        mut stdout: tokio::process::ChildStdout,
-        pending: PendingMap,
-    ) {
+    async fn reader_task(mut stdout: tokio::process::ChildStdout, pending: PendingMap) {
         let mut reader = BufReader::new(&mut stdout);
 
         loop {
@@ -219,19 +225,20 @@ impl LspClient {
             };
 
             // Dispatch to pending request if it has an id
-            if let Some(id_val) = value.get("id") {
-                if let Some(id) = id_val.as_u64() {
-                    let mut map = pending.lock().await;
-                    if let Some(sender) = map.remove(&id) {
-                        // Check for error response
-                        if let Some(error) = value.get("error") {
-                            let msg = error.get("message")
-                                .and_then(|m| m.as_str())
-                                .unwrap_or("Unknown LSP error");
-                            let _ = sender.send(Err(msg.to_string()));
-                        } else if value.get("result").is_some() {
-                            let _ = sender.send(Ok(value));
-                        }
+            if let Some(id_val) = value.get("id")
+                && let Some(id) = id_val.as_u64()
+            {
+                let mut map = pending.lock().await;
+                if let Some(sender) = map.remove(&id) {
+                    // Check for error response
+                    if let Some(error) = value.get("error") {
+                        let msg = error
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("Unknown LSP error");
+                        let _ = sender.send(Err(msg.to_string()));
+                    } else if value.get("result").is_some() {
+                        let _ = sender.send(Ok(value));
                     }
                 }
             }
@@ -244,7 +251,9 @@ impl LspClient {
         }
     }
 
-    async fn read_content_length(reader: &mut BufReader<&mut tokio::process::ChildStdout>) -> Option<u32> {
+    async fn read_content_length(
+        reader: &mut BufReader<&mut tokio::process::ChildStdout>,
+    ) -> Option<u32> {
         loop {
             let mut line = String::new();
             match reader.read_line(&mut line).await {
@@ -256,20 +265,20 @@ impl LspClient {
                 }
             }
 
-            if let Some(len_str) = line.strip_prefix("Content-Length: ") {
-                if let Ok(len) = len_str.trim().parse::<u32>() {
-                    // Consume until empty line (end of headers)
-                    loop {
-                        let mut empty = String::new();
-                        match reader.read_line(&mut empty).await {
-                            Ok(0) => return None,
-                            Ok(_) => {
-                                if empty == "\r\n" || empty == "\n" {
-                                    return Some(len);
-                                }
+            if let Some(len_str) = line.strip_prefix("Content-Length: ")
+                && let Ok(len) = len_str.trim().parse::<u32>()
+            {
+                // Consume until empty line (end of headers)
+                loop {
+                    let mut empty = String::new();
+                    match reader.read_line(&mut empty).await {
+                        Ok(0) => return None,
+                        Ok(_) => {
+                            if empty == "\r\n" || empty == "\n" {
+                                return Some(len);
                             }
-                            Err(_) => return None,
                         }
+                        Err(_) => return None,
                     }
                 }
             }
@@ -278,7 +287,11 @@ impl LspClient {
 
     // ── JSON-RPC helpers ───────────────────────────────────────────────────
 
-    async fn send_request(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+    async fn send_request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = tokio::sync::oneshot::channel();
 
@@ -307,7 +320,11 @@ impl LspClient {
         }
     }
 
-    async fn send_notification(&self, method: &str, params: serde_json::Value) -> Result<(), String> {
+    async fn send_notification(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<(), String> {
         let notification = serde_json::json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -321,8 +338,14 @@ impl LspClient {
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
 
         let mut stdin = self.stdin.lock().await;
-        stdin.write_all(header.as_bytes()).await.map_err(|e| e.to_string())?;
-        stdin.write_all(body.as_bytes()).await.map_err(|e| e.to_string())?;
+        stdin
+            .write_all(header.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
+        stdin
+            .write_all(body.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
         stdin.flush().await.map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -332,58 +355,95 @@ impl LspClient {
     /// Get document symbols for a file.
     pub async fn get_symbols(&self, file_path: &str) -> Result<Vec<LSPSymbol>, String> {
         let uri = path_to_uri(file_path);
-        let result = self.send_request("textDocument/documentSymbol", serde_json::json!({
-            "textDocument": { "uri": uri }
-        })).await?;
+        let result = self
+            .send_request(
+                "textDocument/documentSymbol",
+                serde_json::json!({
+                    "textDocument": { "uri": uri }
+                }),
+            )
+            .await?;
 
         let symbols = parse_symbol_response(&result, file_path)?;
         Ok(symbols)
     }
 
     /// Get hover information at a position.
-    pub async fn get_hover(&self, file_path: &str, line: u32, column: u32) -> Result<Option<LSPHoverInfo>, String> {
+    pub async fn get_hover(
+        &self,
+        file_path: &str,
+        line: u32,
+        column: u32,
+    ) -> Result<Option<LSPHoverInfo>, String> {
         let uri = path_to_uri(file_path);
-        let result = self.send_request("textDocument/hover", serde_json::json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": column }
-        })).await?;
+        let result = self
+            .send_request(
+                "textDocument/hover",
+                serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": column }
+                }),
+            )
+            .await?;
 
         Ok(parse_hover_response(&result))
     }
 
     /// Notify LSP that a document was opened.
-    pub async fn did_open(&self, file_path: &str, language: &str, text: &str) -> Result<(), String> {
+    pub async fn did_open(
+        &self,
+        file_path: &str,
+        language: &str,
+        text: &str,
+    ) -> Result<(), String> {
         let uri = path_to_uri(file_path);
-        self.send_notification("textDocument/didOpen", serde_json::json!({
-            "textDocument": {
-                "uri": uri,
-                "languageId": language,
-                "version": 1,
-                "text": text
-            }
-        })).await
+        self.send_notification(
+            "textDocument/didOpen",
+            serde_json::json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": language,
+                    "version": 1,
+                    "text": text
+                }
+            }),
+        )
+        .await
     }
 
     /// Notify LSP that a document was changed.
-    pub async fn did_change(&self, file_path: &str, text: &str, version: i32) -> Result<(), String> {
+    pub async fn did_change(
+        &self,
+        file_path: &str,
+        text: &str,
+        version: i32,
+    ) -> Result<(), String> {
         let uri = path_to_uri(file_path);
-        self.send_notification("textDocument/didChange", serde_json::json!({
-            "textDocument": {
-                "uri": uri,
-                "version": version
-            },
-            "contentChanges": [{
-                "text": text
-            }]
-        })).await
+        self.send_notification(
+            "textDocument/didChange",
+            serde_json::json!({
+                "textDocument": {
+                    "uri": uri,
+                    "version": version
+                },
+                "contentChanges": [{
+                    "text": text
+                }]
+            }),
+        )
+        .await
     }
 
     /// Notify LSP that a document was closed.
     pub async fn did_close(&self, file_path: &str) -> Result<(), String> {
         let uri = path_to_uri(file_path);
-        self.send_notification("textDocument/didClose", serde_json::json!({
-            "textDocument": { "uri": uri }
-        })).await
+        self.send_notification(
+            "textDocument/didClose",
+            serde_json::json!({
+                "textDocument": { "uri": uri }
+            }),
+        )
+        .await
     }
 
     /// Rename a symbol at the given position. Returns all edits across files.
@@ -395,11 +455,16 @@ impl LspClient {
         new_name: &str,
     ) -> Result<Vec<LSPTextEdit>, String> {
         let uri = path_to_uri(file_path);
-        let result = self.send_request("textDocument/rename", serde_json::json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": column },
-            "newName": new_name
-        })).await?;
+        let result = self
+            .send_request(
+                "textDocument/rename",
+                serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": column },
+                    "newName": new_name
+                }),
+            )
+            .await?;
         parse_workspace_edit(&result)
     }
 
@@ -412,24 +477,34 @@ impl LspClient {
         diagnostics: &[serde_json::Value],
     ) -> Result<Vec<LSPCodeAction>, String> {
         let uri = path_to_uri(file_path);
-        let result = self.send_request("textDocument/codeAction", serde_json::json!({
-            "textDocument": { "uri": uri },
-            "range": {
-                "start": { "line": line, "character": column },
-                "end": { "line": line, "character": column }
-            },
-            "context": { "diagnostics": diagnostics }
-        })).await?;
+        let result = self
+            .send_request(
+                "textDocument/codeAction",
+                serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "range": {
+                        "start": { "line": line, "character": column },
+                        "end": { "line": line, "character": column }
+                    },
+                    "context": { "diagnostics": diagnostics }
+                }),
+            )
+            .await?;
         parse_code_actions(&result)
     }
 
     /// Format the whole document. Returns text edits to apply.
     pub async fn format_document(&self, file_path: &str) -> Result<Vec<LSPTextEdit>, String> {
         let uri = path_to_uri(file_path);
-        let result = self.send_request("textDocument/formatting", serde_json::json!({
-            "textDocument": { "uri": uri },
-            "options": { "tabSize": 4, "insertSpaces": true }
-        })).await?;
+        let result = self
+            .send_request(
+                "textDocument/formatting",
+                serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "options": { "tabSize": 4, "insertSpaces": true }
+                }),
+            )
+            .await?;
         parse_text_edits(&result, file_path)
     }
 
@@ -448,7 +523,10 @@ impl LspClient {
 
 // ── Response Parsers ───────────────────────────────────────────────────────
 
-fn parse_symbol_response(response: &serde_json::Value, file_path: &str) -> Result<Vec<LSPSymbol>, String> {
+fn parse_symbol_response(
+    response: &serde_json::Value,
+    file_path: &str,
+) -> Result<Vec<LSPSymbol>, String> {
     let mut symbols = Vec::new();
 
     let items = match response.get("result") {
@@ -466,12 +544,27 @@ fn parse_symbol_response(response: &serde_json::Value, file_path: &str) -> Resul
 
             // DocumentSymbol format (nested)
             if let Some(selection_range) = item.get("selectionRange") {
-                let start_line = selection_range.pointer("/start/line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let start_col = selection_range.pointer("/start/character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let end_line = selection_range.pointer("/end/line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let end_col = selection_range.pointer("/end/character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let start_line = selection_range
+                    .pointer("/start/line")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let start_col = selection_range
+                    .pointer("/start/character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let end_line = selection_range
+                    .pointer("/end/line")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let end_col = selection_range
+                    .pointer("/end/character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
 
-                let detail = item.get("detail").and_then(|d| d.as_str()).map(|s| s.to_string());
+                let detail = item
+                    .get("detail")
+                    .and_then(|d| d.as_str())
+                    .map(|s| s.to_string());
 
                 symbols.push(LSPSymbol {
                     name: name.to_string(),
@@ -488,18 +581,38 @@ fn parse_symbol_response(response: &serde_json::Value, file_path: &str) -> Resul
                 if let Some(children) = item.get("children").and_then(|c| c.as_array()) {
                     for child in children {
                         if let Some(child_name) = child.get("name").and_then(|n| n.as_str()) {
-                            let child_kind = child.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
+                            let child_kind =
+                                child.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
                             let child_range = child.get("selectionRange");
                             if let Some(cr) = child_range {
                                 symbols.push(LSPSymbol {
                                     name: child_name.to_string(),
                                     kind: symbol_kind_name(child_kind),
                                     file_path: file_path.to_string(),
-                                    start_line: cr.pointer("/start/line").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                                    start_column: cr.pointer("/start/character").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                                    end_line: cr.pointer("/end/line").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                                    end_column: cr.pointer("/end/character").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                                    detail: child.get("detail").and_then(|d| d.as_str()).map(|s| s.to_string()),
+                                    start_line: cr
+                                        .pointer("/start/line")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0)
+                                        as u32,
+                                    start_column: cr
+                                        .pointer("/start/character")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0)
+                                        as u32,
+                                    end_line: cr
+                                        .pointer("/end/line")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0)
+                                        as u32,
+                                    end_column: cr
+                                        .pointer("/end/character")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0)
+                                        as u32,
+                                    detail: child
+                                        .get("detail")
+                                        .and_then(|d| d.as_str())
+                                        .map(|s| s.to_string()),
                                 });
                             }
                         }
@@ -507,24 +620,39 @@ fn parse_symbol_response(response: &serde_json::Value, file_path: &str) -> Resul
                 }
             }
             // SymbolInformation format (flat)
-            else if let Some(location) = item.get("location") {
-                if let Some(range) = location.get("range") {
-                    let start_line = range.pointer("/start/line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                    let start_col = range.pointer("/start/character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                    let end_line = range.pointer("/end/line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                    let end_col = range.pointer("/end/character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            else if let Some(location) = item.get("location")
+                && let Some(range) = location.get("range")
+            {
+                let start_line = range
+                    .pointer("/start/line")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let start_col = range
+                    .pointer("/start/character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let end_line = range
+                    .pointer("/end/line")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let end_col = range
+                    .pointer("/end/character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
 
-                    symbols.push(LSPSymbol {
-                        name: name.to_string(),
-                        kind: kind_name,
-                        file_path: file_path.to_string(),
-                        start_line,
-                        start_column: start_col,
-                        end_line,
-                        end_column: end_col,
-                        detail: item.get("detail").and_then(|d| d.as_str()).map(|s| s.to_string()),
-                    });
-                }
+                symbols.push(LSPSymbol {
+                    name: name.to_string(),
+                    kind: kind_name,
+                    file_path: file_path.to_string(),
+                    start_line,
+                    start_column: start_col,
+                    end_line,
+                    end_column: end_col,
+                    detail: item
+                        .get("detail")
+                        .and_then(|d| d.as_str())
+                        .map(|s| s.to_string()),
+                });
             }
         }
     }
@@ -541,13 +669,16 @@ fn parse_hover_response(response: &serde_json::Value) -> Option<LSPHoverInfo> {
     let text = match contents {
         // MarkupContent: { kind: "markdown", value: "..." }
         serde_json::Value::Object(_) => {
-            contents.get("value")
+            contents
+                .get("value")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .or_else(|| {
                     // Could be MarkedString: { language: "rust", value: "..." }
                     contents.get("language").and_then(|_| {
-                        contents.get("value").and_then(|v| v.as_str().map(|s| s.to_string()))
+                        contents
+                            .get("value")
+                            .and_then(|v| v.as_str().map(|s| s.to_string()))
                     })
                 })
         }
@@ -569,7 +700,11 @@ fn parse_hover_response(response: &serde_json::Value) -> Option<LSPHoverInfo> {
                     _ => {}
                 }
             }
-            if combined.is_empty() { None } else { Some(combined) }
+            if combined.is_empty() {
+                None
+            } else {
+                Some(combined)
+            }
         }
         // Plain string
         serde_json::Value::String(s) => Some(s.clone()),
@@ -590,7 +725,10 @@ fn uri_to_path(uri: &str) -> String {
 }
 
 /// Parse a TextEdit array into LSPTextEdit entries.
-fn parse_text_edits(response: &serde_json::Value, file_path: &str) -> Result<Vec<LSPTextEdit>, String> {
+fn parse_text_edits(
+    response: &serde_json::Value,
+    file_path: &str,
+) -> Result<Vec<LSPTextEdit>, String> {
     let mut edits = Vec::new();
     let result = response.get("result");
     let items = match result {
@@ -621,7 +759,11 @@ fn parse_single_edit(item: &serde_json::Value) -> Option<(u32, u32, u32, u32, St
     let start_col = range.pointer("/start/character")?.as_u64()? as u32;
     let end_line = range.pointer("/end/line")?.as_u64()? as u32;
     let end_col = range.pointer("/end/character")?.as_u64()? as u32;
-    let new_text = item.get("newText").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let new_text = item
+        .get("newText")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     Some((start_line, start_col, end_line, end_col, new_text))
 }
 
@@ -631,7 +773,10 @@ fn parse_workspace_edit(response: &serde_json::Value) -> Result<Vec<LSPTextEdit>
     let result = response.get("result");
 
     // `changes`: { uri: [TextEdit, ...] }
-    if let Some(changes) = result.and_then(|r| r.get("changes")).and_then(|c| c.as_object()) {
+    if let Some(changes) = result
+        .and_then(|r| r.get("changes"))
+        .and_then(|c| c.as_object())
+    {
         for (uri, edit_arr) in changes {
             let file_path = uri_to_path(uri);
             if let Some(arr) = edit_arr.as_array() {
@@ -652,9 +797,15 @@ fn parse_workspace_edit(response: &serde_json::Value) -> Result<Vec<LSPTextEdit>
     }
 
     // `documentChanges`: [{ textDocument: { uri }, edits: [TextEdit, ...] }]
-    if let Some(doc_changes) = result.and_then(|r| r.get("documentChanges")).and_then(|c| c.as_array()) {
+    if let Some(doc_changes) = result
+        .and_then(|r| r.get("documentChanges"))
+        .and_then(|c| c.as_array())
+    {
         for change in doc_changes {
-            let uri = change.pointer("/textDocument/uri").and_then(|v| v.as_str()).unwrap_or("");
+            let uri = change
+                .pointer("/textDocument/uri")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let file_path = uri_to_path(uri);
             if let Some(edit_arr) = change.get("edits").and_then(|e| e.as_array()) {
                 for item in edit_arr {
@@ -689,11 +840,18 @@ fn parse_code_actions(response: &serde_json::Value) -> Result<Vec<LSPCodeAction>
     };
 
     for item in items {
-        let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let title = item
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
         if title.is_empty() {
             continue;
         }
-        let kind = item.get("kind").and_then(|k| k.as_str()).map(|s| s.to_string());
+        let kind = item
+            .get("kind")
+            .and_then(|k| k.as_str())
+            .map(|s| s.to_string());
         let is_preferred = item.get("isPreferred").and_then(|p| p.as_bool());
 
         let mut edits = Vec::new();
@@ -750,6 +908,12 @@ pub struct LspManager {
     clients: RwLock<HashMap<String, LspClient>>,
 }
 
+impl Default for LspManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LspManager {
     pub fn new() -> Self {
         LspManager {
@@ -768,7 +932,10 @@ impl LspManager {
     }
 
     /// Get a reference to an existing client.
-    pub async fn get_client(&self, language: &str) -> Option<tokio::sync::RwLockReadGuard<'_, HashMap<String, LspClient>>> {
+    pub async fn get_client(
+        &self,
+        language: &str,
+    ) -> Option<tokio::sync::RwLockReadGuard<'_, HashMap<String, LspClient>>> {
         let clients = self.clients.read().await;
         if clients.contains_key(language) {
             Some(clients) // Return the guard so the caller can access
@@ -776,8 +943,6 @@ impl LspManager {
             None
         }
     }
-
-
 
     /// Shutdown and remove all LSP clients.
     pub async fn shutdown_all(&self) {
@@ -799,7 +964,11 @@ impl LspManager {
     }
 
     /// Get symbols from the LSP client for the given language.
-    pub async fn get_symbols(&self, language: &str, file_path: &str) -> Result<Vec<LSPSymbol>, String> {
+    pub async fn get_symbols(
+        &self,
+        language: &str,
+        file_path: &str,
+    ) -> Result<Vec<LSPSymbol>, String> {
         let clients = self.clients.read().await;
         if let Some(client) = clients.get(language) {
             client.get_symbols(file_path).await
@@ -809,7 +978,13 @@ impl LspManager {
     }
 
     /// Get hover info from the LSP client.
-    pub async fn get_hover(&self, language: &str, file_path: &str, line: u32, column: u32) -> Result<Option<LSPHoverInfo>, String> {
+    pub async fn get_hover(
+        &self,
+        language: &str,
+        file_path: &str,
+        line: u32,
+        column: u32,
+    ) -> Result<Option<LSPHoverInfo>, String> {
         let clients = self.clients.read().await;
         if let Some(client) = clients.get(language) {
             client.get_hover(file_path, line, column).await
@@ -819,7 +994,12 @@ impl LspManager {
     }
 
     /// Notify LSP that a document was opened.
-    pub async fn did_open(&self, language: &str, file_path: &str, file_text: &str) -> Result<(), String> {
+    pub async fn did_open(
+        &self,
+        language: &str,
+        file_path: &str,
+        file_text: &str,
+    ) -> Result<(), String> {
         let clients = self.clients.read().await;
         if let Some(client) = clients.get(language) {
             client.did_open(file_path, language, file_text).await
@@ -829,7 +1009,13 @@ impl LspManager {
     }
 
     /// Notify LSP that a document was changed.
-    pub async fn did_change(&self, language: &str, file_path: &str, text: &str, version: i32) -> Result<(), String> {
+    pub async fn did_change(
+        &self,
+        language: &str,
+        file_path: &str,
+        text: &str,
+        version: i32,
+    ) -> Result<(), String> {
         let clients = self.clients.read().await;
         if let Some(client) = clients.get(language) {
             client.did_change(file_path, text, version).await
@@ -859,7 +1045,9 @@ impl LspManager {
     ) -> Result<Vec<LSPTextEdit>, String> {
         let clients = self.clients.read().await;
         if let Some(client) = clients.get(language) {
-            client.rename_symbol(file_path, line, column, new_name).await
+            client
+                .rename_symbol(file_path, line, column, new_name)
+                .await
         } else {
             Err(format!("No LSP client active for {}", language))
         }
@@ -876,7 +1064,9 @@ impl LspManager {
     ) -> Result<Vec<LSPCodeAction>, String> {
         let clients = self.clients.read().await;
         if let Some(client) = clients.get(language) {
-            client.code_action(file_path, line, column, diagnostics).await
+            client
+                .code_action(file_path, line, column, diagnostics)
+                .await
         } else {
             Err(format!("No LSP client active for {}", language))
         }
@@ -896,5 +1086,3 @@ impl LspManager {
         }
     }
 }
-
-

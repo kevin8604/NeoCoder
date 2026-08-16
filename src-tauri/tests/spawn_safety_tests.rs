@@ -27,7 +27,11 @@ mod spawn_safety {
         });
 
         let result = outer.await.unwrap();
-        assert!(result.contains("panic caught"), "should catch panic: {}", result);
+        assert!(
+            result.contains("panic caught"),
+            "should catch panic: {}",
+            result
+        );
         assert!(!result.contains("ok"), "should not return ok");
     }
 
@@ -57,8 +61,12 @@ mod spawn_safety {
             "Panic (payload unavailable)".to_string()
         };
 
-        assert!(extracted.contains(error_msg),
-            "payload should contain '{}', got '{}'", error_msg, extracted);
+        assert!(
+            extracted.contains(error_msg),
+            "payload should contain '{}', got '{}'",
+            error_msg,
+            extracted
+        );
     }
 
     /// Verifies that panic payload extraction works for String messages.
@@ -83,15 +91,16 @@ mod spawn_safety {
             "Panic (payload unavailable)".to_string()
         };
 
-        assert!(!extracted.is_empty(), "should extract non-empty panic message");
+        assert!(
+            !extracted.is_empty(),
+            "should extract non-empty panic message"
+        );
     }
 
     /// Verifies that a non-panic task error (cancellation) is correctly distinguished.
     #[tokio::test]
     async fn test_spawn_non_panic_error_distinguished() {
-        let handle = tokio::spawn(async {
-            Err::<(), String>("tool failure".to_string())
-        });
+        let handle = tokio::spawn(async { Err::<(), String>("tool failure".to_string()) });
 
         let result = handle.await.unwrap();
         assert!(result.is_err());
@@ -131,12 +140,9 @@ mod spawn_safety {
         let agent_id = "nonexistent";
         let agent_found = false;
 
-        let agent_ok = agent_id.is_empty()
-            || agent_id == "orchestrator"
-            || agent_found;
+        let agent_ok = agent_id.is_empty() || agent_id == "orchestrator" || agent_found;
 
-        assert!(!agent_ok,
-            "nonexistent agent ID should fail validation");
+        assert!(!agent_ok, "nonexistent agent ID should fail validation");
     }
 
     /// Verifies that orchestrator passes without agent def.
@@ -145,9 +151,7 @@ mod spawn_safety {
         let agent_id = "orchestrator";
         let agent_found = false;
 
-        let agent_ok = agent_id.is_empty()
-            || agent_id == "orchestrator"
-            || agent_found;
+        let agent_ok = agent_id.is_empty() || agent_id == "orchestrator" || agent_found;
 
         assert!(agent_ok, "orchestrator should pass without agent_def");
     }
@@ -158,10 +162,11 @@ mod spawn_safety {
         let agent_id = "";
         let agent_found = false;
 
-        let agent_ok = agent_id.is_empty()
-            || agent_id == "orchestrator"
-            || agent_found;
+        let agent_ok = agent_id.is_empty() || agent_id == "orchestrator" || agent_found;
 
-        assert!(agent_ok, "empty agent_id should pass (defaults to orchestrator)");
+        assert!(
+            agent_ok,
+            "empty agent_id should pass (defaults to orchestrator)"
+        );
     }
 }

@@ -26,7 +26,7 @@ pub async fn check_ollama(base_url: &str) -> LocalModelHealth {
                 running: false,
                 models: vec![],
                 error: Some(format!("Failed to build HTTP client: {}", e)),
-            }
+            };
         }
     };
 
@@ -38,14 +38,14 @@ pub async fn check_ollama(base_url: &str) -> LocalModelHealth {
                 running: false,
                 models: vec![],
                 error: Some(format!("HTTP {}", r.status())),
-            }
+            };
         }
         Err(e) => {
             return LocalModelHealth {
                 running: false,
                 models: vec![],
                 error: Some(format!("Connection failed: {}", e)),
-            }
+            };
         }
     };
 

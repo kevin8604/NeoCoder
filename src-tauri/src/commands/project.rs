@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use tauri::{Manager, State};
 use crate::commands::config::ConfigState;
 use crate::commands::skill::SkillState;
 use crate::config::Workspace;
-use crate::fs_watcher::FileWatcher;
 use crate::fs_service::FileService;
+use crate::fs_watcher::FileWatcher;
 use crate::rag::CodeIndexer;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tauri::{Manager, State};
 
 /// Global file snapshots for EditDiff accept/reject
 pub type FileSnapshots = Arc<std::sync::Mutex<HashMap<String, String>>>;
@@ -21,9 +21,20 @@ pub struct FileTreeItem {
 
 /// Default ignore patterns for file tree listing
 const IGNORE_DIRS: &[&str] = &[
-    ".git", "node_modules", "target", "dist", "build",
-    ".next", ".cache", "__pycache__", ".venv", "env",
-    ".idea", ".vscode", ".vs", ".DS_Store",
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".cache",
+    "__pycache__",
+    ".venv",
+    "env",
+    ".idea",
+    ".vscode",
+    ".vs",
+    ".DS_Store",
 ];
 
 fn should_ignore(name: &str) -> bool {
@@ -43,7 +54,12 @@ fn list_directory(path: &std::path::Path, max_depth: u32, current_depth: u32) ->
         .filter(|e| !should_ignore(&e.file_name().to_string_lossy()))
         .collect();
 
-    entries.sort_by_key(|e| (!e.file_type().map(|t| t.is_dir()).unwrap_or(false), e.file_name()));
+    entries.sort_by_key(|e| {
+        (
+            !e.file_type().map(|t| t.is_dir()).unwrap_or(false),
+            e.file_name(),
+        )
+    });
 
     for entry in entries {
         let entry_path = entry.path();
@@ -118,7 +134,9 @@ pub async fn open_project(
     };
 
     // Keep legacy project_paths list in sync (MRU, max 10) for older consumers
-    settings.project_paths.retain(|pp| pp.to_lowercase() != canonical_lower);
+    settings
+        .project_paths
+        .retain(|pp| pp.to_lowercase() != canonical_lower);
     settings.project_paths.insert(0, canonical_str.clone());
     settings.project_paths.truncate(10);
 
@@ -133,7 +151,12 @@ pub async fn open_project(
     )
     .await?;
 
-    state.manager.write().await.update_settings(settings).await?;
+    state
+        .manager
+        .write()
+        .await
+        .update_settings(settings)
+        .await?;
     Ok(result)
 }
 
@@ -152,48 +175,44 @@ pub async fn get_file_tree(
 }
 
 #[tauri::command]
-pub async fn read_file(
-    path: String,
-) -> Result<String, String> {
+pub async fn read_file(path: String) -> Result<String, String> {
     FileService::read_text(std::path::Path::new(&path), None, None)
 }
 
 #[tauri::command]
-pub async fn write_file(
-    path: String,
-    content: String,
-) -> Result<(), String> {
+pub async fn write_file(path: String, content: String) -> Result<(), String> {
     FileService::write_text(std::path::Path::new(&path), &content, None, None, false)
 }
 
 #[tauri::command]
-pub async fn create_file(
-    path: String,
-    content: Option<String>,
-) -> Result<(), String> {
-    FileService::write_text(std::path::Path::new(&path), content.as_deref().unwrap_or(""), None, None, false)
+pub async fn create_file(path: String, content: Option<String>) -> Result<(), String> {
+    FileService::write_text(
+        std::path::Path::new(&path),
+        content.as_deref().unwrap_or(""),
+        None,
+        None,
+        false,
+    )
 }
 
 #[tauri::command]
-pub async fn create_directory(
-    path: String,
-) -> Result<(), String> {
+pub async fn create_directory(path: String) -> Result<(), String> {
     FileService::create_dir_all(std::path::Path::new(&path), None, None)
 }
 
 #[tauri::command]
-pub async fn delete_file(
-    path: String,
-) -> Result<(), String> {
+pub async fn delete_file(path: String) -> Result<(), String> {
     FileService::remove(std::path::Path::new(&path), None, None)
 }
 
 #[tauri::command]
-pub async fn rename_file(
-    source: String,
-    destination: String,
-) -> Result<(), String> {
-    FileService::rename(std::path::Path::new(&source), std::path::Path::new(&destination), None, None)
+pub async fn rename_file(source: String, destination: String) -> Result<(), String> {
+    FileService::rename(
+        std::path::Path::new(&source),
+        std::path::Path::new(&destination),
+        None,
+        None,
+    )
 }
 
 /// Save file snapshots into global state for accept/reject
@@ -225,7 +244,8 @@ pub async fn reject_change(
     };
     if let Some(content) = original {
         // Restore original file content
-        std::fs::write(&file_path, &content).map_err(|e| format!("Failed to restore file: {}", e))?;
+        std::fs::write(&file_path, &content)
+            .map_err(|e| format!("Failed to restore file: {}", e))?;
         // Clear snapshot for this file
         if let Ok(mut s) = snapshots.lock() {
             s.remove(&file_path);
@@ -237,9 +257,7 @@ pub async fn reject_change(
 }
 
 #[tauri::command]
-pub async fn accept_all_changes(
-    snapshots: State<'_, FileSnapshots>,
-) -> Result<usize, String> {
+pub async fn accept_all_changes(snapshots: State<'_, FileSnapshots>) -> Result<usize, String> {
     // Changes are already applied by the Agent; just acknowledge all
     let count = {
         let s = snapshots.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -253,9 +271,7 @@ pub async fn accept_all_changes(
 }
 
 #[tauri::command]
-pub async fn reject_all_changes(
-    snapshots: State<'_, FileSnapshots>,
-) -> Result<usize, String> {
+pub async fn reject_all_changes(snapshots: State<'_, FileSnapshots>) -> Result<usize, String> {
     let entries: Vec<(String, String)> = {
         let s = snapshots.lock().map_err(|e| format!("Lock error: {}", e))?;
         s.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
@@ -276,7 +292,10 @@ pub async fn reject_all_changes(
     }
 
     if !errors.is_empty() {
-        return Err(format!("Some files failed to restore: {}", errors.join("; ")));
+        return Err(format!(
+            "Some files failed to restore: {}",
+            errors.join("; ")
+        ));
     }
     Ok(count)
 }

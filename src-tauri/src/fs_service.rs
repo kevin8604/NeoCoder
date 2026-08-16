@@ -58,7 +58,8 @@ impl FileService {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create parent dirs: {}", e))?;
         }
-        std::fs::write(path, content).map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+        std::fs::write(path, content)
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
     }
 
     /// 追加文本到文件末尾（文件不存在时创建）
@@ -138,7 +139,13 @@ impl FileService {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create parent dirs: {}", e))?;
         }
-        std::fs::rename(source, destination)
-            .map_err(|e| format!("Failed to rename {} to {}: {}", source.display(), destination.display(), e))
+        std::fs::rename(source, destination).map_err(|e| {
+            format!(
+                "Failed to rename {} to {}: {}",
+                source.display(),
+                destination.display(),
+                e
+            )
+        })
     }
 }

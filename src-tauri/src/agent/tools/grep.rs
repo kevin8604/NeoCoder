@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use crate::agent::utils::SKIP_DIRS;
 use super::{Tool, ToolContext};
+use crate::agent::utils::SKIP_DIRS;
+use std::path::PathBuf;
 
 pub struct Grep;
 
@@ -29,7 +29,10 @@ impl Tool for Grep {
 
         // Build the matcher: regex or case-insensitive substring
         let matcher: Box<dyn Fn(&str) -> bool + Send> = if use_regex {
-            match regex::RegexBuilder::new(pattern).case_insensitive(true).build() {
+            match regex::RegexBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
+            {
                 Ok(re) => Box::new(move |line: &str| re.is_match(line)),
                 Err(e) => return format!("Error: Invalid regex pattern '{}': {}", pattern, e),
             }
@@ -40,7 +43,10 @@ impl Tool for Grep {
 
         // Sandbox: check read access on search path
         let search_path_buf = std::path::PathBuf::from(search_path);
-        if let Err(e) = ctx.sandbox.check_path(&search_path_buf, ctx.project_path.as_deref(), false) {
+        if let Err(e) = ctx
+            .sandbox
+            .check_path(&search_path_buf, ctx.project_path.as_deref(), false)
+        {
             return format!("Error: Sandbox blocked: {}", e);
         }
 
@@ -66,10 +72,10 @@ impl Tool for Grep {
                 }
                 let path = entry.path();
                 if path.is_dir() {
-                    if let Some(name) = path.file_name() {
-                        if !skip_set.contains(name.to_string_lossy().as_ref()) {
-                            dirs.push(path);
-                        }
+                    if let Some(name) = path.file_name()
+                        && !skip_set.contains(name.to_string_lossy().as_ref())
+                    {
+                        dirs.push(path);
                     }
                 } else if path.is_file() {
                     // File pattern filter
@@ -87,7 +93,8 @@ impl Tool for Grep {
                                     break;
                                 }
                                 let start = line_num.saturating_sub(context_lines);
-                                let end = (line_num + context_lines).min(lines.len().saturating_sub(1));
+                                let end =
+                                    (line_num + context_lines).min(lines.len().saturating_sub(1));
                                 match_ranges.push((start, end));
                                 total_matches += 1;
                             }
@@ -108,7 +115,10 @@ impl Tool for Grep {
         }
 
         if results.is_empty() {
-            format!("No matches found for pattern '{}' in {}", pattern, search_path)
+            format!(
+                "No matches found for pattern '{}' in {}",
+                pattern, search_path
+            )
         } else {
             let mut output = format!(
                 "Grep results for '{}' ({} matches in {} files):\n\n",
@@ -166,8 +176,8 @@ fn matches_file_pattern(path: &std::path::Path, pattern: &str) -> bool {
     // Support comma-separated patterns: "*.rs,*.toml"
     for pat in pattern.split(',') {
         let pat = pat.trim();
-        if pat.starts_with('*') {
-            let ext = &pat[1..]; // includes the dot
+        if let Some(ext) = pat.strip_prefix('*') {
+            // includes the dot
             if file_name.ends_with(ext) {
                 return true;
             }

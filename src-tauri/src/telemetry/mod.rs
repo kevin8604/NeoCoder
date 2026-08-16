@@ -180,19 +180,43 @@ impl TelemetryCollector {
                 ..
             } => {
                 match outcome.as_str() {
-                    "success" => self.counters.successful_sessions.fetch_add(1, Ordering::Relaxed),
-                    "error" => self.counters.failed_sessions.fetch_add(1, Ordering::Relaxed),
-                    "cancelled" => self.counters.cancelled_sessions.fetch_add(1, Ordering::Relaxed),
+                    "success" => self
+                        .counters
+                        .successful_sessions
+                        .fetch_add(1, Ordering::Relaxed),
+                    "error" => self
+                        .counters
+                        .failed_sessions
+                        .fetch_add(1, Ordering::Relaxed),
+                    "cancelled" => self
+                        .counters
+                        .cancelled_sessions
+                        .fetch_add(1, Ordering::Relaxed),
                     _ => 0,
                 };
-                self.counters.total_iterations.fetch_add(*iterations as u64, Ordering::Relaxed);
-                self.counters.total_prompt_tokens.fetch_add(*total_prompt_tokens as u64, Ordering::Relaxed);
-                self.counters.total_completion_tokens.fetch_add(*total_completion_tokens as u64, Ordering::Relaxed);
+                self.counters
+                    .total_iterations
+                    .fetch_add(*iterations as u64, Ordering::Relaxed);
+                self.counters
+                    .total_prompt_tokens
+                    .fetch_add(*total_prompt_tokens as u64, Ordering::Relaxed);
+                self.counters
+                    .total_completion_tokens
+                    .fetch_add(*total_completion_tokens as u64, Ordering::Relaxed);
             }
-            TelemetryEvent::ToolCall { tool, success, is_loop, .. } => {
-                self.counters.total_tool_calls.fetch_add(1, Ordering::Relaxed);
+            TelemetryEvent::ToolCall {
+                tool,
+                success,
+                is_loop,
+                ..
+            } => {
+                self.counters
+                    .total_tool_calls
+                    .fetch_add(1, Ordering::Relaxed);
                 if !success {
-                    self.counters.total_tool_failures.fetch_add(1, Ordering::Relaxed);
+                    self.counters
+                        .total_tool_failures
+                        .fetch_add(1, Ordering::Relaxed);
                 }
                 if let Ok(mut usage) = self.counters.tool_usage.lock() {
                     *usage.entry(tool.clone()).or_insert(0) += 1;
@@ -200,10 +224,14 @@ impl TelemetryCollector {
                 let _ = is_loop; // tracked in JSONL but not in counters
             }
             TelemetryEvent::Completion { .. } => {
-                self.counters.total_completions.fetch_add(1, Ordering::Relaxed);
+                self.counters
+                    .total_completions
+                    .fetch_add(1, Ordering::Relaxed);
             }
             TelemetryEvent::InlineEdit { .. } => {
-                self.counters.total_inline_edits.fetch_add(1, Ordering::Relaxed);
+                self.counters
+                    .total_inline_edits
+                    .fetch_add(1, Ordering::Relaxed);
             }
             TelemetryEvent::ModelRouting { .. } => {
                 // No counter update, just logged to file
@@ -239,17 +267,23 @@ impl TelemetryCollector {
             0.0
         };
 
-        let tool_usage = self.counters.tool_usage.lock()
+        let tool_usage = self
+            .counters
+            .tool_usage
+            .lock()
             .map(|g| g.clone())
             .unwrap_or_default();
 
-        let model_usage = self.counters.model_usage.lock()
+        let model_usage = self
+            .counters
+            .model_usage
+            .lock()
             .map(|g| g.clone())
             .unwrap_or_default();
 
         // Sort tool usage by count (descending)
         let mut tool_usage_sorted: Vec<(String, u64)> = tool_usage.into_iter().collect();
-        tool_usage_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        tool_usage_sorted.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
 
         TelemetrySummary {
             total_sessions,
@@ -263,7 +297,10 @@ impl TelemetryCollector {
             total_tool_failures,
             tool_failure_rate,
             total_prompt_tokens: self.counters.total_prompt_tokens.load(Ordering::Relaxed),
-            total_completion_tokens: self.counters.total_completion_tokens.load(Ordering::Relaxed),
+            total_completion_tokens: self
+                .counters
+                .total_completion_tokens
+                .load(Ordering::Relaxed),
             total_completions: self.counters.total_completions.load(Ordering::Relaxed),
             total_inline_edits: self.counters.total_inline_edits.load(Ordering::Relaxed),
             top_tools: tool_usage_sorted.into_iter().take(10).collect(),
@@ -321,9 +358,7 @@ pub struct TelemetrySummary {
 
 /// Get telemetry summary for frontend dashboard.
 #[tauri::command]
-pub fn get_telemetry_summary(
-    state: tauri::State<'_, TelemetryCollector>,
-) -> TelemetrySummary {
+pub fn get_telemetry_summary(state: tauri::State<'_, TelemetryCollector>) -> TelemetrySummary {
     state.get_summary()
 }
 

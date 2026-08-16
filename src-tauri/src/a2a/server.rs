@@ -16,7 +16,10 @@ use axum::{
     Json, Router,
     extract::State,
     http::HeaderMap,
-    response::{IntoResponse, Response, sse::{Event, Sse}},
+    response::{
+        IntoResponse, Response,
+        sse::{Event, Sse},
+    },
     routing::{get, post},
 };
 use futures_util::{Stream, StreamExt};
@@ -59,11 +62,10 @@ impl TaskExecutor for CloudAgentExecutor {
         let project_path = self
             .app
             .try_state::<Arc<tokio::sync::RwLock<crate::config::AppSettings>>>()
-            .map(|s| {
+            .and_then(|s| {
                 let guard = tokio::task::block_in_place(|| s.blocking_read());
                 guard.project_paths.first().cloned()
-            })
-            .flatten();
+            });
 
         let resolved_agent = agent_id.unwrap_or_else(|| "orchestrator".to_string());
         let task_id = crate::agent::cloud::spawn_background_sub_agent(
@@ -145,7 +147,9 @@ impl A2aServerState {
         let mut tasks = self.tasks.lock().await;
         tasks.insert(task.id.clone(), task.clone());
         drop(tasks);
-        let _ = self.tx.send(serde_json::to_string(&task).unwrap_or_default());
+        let _ = self
+            .tx
+            .send(serde_json::to_string(&task).unwrap_or_default());
     }
 }
 
@@ -173,11 +177,7 @@ pub fn build_router(state: Arc<A2aServerState>) -> Router {
 
 /// Start the A2A server on 127.0.0.1:port in the background.
 /// Returns immediately; failures are logged.
-pub fn start_server(
-    app: tauri::AppHandle,
-    port: u16,
-    token: Option<String>,
-) -> Result<(), String> {
+pub fn start_server(app: tauri::AppHandle, port: u16, token: Option<String>) -> Result<(), String> {
     let agents = crate::agent::definition::load_agents_from_disk();
     let skills = agents_to_skills(&agents);
     let server_url = format!("http://127.0.0.1:{}/a2a", port);
@@ -257,7 +257,7 @@ async fn a2a_handler(
             return rpc_err_response(
                 json!(null),
                 A2aError::InvalidParams(format!("invalid JSON-RPC request: {}", e)),
-            )
+            );
         }
     };
 
@@ -276,13 +276,12 @@ fn extract_message_text(params: &Option<Value>) -> Result<String, A2aError> {
     let params = params
         .as_ref()
         .ok_or_else(|| A2aError::InvalidParams("missing params".into()))?;
-    let message: Message = serde_json::from_value(params.get("message").cloned().unwrap_or_default())
-        .map_err(|e| A2aError::InvalidParams(format!("invalid message: {}", e)))?;
+    let message: Message =
+        serde_json::from_value(params.get("message").cloned().unwrap_or_default())
+            .map_err(|e| A2aError::InvalidParams(format!("invalid message: {}", e)))?;
     let text = message.text_content();
     if text.trim().is_empty() {
-        return Err(A2aError::InvalidParams(
-            "message has no text parts".into(),
-        ));
+        return Err(A2aError::InvalidParams("message has no text parts".into()));
     }
     if text.len() > MAX_MESSAGE_BYTES {
         return Err(A2aError::InvalidParams(format!(
@@ -388,7 +387,7 @@ fn task_sse_stream(
     state: Arc<A2aServerState>,
     initial: Option<Task>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let mut rx = state.tx.subscribe();
+    let rx = state.tx.subscribe();
     let initial_events = initial.into_iter().map(|t| {
         Ok::<Event, Infallible>(
             Event::default()
@@ -406,9 +405,7 @@ fn task_sse_stream(
         };
         msg.map(|json_str| {
             (
-                Ok::<Event, Infallible>(
-                    Event::default().event("task_update").data(json_str),
-                ),
+                Ok::<Event, Infallible>(Event::default().event("task_update").data(json_str)),
                 rx,
             )
         })
@@ -442,7 +439,10 @@ async fn handle_tasks_get(state: &Arc<A2aServerState>, req: &JsonRpcRequest) -> 
         );
     }
     match state.get_task(task_id).await {
-        Some(task) => rpc_ok_response(req.id.clone(), serde_json::to_value(&task).unwrap_or_default()),
+        Some(task) => rpc_ok_response(
+            req.id.clone(),
+            serde_json::to_value(&task).unwrap_or_default(),
+        ),
         None => rpc_err_response(
             req.id.clone(),
             A2aError::TaskNotFound(format!("task {} not found", task_id)),
@@ -473,7 +473,10 @@ async fn handle_tasks_cancel(state: &Arc<A2aServerState>, req: &JsonRpcRequest) 
             let _ = state
                 .tx
                 .send(serde_json::to_string(&cancelled).unwrap_or_default());
-            rpc_ok_response(req.id.clone(), serde_json::to_value(&cancelled).unwrap_or_default())
+            rpc_ok_response(
+                req.id.clone(),
+                serde_json::to_value(&cancelled).unwrap_or_default(),
+            )
         }
         None => rpc_err_response(
             req.id.clone(),
@@ -545,7 +548,10 @@ mod tests {
     /// Like `mock_executor` but exposes the recorded agent ids for assertions.
     fn mock_executor_recording(
         delay_ms: u64,
-    ) -> (Arc<dyn TaskExecutor>, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    ) -> (
+        Arc<dyn TaskExecutor>,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
         let agent_ids = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
         let exec = Arc::new(MockExecutor {
             result: "mock result".to_string(),
@@ -559,7 +565,10 @@ mod tests {
         agents_to_skills(&default_agents())
     }
 
-    fn new_test_state(executor: Arc<dyn TaskExecutor>, token: Option<String>) -> Arc<A2aServerState> {
+    fn new_test_state(
+        executor: Arc<dyn TaskExecutor>,
+        token: Option<String>,
+    ) -> Arc<A2aServerState> {
         Arc::new(A2aServerState::new(
             "NeoCoder",
             "http://127.0.0.1:0/a2a",
@@ -679,8 +688,16 @@ mod tests {
         let skills = test_skills();
         let bad = json!({ "metadata": { "skillId": "ghost_agent" } });
         let err = extract_skill_id(&Some(bad), &skills).unwrap_err();
-        assert!(err.to_string().contains("unknown skill 'ghost_agent'"), "{}", err);
-        assert!(err.to_string().contains("orchestrator"), "available list: {}", err);
+        assert!(
+            err.to_string().contains("unknown skill 'ghost_agent'"),
+            "{}",
+            err
+        );
+        assert!(
+            err.to_string().contains("orchestrator"),
+            "available list: {}",
+            err
+        );
     }
 
     #[tokio::test]
@@ -749,7 +766,10 @@ mod tests {
         let mut final_state = None;
         for _ in 0..20 {
             let get = rpc_post(&base, "tasks/get", json!({ "id": task_id }), None).await;
-            let s = get["result"]["status"]["state"].as_str().unwrap().to_string();
+            let s = get["result"]["status"]["state"]
+                .as_str()
+                .unwrap()
+                .to_string();
             if s == "completed" {
                 final_state = Some(s);
                 let result_text = get["result"]["artifacts"][0]["parts"][0]["text"]
@@ -935,9 +955,8 @@ mod tests {
         let events = parse_sse_events(&all_text);
         assert!(!events.is_empty(), "sse text: {}", all_text);
         for data in &events {
-            let task: Task = serde_json::from_str(data).unwrap_or_else(|e| {
-                panic!("event data not a Task ({}): {}", e, data)
-            });
+            let task: Task = serde_json::from_str(data)
+                .unwrap_or_else(|e| panic!("event data not a Task ({}): {}", e, data));
             assert_eq!(task.id, task_id);
         }
         assert!(
@@ -973,7 +992,10 @@ mod tests {
             let mut done = false;
             for _ in 0..50 {
                 let get = rpc_post(&base, "tasks/get", json!({ "id": id }), None).await;
-                let s = get["result"]["status"]["state"].as_str().unwrap().to_string();
+                let s = get["result"]["status"]["state"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
                 if s == "completed" {
                     assert_eq!(
                         get["result"]["artifacts"][0]["parts"][0]["text"],

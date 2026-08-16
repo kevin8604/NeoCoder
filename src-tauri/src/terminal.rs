@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::Mutex;
 
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 // ── 一次性命令执行 ─────────────────────────────────────────────────────────
 
@@ -29,8 +29,16 @@ pub async fn run_one_shot(
     cwd: &str,
     timeout_secs: u64,
 ) -> Result<OneShotOutput, String> {
-    let shell = if cfg!(target_os = "windows") { "cmd" } else { "sh" };
-    let flag = if cfg!(target_os = "windows") { "/C" } else { "-c" };
+    let shell = if cfg!(target_os = "windows") {
+        "cmd"
+    } else {
+        "sh"
+    };
+    let flag = if cfg!(target_os = "windows") {
+        "/C"
+    } else {
+        "-c"
+    };
 
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_secs),
@@ -41,7 +49,12 @@ pub async fn run_one_shot(
             .output(),
     )
     .await
-    .map_err(|_| format!("Command '{}' timed out after {} seconds", command, timeout_secs))?;
+    .map_err(|_| {
+        format!(
+            "Command '{}' timed out after {} seconds",
+            command, timeout_secs
+        )
+    })?;
     let output = output.map_err(|e| format!("Failed to execute command '{}': {}", command, e))?;
 
     Ok(OneShotOutput {
@@ -79,9 +92,12 @@ pub fn push_terminal_entry(command: &str, output: &str, exit_code: i32) {
 pub fn get_recent_terminal(n: usize) -> Vec<(String, String, i32)> {
     let history = TERMINAL_HISTORY.lock().ok();
     match history {
-        Some(h) => h.iter().rev().take(n).map(|e| {
-            (e.command.clone(), e.output.clone(), e.exit_code)
-        }).collect(),
+        Some(h) => h
+            .iter()
+            .rev()
+            .take(n)
+            .map(|e| (e.command.clone(), e.output.clone(), e.exit_code))
+            .collect(),
         None => Vec::new(),
     }
 }
@@ -92,12 +108,27 @@ pub fn get_error_summary() -> String {
         Some(h) => {
             let mut summary = String::new();
             for entry in h.iter().rev().take(5) {
-                if entry.exit_code != 0 || entry.output.to_lowercase().contains("error") || entry.output.to_lowercase().contains("fail") {
-                    summary.push_str(&format!("$ {}\nExit: {}\n{}\n\n", entry.command, entry.exit_code,
-                        if entry.output.len() > 2000 { crate::agent::utils::safe_truncate(&entry.output, 2000) } else { &entry.output }));
+                if entry.exit_code != 0
+                    || entry.output.to_lowercase().contains("error")
+                    || entry.output.to_lowercase().contains("fail")
+                {
+                    summary.push_str(&format!(
+                        "$ {}\nExit: {}\n{}\n\n",
+                        entry.command,
+                        entry.exit_code,
+                        if entry.output.len() > 2000 {
+                            crate::agent::utils::safe_truncate(&entry.output, 2000)
+                        } else {
+                            &entry.output
+                        }
+                    ));
                 }
             }
-            if summary.is_empty() { "No recent errors found.".to_string() } else { summary }
+            if summary.is_empty() {
+                "No recent errors found.".to_string()
+            } else {
+                summary
+            }
         }
         None => "Terminal history unavailable.".to_string(),
     }
@@ -124,7 +155,9 @@ pub fn parse_error_locations(stderr: &str, stdout: &str) -> String {
             continue;
         }
         // JavaScript: src/foo.js:12:5
-        if (lower.contains(".js:") || lower.contains(".jsx:")) && (lower.contains("error") || lower.contains("syntaxerror")) {
+        if (lower.contains(".js:") || lower.contains(".jsx:"))
+            && (lower.contains("error") || lower.contains("syntaxerror"))
+        {
             errors.push(format!("  {}", line.trim()));
             continue;
         }
@@ -134,7 +167,9 @@ pub fn parse_error_locations(stderr: &str, stdout: &str) -> String {
             continue;
         }
         // Go: ./main.go:15:2:
-        if lower.contains(".go:") && (lower.contains("undefined") || lower.contains("cannot") || lower.contains("syntax")) {
+        if lower.contains(".go:")
+            && (lower.contains("undefined") || lower.contains("cannot") || lower.contains("syntax"))
+        {
             errors.push(format!("  {}", line.trim()));
             continue;
         }
@@ -195,7 +230,12 @@ pub fn detect_shell() -> (String, String) {
     #[cfg(not(target_os = "windows"))]
     {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
-        let flavor = if shell.ends_with("zsh") { "zsh" } else { "unix" }.to_string();
+        let flavor = if shell.ends_with("zsh") {
+            "zsh"
+        } else {
+            "unix"
+        }
+        .to_string();
         (shell, flavor)
     }
 }
@@ -213,7 +253,12 @@ pub struct PtyHandles {
 pub fn spawn_pty(shell: &str, rows: u16, cols: u16) -> Result<PtyHandles, String> {
     let pty_system = native_pty_system();
     let pair = pty_system
-        .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
     let mut cmd = CommandBuilder::new(shell);

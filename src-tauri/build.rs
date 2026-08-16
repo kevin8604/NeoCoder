@@ -11,9 +11,8 @@ fn main() {
     // CVT1100，因此对 bin 目标显式 /MANIFEST:NO 覆盖（保留 tauri 的 res）。
     #[cfg(target_os = "windows")]
     {
-        let manifest =
-            std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"))
-                .join("neocoder_test.manifest");
+        let manifest = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"))
+            .join("neocoder_test.manifest");
         std::fs::write(
             &manifest,
             r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -28,10 +27,7 @@ fn main() {
         )
         .expect("write test manifest");
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
-        println!(
-            "cargo:rustc-link-arg=/MANIFESTINPUT:{}",
-            manifest.display()
-        );
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
         println!("cargo:rustc-link-arg-bins=/MANIFEST:NO");
     }
 }

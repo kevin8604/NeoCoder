@@ -1,5 +1,5 @@
-use crate::chat::TodoItem;
 use super::{PostExecuteAction, Tool, ToolContext};
+use crate::chat::TodoItem;
 
 pub struct TodoWrite;
 
@@ -15,9 +15,18 @@ impl Tool for TodoWrite {
             None => return "Error: 'todos' must be an array".to_string(),
         };
         let total = arr.len();
-        let complete = arr.iter().filter(|t| t["status"].as_str() == Some("complete")).count();
-        let in_progress = arr.iter().filter(|t| t["status"].as_str() == Some("in_progress")).count();
-        let pending = arr.iter().filter(|t| t["status"].as_str() == Some("pending")).count();
+        let complete = arr
+            .iter()
+            .filter(|t| t["status"].as_str() == Some("complete"))
+            .count();
+        let in_progress = arr
+            .iter()
+            .filter(|t| t["status"].as_str() == Some("in_progress"))
+            .count();
+        let pending = arr
+            .iter()
+            .filter(|t| t["status"].as_str() == Some("pending"))
+            .count();
         format!(
             "Todo list updated: {} total ({} complete, {} in-progress, {} pending)",
             total, complete, in_progress, pending

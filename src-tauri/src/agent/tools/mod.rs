@@ -1,52 +1,52 @@
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::collections::HashMap;
-use crate::rag::CodeIndexer;
-use crate::chat::{TodoItem, QuestionItem};
-use crate::sandbox::SandboxChecker;
+use crate::chat::{QuestionItem, TodoItem};
 use crate::lsp::LspManager;
+use crate::rag::CodeIndexer;
+use crate::sandbox::SandboxChecker;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 // 工具模块声明
-pub mod read_file;
-pub mod write_file;
+pub mod a2a_invoke;
 pub mod append_file;
-pub mod delete_file;
-pub mod list_directory;
-pub mod create_directory;
-pub mod delete_directory;
-pub mod get_symbols;
-pub mod search_codebase;
-pub mod grep;
-pub mod run_terminal_command;
-pub mod glob;
-pub mod edit;
-pub mod todo_write;
-pub mod web_search;
-pub mod web_fetch;
 pub mod ask_user_question;
-pub mod get_diagnostics;
-pub mod orchestrate;
-pub mod memory_search;
-pub mod git_status;
-pub mod git_diff;
-pub mod git_commit;
-pub mod git_log;
-pub mod git_blame;
-pub mod git_branch;
-pub mod git_push;
-pub mod git_checkout;
-pub mod git_stash;
-pub mod generate_diagram;
-pub mod run_tests;
-pub mod run_build;
-pub mod run_terminal_session;
-pub mod web_preview;
-pub mod web_browser;
-pub mod tdd;
-pub mod generate_tests;
 pub mod auto_fix;
 pub mod coverage;
-pub mod a2a_invoke;
+pub mod create_directory;
+pub mod delete_directory;
+pub mod delete_file;
+pub mod edit;
+pub mod generate_diagram;
+pub mod generate_tests;
+pub mod get_diagnostics;
+pub mod get_symbols;
+pub mod git_blame;
+pub mod git_branch;
+pub mod git_checkout;
+pub mod git_commit;
+pub mod git_diff;
+pub mod git_log;
+pub mod git_push;
+pub mod git_stash;
+pub mod git_status;
+pub mod glob;
+pub mod grep;
+pub mod list_directory;
+pub mod memory_search;
+pub mod orchestrate;
+pub mod read_file;
+pub mod run_build;
+pub mod run_terminal_command;
+pub mod run_terminal_session;
+pub mod run_tests;
+pub mod search_codebase;
+pub mod tdd;
+pub mod todo_write;
+pub mod web_browser;
+pub mod web_fetch;
+pub mod web_preview;
+pub mod web_search;
+pub mod write_file;
 
 #[cfg(test)]
 mod tests;
@@ -125,14 +125,25 @@ pub struct ToolExecutor {
     tools: std::sync::Mutex<HashMap<String, Arc<dyn Tool>>>,
 }
 
+impl Default for ToolExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolExecutor {
     pub fn new() -> Self {
-        Self { tools: std::sync::Mutex::new(HashMap::new()) }
+        Self {
+            tools: std::sync::Mutex::new(HashMap::new()),
+        }
     }
 
     /// 注册一个工具
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
-        self.tools.get_mut().unwrap().insert(tool.name().to_string(), Arc::new(tool));
+        self.tools
+            .get_mut()
+            .unwrap()
+            .insert(tool.name().to_string(), Arc::new(tool));
     }
 
     /// Register a dynamically-created tool (e.g., MCP bridge).

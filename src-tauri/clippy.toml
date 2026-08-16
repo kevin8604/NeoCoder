@@ -1,0 +1,8 @@
+# Clippy configuration for NeoCoder.
+# LLM-provider call signatures naturally carry many parameters (provider,
+# api key, base url, model, local config, ...); raise the threshold instead
+# of mangling the API surface.
+too-many-arguments-threshold = 10
+
+# Agent tool structs and async future types are intentionally rich.
+type-complexity-threshold = 400

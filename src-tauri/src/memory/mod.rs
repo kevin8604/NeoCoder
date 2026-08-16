@@ -1,19 +1,19 @@
-﻿pub mod session_store;
-pub mod long_term;
-pub mod notes;
-pub mod search;
-pub mod tools;
 pub mod agent_log;
 pub mod ebbinghaus;
-pub mod preferences;
 pub mod finetune;
+pub mod long_term;
+pub mod notes;
+pub mod preferences;
+pub mod search;
+pub mod session_store;
+pub mod tools;
 
 #[cfg(test)]
 mod tests;
 
+use crate::chat::{ChatMessage, ChatSession};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use crate::chat::{ChatMessage, ChatSession};
 
 /// MemoryManager: unified interface for all memory operations.
 /// Replaces the old ConversationMemory with a file-based Markdown system.
@@ -48,67 +48,103 @@ impl MemoryManager {
 
     pub fn create_session(&self) -> Result<String, String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let title = format!("Session"); // Will be renamed later
-        let sessions = self.sessions.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let title = "Session".to_string(); // Will be renamed later
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         sessions.create_session(&id, &title)?;
         Ok(id)
     }
 
     pub fn add_message(&self, session_id: &str, msg: ChatMessage) -> Result<(), String> {
-        let sessions = self.sessions.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         let seq = sessions.next_sequence(session_id)?;
         sessions.save_message(session_id, &msg, seq)
     }
 
-    pub fn get_context_window(&self, session_id: &str, max_tokens: usize) -> Result<Vec<ChatMessage>, String> {
-        let sessions = self.sessions.lock().map_err(|e| format!("Lock error: {}", e))?;
+    pub fn get_context_window(
+        &self,
+        session_id: &str,
+        max_tokens: usize,
+    ) -> Result<Vec<ChatMessage>, String> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         sessions.load_context_window(session_id, max_tokens)
     }
 
     pub fn clear_session(&self, session_id: &str) -> Result<(), String> {
-        let sessions = self.sessions.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         sessions.clear_messages(session_id)
     }
 
     pub fn delete_session(&self, session_id: &str) -> Result<(), String> {
-        let sessions = self.sessions.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         sessions.delete_session(session_id)
     }
 
     /// Clean up sessions older than `max_age_days`. Returns count of deleted.
     pub fn cleanup_expired_sessions(&self, max_age_days: u32) -> Result<usize, String> {
-        let sessions = self.sessions.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         sessions.cleanup_expired_sessions(max_age_days)
     }
 
     pub fn get_all_sessions(&self) -> Result<Vec<ChatSession>, String> {
         // Get session list and message dir paths under lock, then release
         let list: Vec<(String, String, String, std::path::PathBuf)> = {
-            let sessions = self.sessions.lock().map_err(|e| format!("Lock error: {}", e))?;
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|e| format!("Lock error: {}", e))?;
             let raw_list = sessions.list_sessions()?;
-            raw_list.into_iter().map(|(id, title, created_at)| {
-                let msg_dir = sessions.message_dir_path(&id);
-                (id, title, created_at, msg_dir)
-            }).collect()
+            raw_list
+                .into_iter()
+                .map(|(id, title, created_at)| {
+                    let msg_dir = sessions.message_dir_path(&id);
+                    (id, title, created_at, msg_dir)
+                })
+                .collect()
         }; // Lock released here
 
         // Count messages in parallel using std::thread::scope
         let results: Vec<(String, String, String, usize)> = std::thread::scope(|s| {
-            let handles: Vec<_> = list.into_iter().map(|(id, title, created_at, msg_dir)| {
-                s.spawn(move || {
-                    let count = if msg_dir.exists() {
-                        std::fs::read_dir(&msg_dir)
-                            .map(|entries| entries
-                                .filter_map(|e| e.ok())
-                                .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("md"))
-                                .count())
-                            .unwrap_or(0)
-                    } else {
-                        0
-                    };
-                    (id, title, created_at, count)
+            let handles: Vec<_> = list
+                .into_iter()
+                .map(|(id, title, created_at, msg_dir)| {
+                    s.spawn(move || {
+                        let count = if msg_dir.exists() {
+                            std::fs::read_dir(&msg_dir)
+                                .map(|entries| {
+                                    entries
+                                        .filter_map(|e| e.ok())
+                                        .filter(|e| {
+                                            e.path().extension().and_then(|s| s.to_str())
+                                                == Some("md")
+                                        })
+                                        .count()
+                                })
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        (id, title, created_at, count)
+                    })
                 })
-            }).collect();
+                .collect();
             handles.into_iter().filter_map(|h| h.join().ok()).collect()
         });
 
@@ -173,7 +209,8 @@ impl MemoryManager {
         match self.long_term.read_entries() {
             Ok(entries) if !entries.is_empty() => {
                 // Compute composite score: retention * (1.0 if coding else 0.0) + relevance bias
-                let mut scored: Vec<(f64, usize)> = entries.iter()
+                let mut scored: Vec<(f64, usize)> = entries
+                    .iter()
                     .enumerate()
                     .map(|(i, e)| {
                         let retention = ebbinghaus::compute_retention(e, now);
@@ -189,7 +226,8 @@ impl MemoryManager {
 
                 // Take top entries with score > 0.01 (max 20)
                 const MAX_LT_ENTRIES: usize = 20;
-                let top: Vec<&ebbinghaus::MemoryEntry> = scored.iter()
+                let top: Vec<&ebbinghaus::MemoryEntry> = scored
+                    .iter()
                     .filter(|(s, _)| *s > 0.01)
                     .take(MAX_LT_ENTRIES)
                     .map(|(_, i)| &entries[*i])
@@ -210,7 +248,8 @@ impl MemoryManager {
                     ctx.push('\n');
 
                     // Record recall for injected entries
-                    let recalled_indices: Vec<usize> = scored.iter()
+                    let recalled_indices: Vec<usize> = scored
+                        .iter()
                         .filter(|(s, _)| *s > 0.01)
                         .take(MAX_LT_ENTRIES)
                         .map(|(_, i)| *i)
@@ -248,29 +287,33 @@ impl MemoryManager {
 
     // ── Search ──
 
-    pub fn search_memory(&self, query: &str, max_results: usize) -> Result<Vec<search::MemSearchResult>, String> {
+    pub fn search_memory(
+        &self,
+        query: &str,
+        max_results: usize,
+    ) -> Result<Vec<search::MemSearchResult>, String> {
         let results = self.memory_search.search(query, max_results)?;
 
         // Trigger Ebbinghaus recall for long-term memory hits
-        if !results.is_empty() {
-            if let Ok(entries) = self.long_term.read_entries() {
-                let mut recall_indices = Vec::new();
-                for result in &results {
-                    if result.file_path == "MEMORY.md" {
-                        // Find matching entry index
-                        for (i, entry) in entries.iter().enumerate() {
-                            if entry.text.contains(&result.line_content.trim()) {
-                                if !recall_indices.contains(&i) {
-                                    recall_indices.push(i);
-                                }
-                                break;
+        if !results.is_empty()
+            && let Ok(entries) = self.long_term.read_entries()
+        {
+            let mut recall_indices = Vec::new();
+            for result in &results {
+                if result.file_path == "MEMORY.md" {
+                    // Find matching entry index
+                    for (i, entry) in entries.iter().enumerate() {
+                        if entry.text.contains(result.line_content.trim()) {
+                            if !recall_indices.contains(&i) {
+                                recall_indices.push(i);
                             }
+                            break;
                         }
                     }
                 }
-                if !recall_indices.is_empty() {
-                    let _ = self.long_term.recall_entries(&recall_indices);
-                }
+            }
+            if !recall_indices.is_empty() {
+                let _ = self.long_term.recall_entries(&recall_indices);
             }
         }
 
@@ -304,12 +347,10 @@ impl MemoryManager {
         let mut chunks = Vec::new();
         let mut current = String::new();
         let mut start_line = 1usize;
-        let mut current_line = 0usize;
         for (i, line) in text.lines().enumerate() {
-            current_line = i + 1;
             if current.len() + line.len() + 1 > max_chunk_len && !current.is_empty() {
                 chunks.push((start_line, std::mem::take(&mut current)));
-                start_line = current_line;
+                start_line = i + 1;
             }
             if !current.is_empty() {
                 current.push('\n');
@@ -340,7 +381,8 @@ impl MemoryManager {
 
         // Collect corpus (reuse BM25 collection, skipping messages/)
         let mut docs: Vec<(String, String)> = Vec::new();
-        self.memory_search.collect_docs(&self._base_dir, &mut docs)?;
+        self.memory_search
+            .collect_docs(&self._base_dir, &mut docs)?;
         if docs.is_empty() {
             return Ok(Vec::new());
         }
@@ -370,7 +412,8 @@ impl MemoryManager {
         }
 
         // Route the embedding task (local Ollama first, remote fallback)
-        let local_available = crate::llm::health::is_ollama_running(&settings.local_model.base_url).await;
+        let local_available =
+            crate::llm::health::is_ollama_running(&settings.local_model.base_url).await;
         let route = crate::llm::LlmRouter::route(
             crate::llm::TaskType::Embedding,
             &settings.local_model,
@@ -391,7 +434,8 @@ impl MemoryManager {
             route.base_url.as_deref(),
             &route.model,
             &texts,
-        ).await?;
+        )
+        .await?;
 
         if embeddings.len() != texts.len() {
             return Err(format!(
@@ -426,7 +470,10 @@ impl MemoryManager {
             let mut best_hits = 0usize;
             for (offset, line) in chunk_text.lines().enumerate() {
                 let lower = line.to_lowercase();
-                let hits = query_tokens.iter().filter(|t| lower.contains(t.as_str())).count();
+                let hits = query_tokens
+                    .iter()
+                    .filter(|t| lower.contains(t.as_str()))
+                    .count();
                 if hits > best_hits {
                     best_hits = hits;
                     best_line = line.to_string();
@@ -438,7 +485,8 @@ impl MemoryManager {
             }
             results.push(search::MemSearchResult {
                 file_path: file.clone(),
-                line_number: start_line + chunk_text.lines().position(|l| l == best_line).unwrap_or(0),
+                line_number: start_line
+                    + chunk_text.lines().position(|l| l == best_line).unwrap_or(0),
                 line_content: best_line,
                 relevance: *score,
             });
@@ -455,7 +503,10 @@ impl MemoryManager {
         max_results: usize,
     ) -> Result<Vec<search::MemSearchResult>, String> {
         let mut bm25 = self.search_memory(query, max_results)?;
-        let semantic = match self.semantic_search_memory(query, settings, max_results).await {
+        let semantic = match self
+            .semantic_search_memory(query, settings, max_results)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 log::warn!("[MemorySearch] Semantic search failed, BM25 only: {}", e);
@@ -481,7 +532,8 @@ impl MemoryManager {
     /// P0: Quick pre-check — is this session about coding?
     /// Uses keyword-based detection (no extra LLM call).
     fn is_coding_session(session_messages: &[crate::chat::ChatMessage]) -> bool {
-        let user_text: String = session_messages.iter()
+        let user_text: String = session_messages
+            .iter()
             .filter(|m| matches!(m.role, crate::chat::Role::User))
             .map(|m| m.content.as_str())
             .take(10) // Only first 10 user messages
@@ -510,8 +562,14 @@ impl MemoryManager {
         use std::sync::{Arc, Mutex};
 
         // Only dream if there are meaningful messages (at least 1 user + 1 assistant)
-        let user_count = session_messages.iter().filter(|m| matches!(m.role, crate::chat::Role::User)).count();
-        let assistant_count = session_messages.iter().filter(|m| matches!(m.role, crate::chat::Role::Assistant)).count();
+        let user_count = session_messages
+            .iter()
+            .filter(|m| matches!(m.role, crate::chat::Role::User))
+            .count();
+        let assistant_count = session_messages
+            .iter()
+            .filter(|m| matches!(m.role, crate::chat::Role::Assistant))
+            .count();
         if user_count == 0 || assistant_count == 0 {
             return;
         }
@@ -531,7 +589,10 @@ impl MemoryManager {
                 _ => continue,
             };
             let content = if msg.content.len() > 500 {
-                format!("{}...", crate::agent::utils::safe_truncate(&msg.content, 500))
+                format!(
+                    "{}...",
+                    crate::agent::utils::safe_truncate(&msg.content, 500)
+                )
             } else {
                 msg.content.clone()
             };
@@ -558,7 +619,8 @@ impl MemoryManager {
         );
 
         // ── LLM Router: local model preferred, remote fallback ──
-        let local_available = crate::llm::health::is_ollama_running(&settings.local_model.base_url).await;
+        let local_available =
+            crate::llm::health::is_ollama_running(&settings.local_model.base_url).await;
         let route = crate::llm::LlmRouter::route(
             crate::llm::TaskType::Dreaming,
             &settings.local_model,
@@ -596,20 +658,31 @@ impl MemoryManager {
         };
 
         match crate::llm::stream_chat(
-            &route.provider, &route.api_key, route.base_url.as_deref(),
-            request, on_token, None,
-        ).await {
+            &route.provider,
+            &route.api_key,
+            route.base_url.as_deref(),
+            request,
+            on_token,
+            None,
+        )
+        .await
+        {
             Ok(_) => {
-                let summary = collected.lock().map(|s| s.trim().to_string()).unwrap_or_default();
+                let summary = collected
+                    .lock()
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
                 if !summary.is_empty() {
                     log::info!("[Dreaming] Summary generated via {}", route_used);
                     // Append to daily notes
                     let _ = self.append_note(&summary);
 
                     // Check if it contains persistent knowledge worth storing long-term
-                    let has_persistent = summary.contains("[Lesson]") || summary.contains("[Decision]");
+                    let has_persistent =
+                        summary.contains("[Lesson]") || summary.contains("[Decision]");
                     if has_persistent {
-                        let lessons: Vec<&str> = summary.lines()
+                        let lessons: Vec<&str> = summary
+                            .lines()
                             .filter(|l| l.contains("[Lesson]") || l.contains("[Decision]"))
                             .collect();
                         if !lessons.is_empty() {
@@ -635,7 +708,10 @@ impl MemoryManager {
         // Capacity enforcement: evict lowest-retention entries if over limit
         match self.long_term.enforce_capacity(50) {
             Ok(count) if count > 0 => {
-                log::info!("[Dreaming] Evicted {} entries to enforce capacity limit", count);
+                log::info!(
+                    "[Dreaming] Evicted {} entries to enforce capacity limit",
+                    count
+                );
             }
             _ => {}
         }
@@ -646,7 +722,10 @@ impl MemoryManager {
     /// Deep Dreaming: read all daily notes + MEMORY.md, ask the LLM to merge
     /// duplicates, drop stale entries, and rewrite MEMORY.md in a compact form.
     /// Returns a human-readable report of what changed.
-    pub async fn deep_dreaming(&self, settings: &crate::config::AppSettings) -> Result<String, String> {
+    pub async fn deep_dreaming(
+        &self,
+        settings: &crate::config::AppSettings,
+    ) -> Result<String, String> {
         use std::sync::{Arc, Mutex};
         let entries = self.long_term.read_entries()?;
         if entries.is_empty() {
@@ -675,7 +754,8 @@ impl MemoryManager {
             entry_text
         );
 
-        let local_available = crate::llm::health::is_ollama_running(&settings.local_model.base_url).await;
+        let local_available =
+            crate::llm::health::is_ollama_running(&settings.local_model.base_url).await;
         let route = crate::llm::LlmRouter::route(
             crate::llm::TaskType::Dreaming,
             &settings.local_model,
@@ -711,11 +791,20 @@ impl MemoryManager {
         };
 
         crate::llm::stream_chat(
-            &route.provider, &route.api_key, route.base_url.as_deref(),
-            request, on_token, None,
-        ).await.map_err(|e| format!("Deep dreaming LLM call failed: {}", e))?;
+            &route.provider,
+            &route.api_key,
+            route.base_url.as_deref(),
+            request,
+            on_token,
+            None,
+        )
+        .await
+        .map_err(|e| format!("Deep dreaming LLM call failed: {}", e))?;
 
-        let output = collected.lock().map(|s| s.trim().to_string()).unwrap_or_default();
+        let output = collected
+            .lock()
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
         if output.is_empty() {
             return Err("Deep dreaming returned empty output".to_string());
         }
@@ -729,32 +818,37 @@ impl MemoryManager {
         for line in output.lines() {
             let line = line.trim();
             if line.starts_with("KEEP ") {
-                if let Some(rest) = line.strip_prefix("KEEP ") {
-                    if let Some((idx_str, _)) = rest.split_once(':') {
-                        if let Ok(idx) = idx_str.trim().parse::<usize>() {
-                            if idx < entries.len() && !kept.iter().any(|e| e.text == entries[idx].text) {
-                                kept.push(entries[idx].clone());
-                            }
-                        }
-                    }
+                if let Some(rest) = line.strip_prefix("KEEP ")
+                    && let Some((idx_str, _)) = rest.split_once(':')
+                    && let Ok(idx) = idx_str.trim().parse::<usize>()
+                    && idx < entries.len()
+                    && !kept.iter().any(|e| e.text == entries[idx].text)
+                {
+                    kept.push(entries[idx].clone());
                 }
             } else if line.starts_with("DROP") {
                 removed_count += 1;
                 report.push_str(&format!("{}\n", line));
             } else if line.starts_with("MERGE ") {
                 merged_count += 1;
-                if let Some(rest) = line.strip_prefix("MERGE ") {
-                    if let Some((idxs, merged_text)) = rest.split_once(':') {
-                        // merged_text is the replacement — create a fresh entry with merged content
-                        let text = merged_text.trim().to_string();
-                        if !text.is_empty() {
-                            let category = ebbinghaus::MemoryCategory::detect_from_text(&text);
-                            kept.push(ebbinghaus::MemoryEntry::with_category(
-                                text, "Learned Patterns".to_string(), category,
-                            ));
-                        }
-                        report.push_str(&format!("MERGE (indices {}): {}\n", idxs.trim(), merged_text.trim()));
+                if let Some(rest) = line.strip_prefix("MERGE ")
+                    && let Some((idxs, merged_text)) = rest.split_once(':')
+                {
+                    // merged_text is the replacement — create a fresh entry with merged content
+                    let text = merged_text.trim().to_string();
+                    if !text.is_empty() {
+                        let category = ebbinghaus::MemoryCategory::detect_from_text(&text);
+                        kept.push(ebbinghaus::MemoryEntry::with_category(
+                            text,
+                            "Learned Patterns".to_string(),
+                            category,
+                        ));
                     }
+                    report.push_str(&format!(
+                        "MERGE (indices {}): {}\n",
+                        idxs.trim(),
+                        merged_text.trim()
+                    ));
                 }
             }
         }
@@ -768,7 +862,10 @@ impl MemoryManager {
         self.long_term.write_entries(&kept)?;
         let report_out = format!(
             "Deep Dreaming complete: {} kept, {} merged, {} dropped.\n{}",
-            kept.len(), merged_count, removed_count, report
+            kept.len(),
+            merged_count,
+            removed_count,
+            report
         );
         log::info!("[DeepDreaming] {}", report_out);
         Ok(report_out)
@@ -783,7 +880,10 @@ impl MemoryManager {
     /// 4. Sessions older than the retention window
     ///
     /// Returns a JSON report of what was cleaned.
-    pub fn run_gc(&self, settings: &crate::config::AppSettings) -> Result<serde_json::Value, String> {
+    pub fn run_gc(
+        &self,
+        settings: &crate::config::AppSettings,
+    ) -> Result<serde_json::Value, String> {
         let cfg = &settings.memory_gc;
 
         // Token budget → entry limit (~40 tokens per entry on average)
@@ -814,7 +914,10 @@ impl MemoryManager {
     ///
     /// Honors `FineTuneConfig.enabled`; manual triggers are still allowed via
     /// the dedicated command (the threshold is informational for auto-trigger).
-    pub fn export_training_data(&self, settings: &crate::config::AppSettings) -> Result<String, String> {
+    pub fn export_training_data(
+        &self,
+        settings: &crate::config::AppSettings,
+    ) -> Result<String, String> {
         if !settings.fine_tune.enabled {
             return Err("Fine-tuning is disabled in Settings.".to_string());
         }
@@ -825,10 +928,14 @@ impl MemoryManager {
     // ── Memory stats ──
 
     /// Collect aggregate memory statistics for the frontend panel.
-    pub fn get_memory_stats(&self, settings: &crate::config::AppSettings) -> Result<serde_json::Value, String> {
+    pub fn get_memory_stats(
+        &self,
+        settings: &crate::config::AppSettings,
+    ) -> Result<serde_json::Value, String> {
         let entries = self.long_term.read_entries()?;
 
-        let mut category_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut category_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         let mut total_chars = 0usize;
         let mut avg_stability = 0.0f64;
         for e in &entries {
@@ -844,7 +951,11 @@ impl MemoryManager {
         // Count daily notes files
         let notes_dir = self._base_dir.join("notes");
         let note_count = std::fs::read_dir(&notes_dir)
-            .map(|rd| rd.flatten().filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("md")).count())
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("md"))
+                    .count()
+            })
             .unwrap_or(0);
 
         Ok(serde_json::json!({

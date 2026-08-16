@@ -30,7 +30,7 @@
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -67,12 +67,11 @@ async fn wait_for_debug_port(profile_dir: &std::path::Path) -> Result<u16, Strin
         if tokio::time::Instant::now() > deadline {
             return Err("Timed out waiting for DevToolsActivePort (browser did not start)".into());
         }
-        if let Ok(content) = std::fs::read_to_string(&port_file) {
-            if let Some(line) = content.lines().next() {
-                if let Ok(port) = line.trim().parse::<u16>() {
-                    return Ok(port);
-                }
-            }
+        if let Ok(content) = std::fs::read_to_string(&port_file)
+            && let Some(line) = content.lines().next()
+            && let Ok(port) = line.trim().parse::<u16>()
+        {
+            return Ok(port);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -155,7 +154,10 @@ fn page_ws_url() -> Result<String, String> {
     guard
         .as_ref()
         .map(|s| s.page_ws_url.clone())
-        .ok_or_else(|| "No browser session — call web_browser { action: 'navigate', url: ... } first".to_string())
+        .ok_or_else(|| {
+            "No browser session — call web_browser { action: 'navigate', url: ... } first"
+                .to_string()
+        })
 }
 
 /// Match a CDP response frame against the expected request id.
@@ -180,7 +182,7 @@ async fn cdp_call(ws_url: &str, method: &str, params: Value) -> Result<Value, St
         .map_err(|e| format!("CDP connect failed: {}", e))?;
     let id = 1u64;
     let msg = json!({ "id": id, "method": method, "params": params });
-    ws.send(Message::Text(msg.to_string().into()))
+    ws.send(Message::Text(msg.to_string()))
         .await
         .map_err(|e| format!("CDP send failed: {}", e))?;
 
@@ -196,8 +198,8 @@ async fn cdp_call(ws_url: &str, method: &str, params: Value) -> Result<Value, St
             .ok_or("CDP connection closed")?
             .map_err(|e| format!("CDP read error: {}", e))?;
         if let Message::Text(txt) = item {
-            let v: Value = serde_json::from_str(&txt)
-                .map_err(|e| format!("CDP bad response JSON: {}", e))?;
+            let v: Value =
+                serde_json::from_str(&txt).map_err(|e| format!("CDP bad response JSON: {}", e))?;
             if let Some(result) = match_cdp_response(&v, id) {
                 return result;
             }
@@ -260,7 +262,11 @@ async fn do_navigate(url: &str, wait_ms: u64) -> Result<String, String> {
     Ok(format!(
         "Navigated to {}.\nPage title: {}\nUse web_browser screenshot / get_text / click / type to interact with the page.",
         url,
-        if title.is_empty() { "(empty)" } else { title.trim() }
+        if title.is_empty() {
+            "(empty)"
+        } else {
+            title.trim()
+        }
     ))
 }
 
@@ -281,7 +287,7 @@ async fn do_click(selector: &str) -> Result<String, String> {
                 "[ERROR] Selector '{}' not found on the page (checked querySelector). \
                  Verify the selector with web_browser get_text first.",
                 selector
-            ))
+            ));
         }
     };
     let mouse = |mtype: &str| {
@@ -316,15 +322,28 @@ async fn do_type(selector: &str, text: &str) -> Result<String, String> {
         ));
     }
     cdp_call(&ws_url, "Input.insertText", json!({ "text": text })).await?;
-    log::info!("[WebBrowser] Typed {} chars into '{}'", text.chars().count(), selector);
-    Ok(format!("Typed {} characters into '{}'.", text.chars().count(), selector))
+    log::info!(
+        "[WebBrowser] Typed {} chars into '{}'",
+        text.chars().count(),
+        selector
+    );
+    Ok(format!(
+        "Typed {} characters into '{}'.",
+        text.chars().count(),
+        selector
+    ))
 }
 
 /// Capture the current page. `name` (optional) registers the PNG for
 /// later `screenshot_diff` comparisons.
 async fn do_screenshot(name: Option<&str>) -> Result<String, String> {
     let ws_url = page_ws_url()?;
-    let result = cdp_call(&ws_url, "Page.captureScreenshot", json!({ "format": "png" })).await?;
+    let result = cdp_call(
+        &ws_url,
+        "Page.captureScreenshot",
+        json!({ "format": "png" }),
+    )
+    .await?;
     let b64 = result["data"]
         .as_str()
         .ok_or_else(|| "CDP captureScreenshot returned no data".to_string())?;
@@ -335,22 +354,19 @@ async fn do_screenshot(name: Option<&str>) -> Result<String, String> {
             .map_err(|e| format!("Screenshot base64 decode failed: {}", e))?
     };
     let out_dir = std::env::temp_dir().join("neocoder_previews");
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("Cannot create preview dir: {}", e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("Cannot create preview dir: {}", e))?;
     let file_name = match name {
         Some(n) if !n.trim().is_empty() => format!("browser_{}.png", n.trim()),
         _ => format!("browser_{}.png", chrono::Utc::now().timestamp_millis()),
     };
     let out_path = out_dir.join(&file_name);
-    std::fs::write(&out_path, &bytes)
-        .map_err(|e| format!("Cannot write screenshot: {}", e))?;
+    std::fs::write(&out_path, &bytes).map_err(|e| format!("Cannot write screenshot: {}", e))?;
 
-    if let Some(n) = name.filter(|n| !n.trim().is_empty()) {
-        if let Ok(mut guard) = session().lock() {
-            if let Some(s) = guard.as_mut() {
-                s.screenshots.insert(n.trim().to_string(), out_path.clone());
-            }
-        }
+    if let Some(n) = name.filter(|n| !n.trim().is_empty())
+        && let Ok(mut guard) = session().lock()
+        && let Some(s) = guard.as_mut()
+    {
+        s.screenshots.insert(n.trim().to_string(), out_path.clone());
     }
 
     log::info!("[WebBrowser] Screenshot saved: {}", out_path.display());
@@ -369,7 +385,7 @@ async fn do_screenshot(name: Option<&str>) -> Result<String, String> {
 /// Pixel-wise PNG diff. Returns `(changed_ratio, diff_png_bytes)` where the
 /// diff image marks changed pixels in red on a dark background.
 fn pixel_diff_png(reference: &[u8], current: &[u8]) -> Result<(f64, Vec<u8>), String> {
-    use image::{GenericImageView, ImageFormat, Rgba, RgbaImage};
+    use image::{ImageFormat, Rgba, RgbaImage};
     let a = image::load_from_memory(reference)
         .map_err(|e| format!("Reference PNG decode failed: {}", e))?
         .to_rgba8();
@@ -399,7 +415,11 @@ fn pixel_diff_png(reference: &[u8], current: &[u8]) -> Result<(f64, Vec<u8>), St
         }
     }
     let total = w as u64 * h as u64;
-    let ratio = if total == 0 { 1.0 } else { changed as f64 / total as f64 };
+    let ratio = if total == 0 {
+        1.0
+    } else {
+        changed as f64 / total as f64
+    };
     let mut out = Vec::new();
     diff.write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)
         .map_err(|e| format!("Diff PNG encode failed: {}", e))?;
@@ -413,7 +433,8 @@ async fn do_screenshot_diff(reference: &str) -> Result<String, String> {
     if reference.trim().is_empty() {
         return Err("[ERROR] screenshot_diff requires a 'reference' argument: \
                     a name from a previous screenshot call (e.g. screenshot { name: 'login' }) \
-                    or an absolute PNG path".to_string());
+                    or an absolute PNG path"
+            .to_string());
     }
 
     // Resolve the reference PNG path (named screenshot > absolute path)
@@ -431,18 +452,26 @@ async fn do_screenshot_diff(reference: &str) -> Result<String, String> {
             }
         }
     };
-    let ref_path = ref_path.ok_or_else(|| format!(
-        "[ERROR] Reference '{}' not found: no screenshot with that name in this session \
+    let ref_path = ref_path.ok_or_else(|| {
+        format!(
+            "[ERROR] Reference '{}' not found: no screenshot with that name in this session \
          and no file at that path. Take one first with screenshot {{ name: '{}' }}.",
-        reference, reference.trim()
-    ))?;
+            reference,
+            reference.trim()
+        )
+    })?;
 
     let reference_bytes =
         std::fs::read(&ref_path).map_err(|e| format!("Cannot read reference PNG: {}", e))?;
 
     // Capture the current page
     let ws_url = page_ws_url()?;
-    let result = cdp_call(&ws_url, "Page.captureScreenshot", json!({ "format": "png" })).await?;
+    let result = cdp_call(
+        &ws_url,
+        "Page.captureScreenshot",
+        json!({ "format": "png" }),
+    )
+    .await?;
     let b64 = result["data"]
         .as_str()
         .ok_or_else(|| "CDP captureScreenshot returned no data".to_string())?;
@@ -456,15 +485,13 @@ async fn do_screenshot_diff(reference: &str) -> Result<String, String> {
     let (ratio, diff_png) = pixel_diff_png(&reference_bytes, &current)?;
 
     let out_dir = std::env::temp_dir().join("neocoder_previews");
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("Cannot create preview dir: {}", e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("Cannot create preview dir: {}", e))?;
     let out_path = out_dir.join(format!(
         "diff_{}_{}.png",
         reference.trim(),
         chrono::Utc::now().timestamp_millis()
     ));
-    std::fs::write(&out_path, &diff_png)
-        .map_err(|e| format!("Cannot write diff image: {}", e))?;
+    std::fs::write(&out_path, &diff_png).map_err(|e| format!("Cannot write diff image: {}", e))?;
 
     let verdict = if ratio < 0.001 {
         "VISUALLY IDENTICAL"
@@ -501,7 +528,9 @@ async fn do_export_script() -> Result<String, String> {
             .unwrap_or_default()
     };
     if log.is_empty() {
-        return Ok("No actions recorded yet. Run navigate/click/type/screenshot first.".to_string());
+        return Ok(
+            "No actions recorded yet. Run navigate/click/type/screenshot first.".to_string(),
+        );
     }
     let script = serde_json::to_string_pretty(&log)
         .map_err(|e| format!("Failed to serialize action log: {}", e))?;
@@ -533,12 +562,18 @@ async fn do_replay(script: &str) -> Result<String, String> {
                 if let Some(err) = url_error(url) {
                     Err(err)
                 } else {
-                    let wait_ms = action.get("wait_ms").and_then(|v| v.as_u64()).unwrap_or(1500);
+                    let wait_ms = action
+                        .get("wait_ms")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(1500);
                     do_navigate(url, wait_ms).await
                 }
             }
             "click" => {
-                let selector = action.get("selector").and_then(|v| v.as_str()).unwrap_or("");
+                let selector = action
+                    .get("selector")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if selector.is_empty() {
                     Err("[ERROR] replay click requires a 'selector'".to_string())
                 } else {
@@ -546,7 +581,10 @@ async fn do_replay(script: &str) -> Result<String, String> {
                 }
             }
             "type" => {
-                let selector = action.get("selector").and_then(|v| v.as_str()).unwrap_or("");
+                let selector = action
+                    .get("selector")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let text = action.get("text").and_then(|v| v.as_str()).unwrap_or("");
                 if selector.is_empty() || text.is_empty() {
                     Err("[ERROR] replay type requires 'selector' and 'text'".to_string())
@@ -590,7 +628,9 @@ async fn do_replay(script: &str) -> Result<String, String> {
 
 /// First non-empty line of a (possibly multi-line) tool output.
 fn first_line(text: &str) -> &str {
-    text.lines().find(|l| !l.trim().is_empty()).unwrap_or("(no output)")
+    text.lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("(no output)")
 }
 
 /// Record a successful recordable action into the session log.
@@ -599,10 +639,10 @@ fn log_action(action: &Value) {
     if !matches!(a, "navigate" | "click" | "type" | "screenshot") {
         return;
     }
-    if let Ok(mut guard) = session().lock() {
-        if let Some(s) = guard.as_mut() {
-            s.action_log.push(action.clone());
-        }
+    if let Ok(mut guard) = session().lock()
+        && let Some(s) = guard.as_mut()
+    {
+        s.action_log.push(action.clone());
     }
 }
 
@@ -616,7 +656,11 @@ async fn do_get_text() -> Result<String, String> {
     const MAX: usize = 8000;
     if trimmed.chars().count() > MAX {
         let cut: String = trimmed.chars().take(MAX).collect();
-        return Ok(format!("{}\n... ({} more chars omitted)", cut, trimmed.chars().count() - MAX));
+        return Ok(format!(
+            "{}\n... ({} more chars omitted)",
+            cut,
+            trimmed.chars().count() - MAX
+        ));
     }
     Ok(trimmed.to_string())
 }
@@ -632,7 +676,10 @@ async fn do_close() -> Result<String, String> {
         let _ = s.child.kill().await;
         let _ = s.child.wait().await;
     }
-    Ok("Browser session closed. The next web_browser navigate will start a fresh instance.".to_string())
+    Ok(
+        "Browser session closed. The next web_browser navigate will start a fresh instance."
+            .to_string(),
+    )
 }
 
 #[async_trait]
@@ -709,7 +756,11 @@ mod tests {
     fn selector_expressions_escape_quotes() {
         // A selector containing quotes must survive JSON embedding
         let expr = selector_center_expr("div[data-name=\"a'b\"]");
-        assert!(expr.contains("\\\"a'b\\\"") || expr.contains("\\\"a'b\\\""), "{}", expr);
+        assert!(
+            expr.contains("\\\"a'b\\\"") || expr.contains("\\\"a'b\\\""),
+            "{}",
+            expr
+        );
         // The generated snippet is syntactically valid JS
         assert!(expr.starts_with("(() => {"));
         assert!(expr.ends_with("})()"));
@@ -721,14 +772,18 @@ mod tests {
     fn cdp_result_extraction_matches_id() {
         // Response with matching id → result
         let v = json!({ "id": 1, "result": { "foo": "bar" } });
-        let m = match_cdp_response(&v, 1).expect("matching id").expect("no error");
+        let m = match_cdp_response(&v, 1)
+            .expect("matching id")
+            .expect("no error");
         assert_eq!(m["foo"], "bar");
         // Event (different id) → None
         let v = json!({ "id": 99, "method": "Page.loadEventFired" });
         assert!(match_cdp_response(&v, 1).is_none());
         // Error payload → Err with message
         let v = json!({ "id": 1, "error": { "message": "boom", "code": -32000 } });
-        let err = match_cdp_response(&v, 1).expect("matching id").expect_err("error payload");
+        let err = match_cdp_response(&v, 1)
+            .expect("matching id")
+            .expect_err("error payload");
         assert!(err.contains("boom"), "{}", err);
     }
 
@@ -750,7 +805,7 @@ mod tests {
         let a = make([10, 20, 30, 255]);
         let (ratio, diff) = pixel_diff_png(&a, &a).expect("diff identical");
         assert_eq!(ratio, 0.0);
-        assert!(diff.len() > 0);
+        assert!(!diff.is_empty());
 
         // One pixel differs → small but nonzero ratio
         let mut b_img = RgbaImage::new(8, 8);
@@ -760,7 +815,10 @@ mod tests {
         b_img.put_pixel(0, 0, Rgba([250, 250, 250, 255]));
         let mut b_buf = Vec::new();
         b_img
-            .write_to(&mut std::io::Cursor::new(&mut b_buf), image::ImageFormat::Png)
+            .write_to(
+                &mut std::io::Cursor::new(&mut b_buf),
+                image::ImageFormat::Png,
+            )
             .unwrap();
         let (ratio2, _) = pixel_diff_png(&a, &b_buf).expect("diff one pixel");
         assert!(ratio2 > 0.0 && ratio2 < 0.1, "ratio {}", ratio2);

@@ -1,6 +1,6 @@
+use crate::lsp::{LSPCodeAction, LSPHoverInfo, LSPSymbol, LSPTextEdit, LspManager};
 use std::sync::Arc;
 use tauri::State;
-use crate::lsp::{LSPCodeAction, LSPHoverInfo, LSPSymbol, LSPTextEdit, LspManager};
 
 #[tauri::command]
 pub async fn start_lsp(
@@ -31,7 +31,9 @@ pub async fn get_hover_info(
     column: u32,
 ) -> Result<Option<LSPHoverInfo>, String> {
     log::info!("Getting hover info for {}:{}:{}", file_path, line, column);
-    lsp_manager.get_hover(&language, &file_path, line, column).await
+    lsp_manager
+        .get_hover(&language, &file_path, line, column)
+        .await
 }
 
 #[tauri::command]
@@ -41,7 +43,9 @@ pub async fn lsp_did_open(
     file_path: String,
     file_text: String,
 ) -> Result<(), String> {
-    lsp_manager.did_open(&language, &file_path, &file_text).await
+    lsp_manager
+        .did_open(&language, &file_path, &file_text)
+        .await
 }
 
 #[tauri::command]
@@ -52,7 +56,9 @@ pub async fn lsp_did_change(
     text: String,
     version: i32,
 ) -> Result<(), String> {
-    lsp_manager.did_change(&language, &file_path, &text, version).await
+    lsp_manager
+        .did_change(&language, &file_path, &text, version)
+        .await
 }
 
 #[tauri::command]
@@ -65,9 +71,7 @@ pub async fn lsp_did_close(
 }
 
 #[tauri::command]
-pub async fn shutdown_lsp(
-    lsp_manager: State<'_, Arc<LspManager>>,
-) -> Result<(), String> {
+pub async fn shutdown_lsp(lsp_manager: State<'_, Arc<LspManager>>) -> Result<(), String> {
     log::info!("Shutting down all LSP clients");
     lsp_manager.shutdown_all().await;
     Ok(())
@@ -82,8 +86,16 @@ pub async fn rename_symbol(
     column: u32,
     new_name: String,
 ) -> Result<Vec<LSPTextEdit>, String> {
-    log::info!("Renaming symbol at {}:{}:{} to '{}'", file_path, line, column, new_name);
-    lsp_manager.rename_symbol(&language, &file_path, line, column, &new_name).await
+    log::info!(
+        "Renaming symbol at {}:{}:{} to '{}'",
+        file_path,
+        line,
+        column,
+        new_name
+    );
+    lsp_manager
+        .rename_symbol(&language, &file_path, line, column, &new_name)
+        .await
 }
 
 #[tauri::command]
@@ -97,7 +109,9 @@ pub async fn get_code_actions(
 ) -> Result<Vec<LSPCodeAction>, String> {
     log::info!("Getting code actions at {}:{}:{}", file_path, line, column);
     let diags = diagnostics.unwrap_or_default();
-    lsp_manager.code_action(&language, &file_path, line, column, &diags).await
+    lsp_manager
+        .code_action(&language, &file_path, line, column, &diags)
+        .await
 }
 
 #[tauri::command]

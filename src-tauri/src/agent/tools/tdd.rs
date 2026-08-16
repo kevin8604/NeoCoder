@@ -19,7 +19,10 @@ fn detect_test_command(dir: &str) -> Option<String> {
     if p.join("package.json").exists() {
         return Some("npm test".to_string());
     }
-    if p.join("pyproject.toml").exists() || p.join("pytest.ini").exists() || p.join("setup.py").exists() {
+    if p.join("pyproject.toml").exists()
+        || p.join("pytest.ini").exists()
+        || p.join("setup.py").exists()
+    {
         return Some("python -m pytest -q".to_string());
     }
     if p.join("go.mod").exists() {
@@ -36,9 +39,13 @@ impl Tool for TddTool {
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> String {
         let Some(session_id) = ctx.session_id.as_deref() else {
-            return "[ERROR] tdd requires an active session (no session_id in context).".to_string();
+            return "[ERROR] tdd requires an active session (no session_id in context)."
+                .to_string();
         };
-        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("start");
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("start");
 
         match action {
             "start" => {
@@ -48,11 +55,7 @@ impl Tool for TddTool {
                     .and_then(|v| v.as_str())
                     .filter(|c| !c.is_empty())
                     .map(|c| c.to_string())
-                    .or_else(|| {
-                        ctx.project_path
-                            .as_deref()
-                            .and_then(detect_test_command)
-                    });
+                    .or_else(|| ctx.project_path.as_deref().and_then(detect_test_command));
                 crate::agent::tdd::start(session_id, test_command)
             }
             "stop" => crate::agent::tdd::stop(session_id),
@@ -75,7 +78,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("nee-tdd-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("Cargo.toml"), "").unwrap();
-        assert_eq!(detect_test_command(dir.to_str().unwrap()).as_deref(), Some("cargo test"));
+        assert_eq!(
+            detect_test_command(dir.to_str().unwrap()).as_deref(),
+            Some("cargo test")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

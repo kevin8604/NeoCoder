@@ -38,25 +38,13 @@ pub struct ChatRequest {
     pub mode: ChatMode,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatContext {
     pub active_file: Option<String>,
     pub selected_code: Option<String>,
     pub file_mentions: Vec<String>,
     pub symbol_mentions: Vec<String>,
     pub include_codebase: bool,
-}
-
-impl Default for ChatContext {
-    fn default() -> Self {
-        Self {
-            active_file: None,
-            selected_code: None,
-            file_mentions: vec![],
-            symbol_mentions: vec![],
-            include_codebase: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,28 +57,125 @@ pub enum ChatMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChatEvent {
-    Started { session_id: String, agent_id: Option<String> },
-    Delta { session_id: String, agent_id: Option<String>, token: String },
-    Finished { session_id: String, agent_id: Option<String>, full_text: String },
-    ToolCall { session_id: String, agent_id: Option<String>, tool_call: ToolCall },
-    ToolResult { session_id: String, agent_id: Option<String>, result: String, duration_ms: u64 },
-    ToolRetry { session_id: String, agent_id: Option<String>, tool_name: String, attempt: u32, error: String },
-    TodoUpdate { session_id: String, agent_id: Option<String>, todos: Vec<TodoItem> },
-    AskUserQuestion { session_id: String, agent_id: Option<String>, question_id: String, questions: Vec<QuestionItem> },
-    AgentStatus { session_id: String, agent_id: Option<String>, status: String, iteration: u32, total_iterations: u32, estimated_tokens: u32, elapsed_ms: u64 },
-    AgentThinking { session_id: String, agent_id: Option<String>, thought: String },
-    ContextTrimmed { session_id: String, agent_id: Option<String>, trimmed_count: u32, total_before: u32, total_after: u32 },
-    AgentLog { session_id: String, agent_id: Option<String>, level: String, message: String },
-    EditDiff { session_id: String, agent_id: Option<String>, changes: Vec<FileChange> },
-    ConfirmRequest { session_id: String, agent_id: Option<String>, confirm_id: String, tool_name: String, description: String },
-    Cancelled { session_id: String, agent_id: Option<String> },
-    Error { session_id: String, agent_id: Option<String>, message: String },
-    FileRestored { session_id: String, agent_id: Option<String>, file_path: String, content: String },
-    CheckpointCreated { session_id: String, agent_id: Option<String>, iteration: u32, commit_hash: Option<String>, files: Vec<String> },
-    BudgetExhausted { session_id: String, agent_id: Option<String>, summary: String, max_iterations: u32 },
-    PlanCreated { plan: PlanCreate },
-    PlanApproved { plan: PlanApproved },
-    PlanRejected { plan: PlanRejected },
+    Started {
+        session_id: String,
+        agent_id: Option<String>,
+    },
+    Delta {
+        session_id: String,
+        agent_id: Option<String>,
+        token: String,
+    },
+    Finished {
+        session_id: String,
+        agent_id: Option<String>,
+        full_text: String,
+    },
+    ToolCall {
+        session_id: String,
+        agent_id: Option<String>,
+        tool_call: ToolCall,
+    },
+    ToolResult {
+        session_id: String,
+        agent_id: Option<String>,
+        result: String,
+        duration_ms: u64,
+    },
+    ToolRetry {
+        session_id: String,
+        agent_id: Option<String>,
+        tool_name: String,
+        attempt: u32,
+        error: String,
+    },
+    TodoUpdate {
+        session_id: String,
+        agent_id: Option<String>,
+        todos: Vec<TodoItem>,
+    },
+    AskUserQuestion {
+        session_id: String,
+        agent_id: Option<String>,
+        question_id: String,
+        questions: Vec<QuestionItem>,
+    },
+    AgentStatus {
+        session_id: String,
+        agent_id: Option<String>,
+        status: String,
+        iteration: u32,
+        total_iterations: u32,
+        estimated_tokens: u32,
+        elapsed_ms: u64,
+    },
+    AgentThinking {
+        session_id: String,
+        agent_id: Option<String>,
+        thought: String,
+    },
+    ContextTrimmed {
+        session_id: String,
+        agent_id: Option<String>,
+        trimmed_count: u32,
+        total_before: u32,
+        total_after: u32,
+    },
+    AgentLog {
+        session_id: String,
+        agent_id: Option<String>,
+        level: String,
+        message: String,
+    },
+    EditDiff {
+        session_id: String,
+        agent_id: Option<String>,
+        changes: Vec<FileChange>,
+    },
+    ConfirmRequest {
+        session_id: String,
+        agent_id: Option<String>,
+        confirm_id: String,
+        tool_name: String,
+        description: String,
+    },
+    Cancelled {
+        session_id: String,
+        agent_id: Option<String>,
+    },
+    Error {
+        session_id: String,
+        agent_id: Option<String>,
+        message: String,
+    },
+    FileRestored {
+        session_id: String,
+        agent_id: Option<String>,
+        file_path: String,
+        content: String,
+    },
+    CheckpointCreated {
+        session_id: String,
+        agent_id: Option<String>,
+        iteration: u32,
+        commit_hash: Option<String>,
+        files: Vec<String>,
+    },
+    BudgetExhausted {
+        session_id: String,
+        agent_id: Option<String>,
+        summary: String,
+        max_iterations: u32,
+    },
+    PlanCreated {
+        plan: PlanCreate,
+    },
+    PlanApproved {
+        plan: PlanApproved,
+    },
+    PlanRejected {
+        plan: PlanRejected,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,7 +214,6 @@ pub struct QuestionOption {
     pub description: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanCreate {
     pub session_id: String,
@@ -141,25 +225,23 @@ pub struct PlanCreate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanStep {
-    pub order: u32, 
-    pub description: String, 
-    pub file_path :Option<String>,
+    pub order: u32,
+    pub description: String,
+    pub file_path: Option<String>,
     pub tool_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanApproved {
-    pub session_id: String, 
+    pub session_id: String,
     pub agent_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanRejected {
-    pub session_id: String, 
+    pub session_id: String,
     pub agent_id: Option<String>,
     pub reason: Option<String>,
 }
-
-
 
 /// Conversation memory manager — backed by Markdown files via MemoryManager.
 pub struct ConversationMemory {
@@ -183,7 +265,8 @@ impl ConversationMemory {
 
     /// Compatibility shim: accepts sessions_dir but uses its parent as memory base dir.
     pub fn with_storage(storage_dir: std::path::PathBuf) -> Self {
-        let base = storage_dir.parent()
+        let base = storage_dir
+            .parent()
             .map(|p| p.join("memory"))
             .unwrap_or_else(|| {
                 let mut p = storage_dir;
@@ -207,7 +290,9 @@ impl ConversationMemory {
     }
 
     pub fn get_context_window(&self, session_id: &str, max_tokens: usize) -> Vec<ChatMessage> {
-        self.manager.get_context_window(session_id, max_tokens).unwrap_or_default()
+        self.manager
+            .get_context_window(session_id, max_tokens)
+            .unwrap_or_default()
     }
 
     pub fn get_all_sessions(&self) -> Vec<ChatSession> {

@@ -1,8 +1,17 @@
-use crate::completion::{CompletionContext, FnSignature, build_fim_prompt, post_process_completion};
+use crate::completion::{
+    CompletionContext, FnSignature, build_fim_prompt, post_process_completion,
+};
 
 fn make_ctx(prefix: &str, suffix: &str, language: &str) -> CompletionContext {
     CompletionContext {
-        file_path: format!("test.{}", if language == "typescript" { "ts" } else { language }),
+        file_path: format!(
+            "test.{}",
+            if language == "typescript" {
+                "ts"
+            } else {
+                language
+            }
+        ),
         language: language.to_string(),
         prefix: prefix.to_string(),
         suffix: suffix.to_string(),
@@ -125,7 +134,11 @@ fn test_fim_prompt_no_recent_edits_section() {
 fn test_post_process_trim_leading_whitespace() {
     let ctx = make_ctx("", "", "rust");
     let result = post_process_completion("\n\n  hello world", &ctx);
-    assert!(result.starts_with("hello") || result.starts_with("  hello") || result.trim().starts_with("hello"));
+    assert!(
+        result.starts_with("hello")
+            || result.starts_with("  hello")
+            || result.trim().starts_with("hello")
+    );
 }
 
 #[test]

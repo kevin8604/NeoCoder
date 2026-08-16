@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
 /// Daily notes management: reads/writes `notes/YYYY-MM-DD.md` files.
 pub struct DailyNotes {
@@ -63,7 +63,10 @@ impl DailyNotes {
     pub fn read_note(&self, date: &str) -> Result<String, String> {
         // Validate the date format to avoid path traversal
         if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
-            return Err(format!("Invalid date format: {} (expected YYYY-MM-DD)", date));
+            return Err(format!(
+                "Invalid date format: {} (expected YYYY-MM-DD)",
+                date
+            ));
         }
         let path = self.date_path(date);
         Self::read_file(&path)
@@ -74,8 +77,7 @@ impl DailyNotes {
         if !path.exists() {
             return Ok(String::new());
         }
-        fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read note file: {}", e))
+        fs::read_to_string(path).map_err(|e| format!("Failed to read note file: {}", e))
     }
 
     /// Append an entry to today's note file (creates if not exists).
@@ -85,8 +87,7 @@ impl DailyNotes {
 
         // Ensure directory exists
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create notes dir: {}", e))?;
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create notes dir: {}", e))?;
         }
 
         let current = Self::read_file(&path)?;
@@ -97,8 +98,7 @@ impl DailyNotes {
         let timestamp = chrono::Utc::now().format("%H:%M:%S").to_string();
         new_content.push_str(&format!("- [{}] {}\n", timestamp, entry));
 
-        fs::write(&path, &new_content)
-            .map_err(|e| format!("Failed to write note file: {}", e))
+        fs::write(&path, &new_content).map_err(|e| format!("Failed to write note file: {}", e))
     }
 
     fn date_path(&self, date: &str) -> std::path::PathBuf {

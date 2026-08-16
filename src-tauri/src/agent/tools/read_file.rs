@@ -1,5 +1,5 @@
-use crate::fs_service::FileService;
 use super::{Tool, ToolContext};
+use crate::fs_service::FileService;
 
 pub struct ReadFile;
 
@@ -29,14 +29,18 @@ impl Tool for ReadFile {
                 if s > total_lines {
                     return format!(
                         "Error: start_line {} exceeds file length ({} lines) for {}",
-                        s, total_lines, path.display()
+                        s,
+                        total_lines,
+                        path.display()
                     );
                 }
 
                 if s > e {
                     return format!(
                         "Error: start_line ({}) must not exceed end_line ({}) for {}",
-                        s, e, path.display()
+                        s,
+                        e,
+                        path.display()
                     );
                 }
 
@@ -48,7 +52,10 @@ impl Tool for ReadFile {
                 let header = if is_partial {
                     format!(
                         "File {} (lines {}-{} of {}):\n",
-                        path.display(), s, e, total_lines
+                        path.display(),
+                        s,
+                        e,
+                        total_lines
                     )
                 } else {
                     format!("File {} ({} lines):\n", path.display(), total_lines)
@@ -74,4 +81,3 @@ impl Tool for ReadFile {
         }
     }
 }
-

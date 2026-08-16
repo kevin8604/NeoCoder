@@ -6,8 +6,8 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use super::client::McpRegistry;
 use super::McpToolDef;
+use super::client::McpRegistry;
 use crate::agent::tools::{PostExecuteAction, Tool, ToolContext};
 
 /// A single MCP tool wrapped as a NeoCoder Tool.
@@ -24,11 +24,7 @@ pub struct McpToolWrapper {
 }
 
 impl McpToolWrapper {
-    pub fn new(
-        prefixed_name: String,
-        definition: McpToolDef,
-        registry: Arc<McpRegistry>,
-    ) -> Self {
+    pub fn new(prefixed_name: String, definition: McpToolDef, registry: Arc<McpRegistry>) -> Self {
         Self {
             prefixed_name,
             definition,

@@ -1,5 +1,5 @@
-use crate::agent::utils;
 use super::{Tool, ToolContext};
+use crate::agent::utils;
 
 pub struct WebFetch;
 

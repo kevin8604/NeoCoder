@@ -11,12 +11,12 @@
 //! - export_training_data: MEMORY.md → JSONL fine-tune dataset → finetune-progress event
 //! - get_memory_entries: entries + current Ebbinghaus retention (R) for visualization
 
-use tauri::{Emitter, State};
 use crate::commands::chat::ChatState;
 use crate::config::AppSettings;
 use crate::llm::health::LocalModelHealth;
 use crate::memory::search::MemSearchResult;
 use std::sync::Arc;
+use tauri::{Emitter, State};
 use tokio::sync::RwLock;
 
 /// Probe the local Ollama service: running state + available models.
@@ -49,11 +49,19 @@ pub async fn search_memory(
     let want_semantic = use_semantic.unwrap_or(settings.memory_gc.semantic_search);
     if want_semantic {
         let results = mgr.hybrid_search_memory(&query, &settings, limit).await?;
-        log::info!("[MemorySearch] Hybrid search '{}' -> {} results", query, results.len());
+        log::info!(
+            "[MemorySearch] Hybrid search '{}' -> {} results",
+            query,
+            results.len()
+        );
         Ok(results)
     } else {
         let results = mgr.search_memory(&query, limit)?;
-        log::info!("[MemorySearch] BM25 search '{}' -> {} results", query, results.len());
+        log::info!(
+            "[MemorySearch] BM25 search '{}' -> {} results",
+            query,
+            results.len()
+        );
         Ok(results)
     }
 }
@@ -93,10 +101,7 @@ pub async fn list_notes(
 
 /// Read a daily note for a specific date (YYYY-MM-DD).
 #[tauri::command]
-pub async fn read_note(
-    chat_state: State<'_, ChatState>,
-    date: String,
-) -> Result<String, String> {
+pub async fn read_note(chat_state: State<'_, ChatState>, date: String) -> Result<String, String> {
     let memory = chat_state.memory.read().await;
     let mgr = memory.memory_manager();
     mgr.read_note(&date)
@@ -158,10 +163,10 @@ pub async fn get_memory_entries(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    if let Some(limit) = limit {
-        if entries.len() > limit {
-            entries.truncate(limit);
-        }
+    if let Some(limit) = limit
+        && entries.len() > limit
+    {
+        entries.truncate(limit);
     }
     Ok(entries)
 }

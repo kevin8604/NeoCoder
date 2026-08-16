@@ -1,14 +1,12 @@
+use crate::chat::{ChatMessage, Role};
 use crate::memory::MemoryManager;
 use crate::memory::ebbinghaus::{self, MemoryCategory, MemoryEntry};
-use crate::chat::{ChatMessage, Role};
-use std::path::PathBuf;
 use chrono::NaiveDate;
+use std::path::PathBuf;
 
 /// Create a temporary directory for test data (no tempfile crate needed)
 fn temp_test_dir(prefix: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "neocoder_test_{}_{}", prefix, std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("neocoder_test_{}_{}", prefix, std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
@@ -79,12 +77,16 @@ fn test_clear_session() {
     let mgr = MemoryManager::new(dir.clone());
     let sid = mgr.create_session().unwrap();
 
-    mgr.add_message(&sid, ChatMessage {
-        role: Role::User,
-        content: "Test message".to_string(),
-        tool_calls: None,
-        images: None,
-    }).unwrap();
+    mgr.add_message(
+        &sid,
+        ChatMessage {
+            role: Role::User,
+            content: "Test message".to_string(),
+            tool_calls: None,
+            images: None,
+        },
+    )
+    .unwrap();
 
     let msgs_before = mgr.get_context_window(&sid, 48000).unwrap();
     assert!(!msgs_before.is_empty());
@@ -122,7 +124,8 @@ fn test_long_term_read_write() {
     assert!(content.is_empty());
 
     // Write content
-    mgr.write_long_term("# Important Patterns\n- Use Result for error handling").unwrap();
+    mgr.write_long_term("# Important Patterns\n- Use Result for error handling")
+        .unwrap();
 
     let content = mgr.read_long_term().unwrap();
     assert!(content.contains("Important Patterns"));
@@ -134,8 +137,10 @@ fn test_long_term_append() {
     let dir = temp_test_dir("longterm_append");
     let mgr = MemoryManager::new(dir.clone());
 
-    mgr.append_long_term("Lessons", "Always handle errors").unwrap();
-    mgr.append_long_term("Lessons", "Prefer Result over panic").unwrap();
+    mgr.append_long_term("Lessons", "Always handle errors")
+        .unwrap();
+    mgr.append_long_term("Lessons", "Prefer Result over panic")
+        .unwrap();
 
     let content = mgr.read_long_term().unwrap();
     assert!(content.contains("Always handle errors"));
@@ -207,10 +212,9 @@ fn test_get_context_window_nonexistent_session() {
 
     let msgs = mgr.get_context_window("nonexistent-session-id", 48000);
     // Should either return empty or error gracefully
-    match msgs {
-        Ok(m) => assert!(m.is_empty()),
-        Err(_) => {} // error is acceptable for nonexistent session
-    }
+    if let Ok(m) = msgs {
+        assert!(m.is_empty());
+    } // Err is acceptable for nonexistent session
     cleanup(&dir);
 }
 
@@ -238,7 +242,10 @@ fn test_long_term_read_entries_empty() {
     let dir = temp_test_dir("eb_read_empty");
     let mgr = MemoryManager::new(dir.clone());
     let entries = mgr.long_term.read_entries().unwrap();
-    assert!(entries.is_empty(), "Empty MEMORY.md should yield no entries");
+    assert!(
+        entries.is_empty(),
+        "Empty MEMORY.md should yield no entries"
+    );
     cleanup(&dir);
 }
 
@@ -297,7 +304,8 @@ fn test_long_term_append_creates_metadata() {
     let dir = temp_test_dir("eb_append_meta");
     let mgr = MemoryManager::new(dir.clone());
 
-    mgr.append_long_term("Patterns", "Use async/await for IO").unwrap();
+    mgr.append_long_term("Patterns", "Use async/await for IO")
+        .unwrap();
 
     let entries = mgr.long_term.read_entries().unwrap();
     assert_eq!(entries.len(), 1);
@@ -376,13 +384,18 @@ fn test_long_term_recall_updates_metadata() {
     };
     let original_s = entry.stability;
 
-    mgr.long_term.write_entries(&[entry.clone()]).unwrap();
+    mgr.long_term
+        .write_entries(std::slice::from_ref(&entry))
+        .unwrap();
     mgr.long_term.recall_entries(&[0]).unwrap();
 
     let updated = mgr.long_term.read_entries().unwrap();
     assert_eq!(updated.len(), 1);
     assert_eq!(updated[0].recall_count, 3, "Count should be 2+1=3");
-    assert!(updated[0].stability > original_s, "S should increase after recall");
+    assert!(
+        updated[0].stability > original_s,
+        "S should increase after recall"
+    );
     // S += ln(更新后 count+1) = ln(4) ≈ 1.39
     let expected_s = original_s + 4.0_f64.ln();
     assert!((updated[0].stability - expected_s).abs() < 0.01);
@@ -416,7 +429,10 @@ fn test_long_term_recall_out_of_bounds() {
     let dir = temp_test_dir("eb_recall_oob");
     let mgr = MemoryManager::new(dir.clone());
 
-    let entries = vec![MemoryEntry::new("- Only entry".to_string(), "S".to_string())];
+    let entries = vec![MemoryEntry::new(
+        "- Only entry".to_string(),
+        "S".to_string(),
+    )];
     mgr.long_term.write_entries(&entries).unwrap();
 
     // Index 99 doesn't exist — should not panic
@@ -481,20 +497,18 @@ fn test_long_term_cleanup_no_expired() {
     let mgr = MemoryManager::new(dir.clone());
 
     // All fresh entries
-    let entries = vec![
-        MemoryEntry {
-            id: "entry-a".to_string(),
-            key: None,
-            text: "- Entry A".to_string(),
-            created: NaiveDate::from_ymd_opt(2026, 6, 25).unwrap(),
-            last_recalled: NaiveDate::from_ymd_opt(2026, 6, 26).unwrap(),
-            recall_count: 10,
-            stability: 50.0,
-            section: "S".to_string(),
-            category: MemoryCategory::Coding,
-            session_id: None,
-        },
-    ];
+    let entries = vec![MemoryEntry {
+        id: "entry-a".to_string(),
+        key: None,
+        text: "- Entry A".to_string(),
+        created: NaiveDate::from_ymd_opt(2026, 6, 25).unwrap(),
+        last_recalled: NaiveDate::from_ymd_opt(2026, 6, 26).unwrap(),
+        recall_count: 10,
+        stability: 50.0,
+        section: "S".to_string(),
+        category: MemoryCategory::Coding,
+        session_id: None,
+    }];
     mgr.long_term.write_entries(&entries).unwrap();
 
     let archived = mgr.long_term.cleanup_expired().unwrap();
@@ -514,24 +528,25 @@ fn test_long_term_cleanup_recent_but_low_r() {
     let now = chrono::Utc::now().date_naive();
 
     // Low R but recalled recently (within 30 days) — should NOT archive
-    let entries = vec![
-        MemoryEntry {
-            id: "recent-low".to_string(),
-            key: None,
-            text: "- Recent low-R entry".to_string(),
-            created: now - chrono::Duration::days(6),
-            last_recalled: now - chrono::Duration::days(5),
-            recall_count: 0,
-            stability: 1.0, // R after 5 days ≈ 0.0067 but < 30 days
-            section: "S".to_string(),
-            category: MemoryCategory::Coding,
-            session_id: None,
-        },
-    ];
+    let entries = vec![MemoryEntry {
+        id: "recent-low".to_string(),
+        key: None,
+        text: "- Recent low-R entry".to_string(),
+        created: now - chrono::Duration::days(6),
+        last_recalled: now - chrono::Duration::days(5),
+        recall_count: 0,
+        stability: 1.0, // R after 5 days ≈ 0.0067 but < 30 days
+        section: "S".to_string(),
+        category: MemoryCategory::Coding,
+        session_id: None,
+    }];
     mgr.long_term.write_entries(&entries).unwrap();
 
     let archived = mgr.long_term.cleanup_expired().unwrap();
-    assert_eq!(archived, 0, "Recent entry should not be archived even with low R");
+    assert_eq!(
+        archived, 0,
+        "Recent entry should not be archived even with low R"
+    );
 
     let remaining = mgr.long_term.read_entries().unwrap();
     assert_eq!(remaining.len(), 1);
@@ -584,7 +599,10 @@ fn test_inject_context_r_value_sorting() {
     // Both entries should be present (both have R > 0.01)
     assert!(ctx.contains("High retention entry"));
     // Low retention entry has R = e^(-20) ≈ 0.000000002, below 0.01 threshold → filtered out
-    assert!(!ctx.contains("Low retention entry"), "Very low R entries should be filtered");
+    assert!(
+        !ctx.contains("Low retention entry"),
+        "Very low R entries should be filtered"
+    );
 
     // High R entry should show R value annotation
     assert!(ctx.contains("R="), "Context should show R-value annotation");
@@ -619,8 +637,14 @@ fn test_inject_context_triggers_recall() {
 
     let updated = mgr.long_term.read_entries().unwrap();
     assert_eq!(updated.len(), 1);
-    assert!(updated[0].recall_count >= 1, "Injection should trigger recall");
-    assert!(updated[0].stability > 1.0, "S should increase after injection recall");
+    assert!(
+        updated[0].recall_count >= 1,
+        "Injection should trigger recall"
+    );
+    assert!(
+        updated[0].stability > 1.0,
+        "S should increase after injection recall"
+    );
     cleanup(&dir);
 }
 
@@ -661,8 +685,14 @@ fn test_inject_context_section_grouping() {
     mgr.long_term.write_entries(&entries).unwrap();
 
     let ctx = mgr.inject_memory_context();
-    assert!(ctx.contains("### Patterns"), "Should contain Patterns section header");
-    assert!(ctx.contains("### Decisions"), "Should contain Decisions section header");
+    assert!(
+        ctx.contains("### Patterns"),
+        "Should contain Patterns section header"
+    );
+    assert!(
+        ctx.contains("### Decisions"),
+        "Should contain Decisions section header"
+    );
     cleanup(&dir);
 }
 
@@ -691,10 +721,12 @@ fn test_inject_context_max_entries_limit() {
     let ctx = mgr.inject_memory_context();
 
     // Count how many entries appear in the context
-    let entry_count = ctx.lines()
-        .filter(|l| l.starts_with("- Entry "))
-        .count();
-    assert!(entry_count <= 20, "Should inject at most 20 entries, got {}", entry_count);
+    let entry_count = ctx.lines().filter(|l| l.starts_with("- Entry ")).count();
+    assert!(
+        entry_count <= 20,
+        "Should inject at most 20 entries, got {}",
+        entry_count
+    );
     cleanup(&dir);
 }
 
@@ -727,7 +759,10 @@ fn test_search_triggers_recall() {
     // Verify recall was triggered
     let updated = mgr.long_term.read_entries().unwrap();
     assert_eq!(updated.len(), 1);
-    assert!(updated[0].recall_count >= 1, "Search hit should trigger recall");
+    assert!(
+        updated[0].recall_count >= 1,
+        "Search hit should trigger recall"
+    );
     cleanup(&dir);
 }
 
@@ -792,13 +827,19 @@ fn test_ebbinghaus_multiple_recalls_increase_s() {
 
     // Each S should be strictly greater than the previous
     for i in 1..s_values.len() {
-        assert!(s_values[i] > s_values[i - 1], "S should monotonically increase");
+        assert!(
+            s_values[i] > s_values[i - 1],
+            "S should monotonically increase"
+        );
     }
 
     // Growth should show diminishing returns
     let growth_1 = s_values[1] - s_values[0]; // ln(3)
     let growth_4 = s_values[4] - s_values[3]; // ln(6)
-    assert!(growth_4 > growth_1, "Growth should increase with count (ln grows)");
+    assert!(
+        growth_4 > growth_1,
+        "Growth should increase with count (ln grows)"
+    );
 }
 
 #[test]
@@ -808,11 +849,17 @@ fn test_ebbinghaus_archive_boundary() {
 
     // Exactly 30 days ago — should NOT archive (boundary: > 30, not >=)
     entry.last_recalled = NaiveDate::from_ymd_opt(2026, 5, 27).unwrap();
-    assert!(!ebbinghaus::should_archive(&entry, now), "30 days exactly should not archive");
+    assert!(
+        !ebbinghaus::should_archive(&entry, now),
+        "30 days exactly should not archive"
+    );
 
     // 31 days ago with very low S — should archive
     entry.last_recalled = NaiveDate::from_ymd_opt(2026, 5, 26).unwrap();
-    assert!(ebbinghaus::should_archive(&entry, now), "31 days + low S should archive");
+    assert!(
+        ebbinghaus::should_archive(&entry, now),
+        "31 days + low S should archive"
+    );
 }
 
 #[test]

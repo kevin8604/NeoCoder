@@ -66,7 +66,9 @@ pub struct McpServerConfig {
     pub enabled: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// A tool definition returned by `tools/list`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,5 @@
 /// Built-in default Skills (embedded as constants).
 /// These are used when no user-defined skill files exist on disk.
-
 pub const REVIEW_SKILL: &str = r#"---
 name: review
 description: Review code for quality, correctness, and best practices

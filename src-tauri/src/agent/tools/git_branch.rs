@@ -1,5 +1,5 @@
-use std::process::Command;
 use super::{Tool, ToolContext};
+use std::process::Command;
 
 pub struct GitBranch;
 

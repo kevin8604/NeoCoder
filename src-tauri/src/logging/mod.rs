@@ -66,11 +66,11 @@ impl DualLogger {
         }
 
         // 检查文件大小，太小的直接删除
-        if let Ok(meta) = fs::metadata(&current) {
-            if meta.len() == 0 {
-                let _ = fs::remove_file(&current);
-                return;
-            }
+        if let Ok(meta) = fs::metadata(&current)
+            && meta.len() == 0
+        {
+            let _ = fs::remove_file(&current);
+            return;
         }
 
         // 用时间戳命名归档
@@ -130,16 +130,15 @@ impl Log for DualLogger {
         let message = record.args();
 
         // 文件日志（始终写入，级别更低）
-        if level <= self.file_level {
-            if let Ok(mut guard) = self.file.lock() {
-                if let Some(ref mut file) = *guard {
-                    let _ = writeln!(
-                        file,
-                        "[{}] {:<5} [{}] {}",
-                        timestamp, level, target, message
-                    );
-                }
-            }
+        if level <= self.file_level
+            && let Ok(mut guard) = self.file.lock()
+            && let Some(ref mut file) = *guard
+        {
+            let _ = writeln!(
+                file,
+                "[{}] {:<5} [{}] {}",
+                timestamp, level, target, message
+            );
         }
 
         // 控制台日志
@@ -160,10 +159,10 @@ impl Log for DualLogger {
     }
 
     fn flush(&self) {
-        if let Ok(mut guard) = self.file.lock() {
-            if let Some(ref mut file) = *guard {
-                let _ = file.flush();
-            }
+        if let Ok(mut guard) = self.file.lock()
+            && let Some(ref mut file) = *guard
+        {
+            let _ = file.flush();
         }
     }
 }
@@ -194,7 +193,10 @@ pub fn init(app_data_dir: &Path) {
 
     // 取两个级别中更宽松的作为全局过滤器
     let global_level = std::cmp::max(
-        console_level.to_level().map(|l| l.to_level_filter()).unwrap_or(LevelFilter::Off),
+        console_level
+            .to_level()
+            .map(|l| l.to_level_filter())
+            .unwrap_or(LevelFilter::Off),
         logger.file_level,
     );
 

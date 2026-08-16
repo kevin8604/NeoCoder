@@ -26,14 +26,14 @@ pub fn load_agents_from_disk() -> Vec<AgentDefinition> {
     // Also try to load user-custom agents from app config dir
     if let Some(proj_dirs) = directories::ProjectDirs::from("com", "neocoder", "NeoCoder") {
         let custom_path = proj_dirs.config_dir().join("custom_agents.json");
-        if let Ok(content) = std::fs::read_to_string(&custom_path) {
-            if let Ok(custom_agents) = serde_json::from_str::<Vec<AgentDefinition>>(&content) {
-                for custom in custom_agents {
-                    if let Some(existing) = agents.iter_mut().find(|a| a.id == custom.id) {
-                        *existing = custom;
-                    } else {
-                        agents.push(custom);
-                    }
+        if let Ok(content) = std::fs::read_to_string(&custom_path)
+            && let Ok(custom_agents) = serde_json::from_str::<Vec<AgentDefinition>>(&content)
+        {
+            for custom in custom_agents {
+                if let Some(existing) = agents.iter_mut().find(|a| a.id == custom.id) {
+                    *existing = custom;
+                } else {
+                    agents.push(custom);
                 }
             }
         }
@@ -45,26 +45,24 @@ pub fn load_agents_from_disk() -> Vec<AgentDefinition> {
 /// 从默认路径加载 agents.json（不含用户自定义 agents）
 /// 这个函数供 get_all_agents 使用，内置 agents 和自定义 agents 分别加载后合并
 pub fn load_agents_from_disk_except_custom() -> Vec<AgentDefinition> {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let path = dir.join("agents.json");
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(agents) = serde_json::from_str::<Vec<AgentDefinition>>(&content) {
-                    if !agents.is_empty() {
-                        return agents;
-                    }
-                }
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let path = dir.join("agents.json");
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(agents) = serde_json::from_str::<Vec<AgentDefinition>>(&content)
+            && !agents.is_empty()
+        {
+            return agents;
         }
     }
     if let Ok(cwd) = std::env::current_dir() {
         let path = cwd.join("agents.json");
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(agents) = serde_json::from_str::<Vec<AgentDefinition>>(&content) {
-                if !agents.is_empty() {
-                    return agents;
-                }
-            }
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(agents) = serde_json::from_str::<Vec<AgentDefinition>>(&content)
+            && !agents.is_empty()
+        {
+            return agents;
         }
     }
     // Fallback to embedded default agents

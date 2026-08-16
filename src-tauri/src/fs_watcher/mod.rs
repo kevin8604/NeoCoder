@@ -50,6 +50,12 @@ pub struct FileWatcher {
     pending_events: Arc<Mutex<Vec<DebouncedEvent>>>,
 }
 
+impl Default for FileWatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileWatcher {
     pub fn new() -> Self {
         FileWatcher {
@@ -91,7 +97,11 @@ impl FileWatcher {
             paths.insert(path.to_path_buf(), recursive);
         }
 
-        log::info!("Watching path: {} (recursive: {})", path.display(), recursive);
+        log::info!(
+            "Watching path: {} (recursive: {})",
+            path.display(),
+            recursive
+        );
         Ok(())
     }
 
@@ -129,7 +139,10 @@ impl FileWatcher {
                         _ => continue,
                     };
 
-                    let mut pending = self.pending_events.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut pending = self
+                        .pending_events
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
 
                     // Check if we already have a pending event for this path
                     if let Some(existing) = pending.iter_mut().find(|e| e.path == *path) {
@@ -150,7 +163,10 @@ impl FileWatcher {
         // Process debounced events
         let mut ready_indices = Vec::new();
         {
-            let pending = self.pending_events.lock().unwrap_or_else(|e| e.into_inner());
+            let pending = self
+                .pending_events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             for (i, evt) in pending.iter().enumerate() {
                 if evt.should_send(debounce_ms) {
                     ready_indices.push(i);
@@ -159,7 +175,10 @@ impl FileWatcher {
         }
 
         if !ready_indices.is_empty() {
-            let mut pending = self.pending_events.lock().unwrap_or_else(|e| e.into_inner());
+            let mut pending = self
+                .pending_events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             for &i in ready_indices.iter().rev() {
                 if i < pending.len() {
                     let evt = pending.remove(i);

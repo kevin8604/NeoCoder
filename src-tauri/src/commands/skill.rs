@@ -72,9 +72,7 @@ pub async fn execute_skill(
 
 /// Reload skills from disk (hot reload).
 #[tauri::command]
-pub async fn reload_skills(
-    skill_manager: State<'_, SkillState>,
-) -> Result<usize, String> {
+pub async fn reload_skills(skill_manager: State<'_, SkillState>) -> Result<usize, String> {
     skill_manager.reload();
     Ok(skill_manager.list().len())
 }
@@ -88,7 +86,10 @@ pub async fn save_skill(
     skill: SkillDefinition,
 ) -> Result<String, String> {
     // Generate filename from trigger (strip leading '/', replace with '-', append .md)
-    let filename = format!("{}.md", skill.trigger.trim_start_matches('/').replace('/', "-"));
+    let filename = format!(
+        "{}.md",
+        skill.trigger.trim_start_matches('/').replace('/', "-")
+    );
 
     // Get the global skills directory
     let config_dir = app
@@ -105,10 +106,13 @@ pub async fn save_skill(
     let content = serialize_skill(&skill);
 
     let path = skills_dir.join(&filename);
-    std::fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write skill file: {}", e))?;
+    std::fs::write(&path, &content).map_err(|e| format!("Failed to write skill file: {}", e))?;
 
-    log::info!("[Skill] Saved skill '{}' to {}", skill.trigger, path.display());
+    log::info!(
+        "[Skill] Saved skill '{}' to {}",
+        skill.trigger,
+        path.display()
+    );
 
     // Reload skills to pick up the change
     skill_manager.reload();
@@ -135,8 +139,7 @@ pub async fn delete_skill(
         return Err(format!("Skill '{}' not found", trigger));
     }
 
-    std::fs::remove_file(&path)
-        .map_err(|e| format!("Failed to delete skill file: {}", e))?;
+    std::fs::remove_file(&path).map_err(|e| format!("Failed to delete skill file: {}", e))?;
 
     log::info!("[Skill] Deleted skill '{}' ({})", trigger, path.display());
 
@@ -156,12 +159,12 @@ fn serialize_skill(skill: &SkillDefinition) -> String {
     if let Some(ref agent) = skill.agent {
         yaml.push_str(&format!("agent: {}\n", agent));
     }
-    if let Some(ref tools) = skill.tools {
-        if !tools.is_empty() {
-            yaml.push_str("tools:\n");
-            for t in tools {
-                yaml.push_str(&format!("  - {}\n", t));
-            }
+    if let Some(ref tools) = skill.tools
+        && !tools.is_empty()
+    {
+        yaml.push_str("tools:\n");
+        for t in tools {
+            yaml.push_str(&format!("  - {}\n", t));
         }
     }
     yaml.push_str("---\n\n");

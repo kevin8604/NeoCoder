@@ -21,7 +21,10 @@ fn detect_test_command(dir: &str) -> Option<String> {
         // Prefer the standard npm test script; fall back to jest/vitest directly
         return Some("npm test".to_string());
     }
-    if p.join("pyproject.toml").exists() || p.join("pytest.ini").exists() || p.join("setup.py").exists() {
+    if p.join("pyproject.toml").exists()
+        || p.join("pytest.ini").exists()
+        || p.join("setup.py").exists()
+    {
         return Some("python -m pytest -q".to_string());
     }
     if p.join("go.mod").exists() {
@@ -48,7 +51,10 @@ fn summarize_test_output(stdout: &str) -> String {
     // pytest: "12 passed, 0 failed in 1.23s"
     for line in stdout.lines() {
         let lower = line.to_lowercase();
-        if (lower.contains("passed") || lower.contains("failed")) && lower.contains(" in ") && lower.ends_with('s') {
+        if (lower.contains("passed") || lower.contains("failed"))
+            && lower.contains(" in ")
+            && lower.ends_with('s')
+        {
             summary.push_str(line.trim());
             summary.push('\n');
         }
@@ -89,7 +95,8 @@ fn extract_failing_code(stdout: &str, stderr: &str) -> String {
         }
         // Skip vendored/dependency paths (target/, node_modules/, ~/.cargo)
         let lower = raw_path.to_lowercase();
-        if lower.contains("target\\") || lower.contains("node_modules") || lower.contains(".cargo") {
+        if lower.contains("target\\") || lower.contains("node_modules") || lower.contains(".cargo")
+        {
             continue;
         }
         append_code_snippet(&mut out, &mut seen, &raw_path, line);
@@ -135,9 +142,9 @@ fn append_code_snippet(
     out.push_str(&format!("\n--- failing code at {}:{} ---\n", path, line));
     let start = line.saturating_sub(4);
     let end = (line + 3).min(lines.len());
-    for i in start..end {
+    for (i, content_line) in lines.iter().enumerate().skip(start).take(end - start) {
         let marker = if i + 1 == line { ">" } else { " " };
-        out.push_str(&format!("{} {:>4} | {}\n", marker, i + 1, lines[i]));
+        out.push_str(&format!("{} {:>4} | {}\n", marker, i + 1, content_line));
     }
 }
 
@@ -148,7 +155,8 @@ impl Tool for RunTests {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> String {
-        let work_dir = args["directory"].as_str()
+        let work_dir = args["directory"]
+            .as_str()
             .filter(|d| !d.is_empty())
             .or(ctx.project_path.as_deref())
             .unwrap_or(".");
@@ -157,7 +165,8 @@ impl Tool for RunTests {
             return format!("Error: directory '{}' does not exist", work_dir);
         }
 
-        let command = args["command"].as_str()
+        let command = args["command"]
+            .as_str()
             .filter(|c| !c.is_empty())
             .map(|c| c.to_string())
             .or_else(|| detect_test_command(work_dir));
@@ -191,12 +200,20 @@ impl Tool for RunTests {
                 const MAX_OUTPUT: usize = 80 * 1024;
                 if !stdout_str.is_empty() {
                     result.push_str("\n--- STDOUT (truncated to 80KB) ---\n");
-                    let s = if stdout_str.len() > MAX_OUTPUT { &stdout_str[..MAX_OUTPUT] } else { stdout_str };
+                    let s = if stdout_str.len() > MAX_OUTPUT {
+                        &stdout_str[..MAX_OUTPUT]
+                    } else {
+                        stdout_str
+                    };
                     result.push_str(s);
                 }
                 if !stderr_str.is_empty() {
                     result.push_str("\n--- STDERR ---\n");
-                    let s = if stderr_str.len() > MAX_OUTPUT { &stderr_str[..MAX_OUTPUT] } else { stderr_str };
+                    let s = if stderr_str.len() > MAX_OUTPUT {
+                        &stderr_str[..MAX_OUTPUT]
+                    } else {
+                        stderr_str
+                    };
                     result.push_str(s);
                 }
 

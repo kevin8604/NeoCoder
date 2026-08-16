@@ -21,10 +21,18 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Tools considered read-only (no side-effects on the codebase).
 const READ_ONLY_TOOLS: &[&str] = &[
-    "read_file", "glob", "grep", "search_codebase",
-    "list_directory", "get_symbols", "get_diagnostics",
-    "memory_search", "git_status", "git_diff",
-    "web_search", "web_fetch",
+    "read_file",
+    "glob",
+    "grep",
+    "search_codebase",
+    "list_directory",
+    "get_symbols",
+    "get_diagnostics",
+    "memory_search",
+    "git_status",
+    "git_diff",
+    "web_search",
+    "web_fetch",
 ];
 
 /// Returns true if the tool name is a read-only tool.
@@ -165,7 +173,8 @@ impl LoopDetector {
     ) {
         log::debug!(
             "[LoopDetector] record_call: tool='{}', success={}, args_sig_len={}, output_len={}",
-            tool_name, success,
+            tool_name,
+            success,
             args.to_string().len(),
             output.len()
         );
@@ -253,7 +262,10 @@ impl LoopDetector {
 
     /// How many consecutive failures for a specific tool.
     pub fn failure_count(&self, tool_name: &str) -> usize {
-        self.consecutive_failures.get(tool_name).copied().unwrap_or(0)
+        self.consecutive_failures
+            .get(tool_name)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Total number of records kept.
@@ -460,7 +472,10 @@ mod tests {
         match detector.check() {
             LoopVerdict::InjectWarning(msg) => {
                 assert!(msg.contains("grep"), "warning should name the tool");
-                assert!(msg.contains("3 consecutive times"), "warning should mention count");
+                assert!(
+                    msg.contains("3 consecutive times"),
+                    "warning should mention count"
+                );
             }
             other => panic!("Expected InjectWarning, got {:?}", other),
         }
@@ -601,15 +616,19 @@ mod tests {
         // 10 consecutive read-only calls, ALL different targets → valid exploration
         let mut detector = LoopDetector::new(LoopDetectionConfig::default());
 
-        let files = ["a.rs", "b.rs", "c.rs", "d.rs", "e.rs",
-                     "f.rs", "g.rs", "h.rs", "i.rs", "j.rs"];
+        let files = [
+            "a.rs", "b.rs", "c.rs", "d.rs", "e.rs", "f.rs", "g.rs", "h.rs", "i.rs", "j.rs",
+        ];
         for f in &files {
             detector.record_call("read_file", &make_args(f), "content", true);
         }
 
         // 10 total, 10 unique (100%) → below 15 threshold, Continue
-        assert_eq!(detector.check(), LoopVerdict::Continue,
-            "reading 10 different files should not trigger");
+        assert_eq!(
+            detector.check(),
+            LoopVerdict::Continue,
+            "reading 10 different files should not trigger"
+        );
     }
 
     #[test]
@@ -626,7 +645,11 @@ mod tests {
 
         match detector.check() {
             LoopVerdict::InjectWarning(msg) => {
-                assert!(msg.contains("Repeated read"), "should mention repeated read, got: {}", msg);
+                assert!(
+                    msg.contains("Repeated read"),
+                    "should mention repeated read, got: {}",
+                    msg
+                );
                 assert!(msg.contains("3 consecutive"), "should mention count");
             }
             other => panic!("Expected InjectWarning for repeated read, got {:?}", other),
@@ -655,10 +678,17 @@ mod tests {
         // 16 total, 3 unique (18.75% < 50%) → Rule B
         match detector.check() {
             LoopVerdict::InjectWarning(msg) => {
-                assert!(msg.contains("Read-only streak"), "should mention streak, got: {}", msg);
+                assert!(
+                    msg.contains("Read-only streak"),
+                    "should mention streak, got: {}",
+                    msg
+                );
                 assert!(msg.contains("3 unique"), "should mention unique count");
             }
-            other => panic!("Expected InjectWarning for blind exploration, got {:?}", other),
+            other => panic!(
+                "Expected InjectWarning for blind exploration, got {:?}",
+                other
+            ),
         }
     }
 
@@ -668,12 +698,20 @@ mod tests {
         let mut detector = LoopDetector::new(LoopDetectionConfig::default());
 
         for i in 0..16 {
-            detector.record_call("read_file", &make_args(&format!("file_{}.rs", i)), "c", true);
+            detector.record_call(
+                "read_file",
+                &make_args(&format!("file_{}.rs", i)),
+                "c",
+                true,
+            );
         }
 
         // 16 total >= 15, but 16 unique (100% >= 50%) → Continue
-        assert_eq!(detector.check(), LoopVerdict::Continue,
-            "16 different files should not trigger even above threshold");
+        assert_eq!(
+            detector.check(),
+            LoopVerdict::Continue,
+            "16 different files should not trigger even above threshold"
+        );
     }
 
     #[test]
@@ -686,7 +724,11 @@ mod tests {
         detector.record_call("read_file", &make_args("c.rs"), "content", true);
         detector.record_call("read_file", &make_args("d.rs"), "content", true);
 
-        assert_eq!(detector.check(), LoopVerdict::Continue, "write action breaks streak");
+        assert_eq!(
+            detector.check(),
+            LoopVerdict::Continue,
+            "write action breaks streak"
+        );
     }
 
     #[test]

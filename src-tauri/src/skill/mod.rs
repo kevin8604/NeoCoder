@@ -101,10 +101,10 @@ impl SkillManager {
         load_skills_from_dir(&self.global_dir, &mut all_skills);
 
         // 3. Load project-level skills (highest priority)
-        if let Ok(guard) = self.project_dir.lock() {
-            if let Some(ref proj_dir) = *guard {
-                load_skills_from_dir(proj_dir, &mut all_skills);
-            }
+        if let Ok(guard) = self.project_dir.lock()
+            && let Some(ref proj_dir) = *guard
+        {
+            load_skills_from_dir(proj_dir, &mut all_skills);
         }
 
         let mut skills: Vec<SkillDefinition> = all_skills.into_values().collect();
@@ -148,10 +148,10 @@ impl SkillManager {
         }
         for (filename, content) in builtin::builtin_skills() {
             let path = self.global_dir.join(filename);
-            if !path.exists() {
-                if let Err(e) = std::fs::write(&path, content) {
-                    log::warn!("Failed to write default skill {}: {}", path.display(), e);
-                }
+            if !path.exists()
+                && let Err(e) = std::fs::write(&path, content)
+            {
+                log::warn!("Failed to write default skill {}: {}", path.display(), e);
             }
         }
     }

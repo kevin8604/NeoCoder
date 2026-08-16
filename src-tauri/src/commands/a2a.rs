@@ -165,25 +165,29 @@ mod tests {
 
     #[test]
     fn test_a2a_status_from_enabled_but_not_started() {
-        let mut settings = AppSettings::default();
-        settings.a2a_server_enabled = true;
-        settings.a2a_server_port = 41234;
+        let settings = AppSettings {
+            a2a_server_enabled: true,
+            a2a_server_port: 41234,
+            ..Default::default()
+        };
         let status = a2a_status_from(&settings, false, 0);
-        assert_eq!(status.enabled, true);
-        assert_eq!(status.running, false);
+        assert!(status.enabled);
+        assert!(!status.running);
         assert_eq!(status.port, 0);
     }
 
     #[test]
     fn test_a2a_status_from_running() {
-        let mut settings = AppSettings::default();
-        settings.a2a_server_enabled = true;
-        settings.a2a_server_port = 41234;
-        settings.a2a_server_token = "t".into();
+        let settings = AppSettings {
+            a2a_server_enabled: true,
+            a2a_server_port: 41234,
+            a2a_server_token: "t".into(),
+            ..Default::default()
+        };
         let status = a2a_status_from(&settings, true, 41234);
-        assert_eq!(status.running, true);
+        assert!(status.running);
         assert_eq!(status.port, 41234);
-        assert_eq!(status.token_set, true);
+        assert!(status.token_set);
     }
 
     #[test]
@@ -226,10 +230,8 @@ mod tests {
             manager.update_settings(updated2.clone()).await.unwrap();
             manager.get_settings().await
         };
-        let read_back = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(persist);
-        assert_eq!(read_back.a2a_server_enabled, false);
+        let read_back = tokio::runtime::Runtime::new().unwrap().block_on(persist);
+        assert!(!read_back.a2a_server_enabled);
         assert_eq!(read_back.a2a_server_port, 43210);
         assert_eq!(read_back.a2a_server_token, "abc");
         assert_eq!(read_back.a2a_agents.len(), 1);
@@ -239,7 +241,7 @@ mod tests {
     #[test]
     fn test_app_settings_a2a_defaults() {
         let settings = AppSettings::default();
-        assert_eq!(settings.a2a_server_enabled, false);
+        assert!(!settings.a2a_server_enabled);
         assert_eq!(settings.a2a_server_port, 41234);
         assert_eq!(settings.a2a_server_token, "");
         assert!(settings.a2a_agents.is_empty());
@@ -261,7 +263,7 @@ mod tests {
             "theme": "Dark"
         });
         let parsed: AppSettings = serde_json::from_value(legacy).unwrap();
-        assert_eq!(parsed.a2a_server_enabled, false);
+        assert!(!parsed.a2a_server_enabled);
         assert_eq!(parsed.a2a_server_port, 41234);
         assert!(parsed.a2a_agents.is_empty());
     }

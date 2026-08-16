@@ -1,0 +1,16 @@
+[package]
+name = "loom-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone model-checking crate. Kept OUTSIDE the tauri crate's dependency
+# graph so `RUSTFLAGS="--cfg loom"` only affects this crate and loom itself
+# (a workspace-wide --cfg would recompile every dependency with the cfg and
+# break crates like tokio-tungstenite that read it).
+[dev-dependencies]
+loom = "0.7"
+
+# Declare the loom cfg so `-D warnings` (and rustc's check-cfg) accepts it.
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)'] }

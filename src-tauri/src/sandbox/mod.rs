@@ -9,19 +9,15 @@ mod tests;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum SandboxMode {
     /// Only project paths + allowed_paths; writes require path check
+    #[default]
     Strict,
     /// Reads allowed anywhere; writes restricted to project paths
     Permissive,
     /// No sandboxing (current behaviour)
     Disabled,
-}
-
-impl Default for SandboxMode {
-    fn default() -> Self {
-        SandboxMode::Strict
-    }
 }
 
 // ── Sandbox Config ──
@@ -174,7 +170,12 @@ impl SandboxChecker {
                         "Path '{}' requires user confirmation before writing",
                         path.display()
                     );
-                    self.record_audit("confirm", "path_check", &path.display().to_string(), &reason);
+                    self.record_audit(
+                        "confirm",
+                        "path_check",
+                        &path.display().to_string(),
+                        &reason,
+                    );
                     return Err(format!("[CONFIRM_REQUIRED] {}", reason));
                 }
             }
@@ -232,7 +233,12 @@ impl SandboxChecker {
                     // Writes must be within allowed roots
                     if allowed_roots.is_empty() {
                         let reason = "No project path configured; sandbox blocks all writes in permissive mode".to_string();
-                        self.record_audit("deny", "path_check", &path.display().to_string(), &reason);
+                        self.record_audit(
+                            "deny",
+                            "path_check",
+                            &path.display().to_string(),
+                            &reason,
+                        );
                         return Err(reason);
                     }
                     for root in &allowed_roots {
@@ -268,35 +274,28 @@ impl SandboxChecker {
                 // allowed roots (Windows canonical paths carry the \\?\ prefix).
                 let mut missing: Vec<std::ffi::OsString> = Vec::new();
                 let mut cur = path;
-                loop {
-                    match cur.parent() {
-                        Some(parent) => {
-                            if let Some(name) = cur.file_name() {
-                                missing.push(name.to_os_string());
-                            } else {
-                                break;
-                            }
-                            if parent.exists() {
-                                if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
-                                    let mut result = canonical_parent;
-                                    for seg in missing.iter().rev() {
-                                        result.push(seg);
-                                    }
-                                    return result;
-                                }
-                            }
-                            cur = parent;
-                        }
-                        None => break,
+                while let Some(parent) = cur.parent() {
+                    if let Some(name) = cur.file_name() {
+                        missing.push(name.to_os_string());
+                    } else {
+                        break;
                     }
+                    if parent.exists()
+                        && let Ok(canonical_parent) = std::fs::canonicalize(parent)
+                    {
+                        let mut result = canonical_parent;
+                        for seg in missing.iter().rev() {
+                            result.push(seg);
+                        }
+                        return result;
+                    }
+                    cur = parent;
                 }
                 // Fallback: return absolute path
                 if path.is_absolute() {
                     path.to_path_buf()
                 } else {
-                    std::env::current_dir()
-                        .unwrap_or_default()
-                        .join(path)
+                    std::env::current_dir().unwrap_or_default().join(path)
                 }
             }
         }
@@ -308,24 +307,22 @@ impl SandboxChecker {
         if self.config.max_file_size_mb == 0 {
             return Ok(()); // 0 = unlimited
         }
-        if path.exists() {
-            match std::fs::metadata(path) {
-                Ok(meta) => {
-                    let size_mb = meta.len() / (1024 * 1024);
-                    if size_mb > self.config.max_file_size_mb as u64 {
-                        let reason = format!(
-                            "File '{}' is {}MB, exceeds limit of {}MB",
-                            path.display(),
-                            size_mb,
-                            self.config.max_file_size_mb
-                        );
-                        self.record_audit("deny", "file_size", &path.display().to_string(), &reason);
-                        return Err(reason);
-                    }
-                }
-                Err(_) => {} // File might not exist yet for writes
+        if path.exists()
+            && let Ok(meta) = std::fs::metadata(path)
+        {
+            let size_mb = meta.len() / (1024 * 1024);
+            if size_mb > self.config.max_file_size_mb as u64 {
+                let reason = format!(
+                    "File '{}' is {}MB, exceeds limit of {}MB",
+                    path.display(),
+                    size_mb,
+                    self.config.max_file_size_mb
+                );
+                self.record_audit("deny", "file_size", &path.display().to_string(), &reason);
+                return Err(reason);
             }
         }
+        // Err(_): file might not exist yet for writes
         Ok(())
     }
 
@@ -357,10 +354,7 @@ impl SandboxChecker {
         // Check user-configured blocked commands
         for blocked in &self.config.blocked_commands {
             if lower.contains(&blocked.to_lowercase()) {
-                let reason = format!(
-                    "Command matches blocked pattern: '{}'",
-                    blocked
-                );
+                let reason = format!("Command matches blocked pattern: '{}'", blocked);
                 self.record_audit("deny", "command", cmd, &reason);
                 return Err(reason);
             }
@@ -369,10 +363,7 @@ impl SandboxChecker {
         // Check confirm_commands (require user confirmation)
         for confirm in &self.config.permissions.confirm_commands {
             if lower.contains(&confirm.to_lowercase()) {
-                let reason = format!(
-                    "Command matches confirm pattern: '{}'",
-                    confirm
-                );
+                let reason = format!("Command matches confirm pattern: '{}'", confirm);
                 self.record_audit("confirm", "command", cmd, &reason);
                 return Err(format!("[CONFIRM_REQUIRED] {}", reason));
             }
@@ -389,35 +380,31 @@ impl SandboxChecker {
         let host = extract_host(url);
 
         // SSRF protection: block private/internal IPs in strict mode
-        if self.config.mode == SandboxMode::Strict {
-            if let Some(ref h) = host {
-                if is_private_host(h) {
-                    let reason = format!(
-                        "URL '{}' targets a private/internal address (blocked in strict mode)",
-                        url
-                    );
-                    self.record_audit("deny", "url", url, &reason);
-                    return Err(reason);
-                }
-            }
+        if self.config.mode == SandboxMode::Strict
+            && let Some(ref h) = host
+            && is_private_host(h)
+        {
+            let reason = format!(
+                "URL '{}' targets a private/internal address (blocked in strict mode)",
+                url
+            );
+            self.record_audit("deny", "url", url, &reason);
+            return Err(reason);
         }
 
         // Domain whitelist check (empty = all allowed)
-        if !self.config.allowed_domains.is_empty() {
-            if let Some(ref h) = host {
-                let host_lower = h.to_lowercase();
-                let allowed = self.config.allowed_domains.iter().any(|d| {
-                    let d_lower = d.to_lowercase();
-                    host_lower == d_lower || host_lower.ends_with(&format!(".{}", d_lower))
-                });
-                if !allowed {
-                    let reason = format!(
-                        "URL domain '{}' is not in allowed domains list",
-                        h
-                    );
-                    self.record_audit("deny", "url", url, &reason);
-                    return Err(reason);
-                }
+        if !self.config.allowed_domains.is_empty()
+            && let Some(ref h) = host
+        {
+            let host_lower = h.to_lowercase();
+            let allowed = self.config.allowed_domains.iter().any(|d| {
+                let d_lower = d.to_lowercase();
+                host_lower == d_lower || host_lower.ends_with(&format!(".{}", d_lower))
+            });
+            if !allowed {
+                let reason = format!("URL domain '{}' is not in allowed domains list", h);
+                self.record_audit("deny", "url", url, &reason);
+                return Err(reason);
             }
         }
 
@@ -461,7 +448,13 @@ impl SandboxChecker {
             }
         }
 
-        log::warn!("[Sandbox] {} {} target=\"{}\" reason=\"{}\"", action, tool, target, reason);
+        log::warn!(
+            "[Sandbox] {} {} target=\"{}\" reason=\"{}\"",
+            action,
+            tool,
+            target,
+            reason
+        );
     }
 
     /// Get recent audit records
@@ -478,14 +471,54 @@ impl SandboxChecker {
 
 /// Commands that are always safe and should never be blocked by user-configured patterns.
 const SAFE_COMMAND_PREFIXES: &[&str] = &[
-    "ls", "dir", "cat", "type", "head", "tail", "echo", "pwd",
-    "find", "grep", "rg", "fd", "wc", "sort", "uniq", "diff",
-    "which", "where", "whoami", "hostname", "date", "env",
-    "git status", "git log", "git diff", "git branch", "git show",
-    "git remote", "git stash list", "git tag", "git reflog",
-    "cargo check", "cargo build", "cargo test", "cargo clippy",
-    "npm run", "npm test", "npx tsc", "node", "python", "python3",
-    "tree", "stat", "file", "du", "df", "ps", "top",
+    "ls",
+    "dir",
+    "cat",
+    "type",
+    "head",
+    "tail",
+    "echo",
+    "pwd",
+    "find",
+    "grep",
+    "rg",
+    "fd",
+    "wc",
+    "sort",
+    "uniq",
+    "diff",
+    "which",
+    "where",
+    "whoami",
+    "hostname",
+    "date",
+    "env",
+    "git status",
+    "git log",
+    "git diff",
+    "git branch",
+    "git show",
+    "git remote",
+    "git stash list",
+    "git tag",
+    "git reflog",
+    "cargo check",
+    "cargo build",
+    "cargo test",
+    "cargo clippy",
+    "npm run",
+    "npm test",
+    "npx tsc",
+    "node",
+    "python",
+    "python3",
+    "tree",
+    "stat",
+    "file",
+    "du",
+    "df",
+    "ps",
+    "top",
 ];
 
 /// Check if a command starts with a known safe command prefix.
@@ -494,7 +527,10 @@ fn is_safe_command(cmd: &str) -> bool {
     SAFE_COMMAND_PREFIXES.iter().any(|safe| {
         trimmed.starts_with(safe)
             && (trimmed.len() == safe.len()
-                || trimmed.as_bytes().get(safe.len()).map_or(false, |&b| b == b' ' || b == b'\t' || b == b'-' || b == b'.'))
+                || trimmed
+                    .as_bytes()
+                    .get(safe.len())
+                    .is_some_and(|&b| b == b' ' || b == b'\t' || b == b'-' || b == b'.'))
     })
 }
 
@@ -507,11 +543,15 @@ fn is_dangerous_command(cmd: &str) -> Option<&'static str> {
     let trimmed = lower.trim();
 
     // Recursive deletion of root/home
-    if trimmed.contains("rm -rf /") || trimmed.contains("rm -rf ~") || trimmed.contains("rm -rf /*") {
+    if trimmed.contains("rm -rf /") || trimmed.contains("rm -rf ~") || trimmed.contains("rm -rf /*")
+    {
         return Some("rm -rf on root/home directory is forbidden");
     }
     // Disk formatting
-    if trimmed.starts_with("mkfs.") || trimmed.starts_with("format ") || trimmed.starts_with("dd if=") {
+    if trimmed.starts_with("mkfs.")
+        || trimmed.starts_with("format ")
+        || trimmed.starts_with("dd if=")
+    {
         return Some("disk formatting/dd operations are forbidden");
     }
     // Fork bomb
@@ -525,14 +565,27 @@ fn is_dangerous_command(cmd: &str) -> Option<&'static str> {
     // Git force push to main branches
     if (trimmed.contains("git push") || trimmed.contains("git-push"))
         && (trimmed.contains("--force") || trimmed.contains(" -f "))
-        && (trimmed.contains(" main") || trimmed.contains(" master") || trimmed.contains("main ") || trimmed.contains("master "))
+        && (trimmed.contains(" main")
+            || trimmed.contains(" master")
+            || trimmed.contains("main ")
+            || trimmed.contains("master "))
     {
         return Some("force push to main/master is forbidden");
     }
     // Deleting important system directories
     for sys_dir in &[
-        "/etc", "/boot", "/sys", "/proc", "/dev", "/usr", "/bin", "/sbin", "/var",
-        "c:\\windows", "c:\\program files", "c:\\program files (x86)",
+        "/etc",
+        "/boot",
+        "/sys",
+        "/proc",
+        "/dev",
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/var",
+        "c:\\windows",
+        "c:\\program files",
+        "c:\\program files (x86)",
     ] {
         if trimmed.contains(&format!("rm -rf {}", sys_dir))
             || trimmed.contains(&format!("rmdir {}", sys_dir))
@@ -542,9 +595,12 @@ fn is_dangerous_command(cmd: &str) -> Option<&'static str> {
         }
     }
     // Shutdown/reboot
-    if trimmed.starts_with("shutdown ") || trimmed.starts_with("reboot ")
-        || trimmed == "shutdown" || trimmed == "reboot"
-        || trimmed.starts_with("init 0") || trimmed.starts_with("init 6")
+    if trimmed.starts_with("shutdown ")
+        || trimmed.starts_with("reboot ")
+        || trimmed == "shutdown"
+        || trimmed == "reboot"
+        || trimmed.starts_with("init 0")
+        || trimmed.starts_with("init 6")
     {
         return Some("shutdown/reboot commands are forbidden");
     }
@@ -555,17 +611,19 @@ fn is_dangerous_command(cmd: &str) -> Option<&'static str> {
         return Some("curl/wget pipe to shell is forbidden (potential remote code execution)");
     }
     // PowerShell dangerous patterns
-    if trimmed.contains("remove-item") && (trimmed.contains("c:\\windows") || trimmed.contains("c:\\program")) {
+    if trimmed.contains("remove-item")
+        && (trimmed.contains("c:\\windows") || trimmed.contains("c:\\program"))
+    {
         return Some("removing system directories via PowerShell is forbidden");
     }
     if trimmed.contains("set-executionpolicy") && trimmed.contains("unrestricted") {
         return Some("disabling PowerShell execution policy is forbidden");
     }
     // Registry manipulation
-    if trimmed.contains("reg delete") || trimmed.contains("reg add") {
-        if trimmed.contains("hklm") || trimmed.contains("hkey_local_machine") {
-            return Some("modifying system registry is forbidden");
-        }
+    if (trimmed.contains("reg delete") || trimmed.contains("reg add"))
+        && (trimmed.contains("hklm") || trimmed.contains("hkey_local_machine"))
+    {
+        return Some("modifying system registry is forbidden");
     }
 
     None

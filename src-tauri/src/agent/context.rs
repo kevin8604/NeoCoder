@@ -1,4 +1,4 @@
-﻿//! Context compaction strategy for managing long conversation histories.
+//! Context compaction strategy for managing long conversation histories.
 //!
 //! When the message history exceeds a token budget threshold, the middle
 //! portion is summarized by the LLM and replaced with a compact summary message.
@@ -60,7 +60,9 @@ pub async fn compact_if_needed(
 
     log::info!(
         "[Context] Compaction triggered: {} tokens exceeds 80% of {} budget (threshold={})",
-        total_tokens, max_context_tokens, threshold
+        total_tokens,
+        max_context_tokens,
+        threshold
     );
 
     // Find the first user message (task description)
@@ -140,7 +142,10 @@ pub async fn compact_if_needed(
             _ => "System",
         };
         let content_preview = if msg.content.len() > 2000 {
-            format!("{}...", crate::agent::utils::safe_truncate(&msg.content, 2000))
+            format!(
+                "{}...",
+                crate::agent::utils::safe_truncate(&msg.content, 2000)
+            )
         } else {
             msg.content.clone()
         };
@@ -161,20 +166,27 @@ pub async fn compact_if_needed(
         }
         for line in msg.content.lines() {
             let trimmed = line.trim();
-            if (trimmed.contains("[Lesson]") || trimmed.contains("[Decision]")) && trimmed.len() > 10 {
-                if !flush_facts.contains(&trimmed.to_string()) {
-                    flush_facts.push(trimmed.to_string());
-                    if flush_facts.len() >= COMPACTION_MAX_FLUSH_FACTS {
-                        break;
-                    }
+            if (trimmed.contains("[Lesson]") || trimmed.contains("[Decision]"))
+                && trimmed.len() > 10
+                && !flush_facts.contains(&trimmed.to_string())
+            {
+                flush_facts.push(trimmed.to_string());
+                if flush_facts.len() >= COMPACTION_MAX_FLUSH_FACTS {
+                    break;
                 }
             }
         }
     }
 
     let flush_context = if !flush_facts.is_empty() {
-        format!("\n\nKey learnings extracted from this conversation (reference these):\n{}\n",
-            flush_facts.iter().map(|f| format!("- {}", f)).collect::<Vec<_>>().join("\n"))
+        format!(
+            "\n\nKey learnings extracted from this conversation (reference these):\n{}\n",
+            flush_facts
+                .iter()
+                .map(|f| format!("- {}", f))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
     } else {
         String::new()
     };
@@ -216,38 +228,39 @@ pub async fn compact_if_needed(
         thinking_budget: 0,
     };
 
-    let mut summary = match llm::chat_with_tools(provider, api_key, base_url, request, &[], None).await
-    {
-        Ok((llm::LlmResponse::Text(text), _usage)) => text,
-        Ok((llm::LlmResponse::ToolCalls { content, .. }, _usage)) => {
-            content.unwrap_or_else(|| "[Compaction failed: unexpected tool response]".into())
-        }
-        Err(e) => {
-            log::warn!("[Context] Compaction LLM call failed: {}", e);
-            // Fallback: just drop middle messages without summary
-            let mut result = Vec::new();
-            result.push(messages[first_user_idx].clone());
-            result.extend_from_slice(&messages[preserve_recent_start..]);
-            // Sanitize to remove orphaned tool messages
-            return Ok(llm::sanitize_messages(&result));
-        }
-    };
+    let mut summary =
+        match llm::chat_with_tools(provider, api_key, base_url, request, &[], None).await {
+            Ok((llm::LlmResponse::Text(text), _usage)) => text,
+            Ok((llm::LlmResponse::ToolCalls { content, .. }, _usage)) => {
+                content.unwrap_or_else(|| "[Compaction failed: unexpected tool response]".into())
+            }
+            Err(e) => {
+                log::warn!("[Context] Compaction LLM call failed: {}", e);
+                // Fallback: just drop middle messages without summary
+                let mut result = Vec::new();
+                result.push(messages[first_user_idx].clone());
+                result.extend_from_slice(&messages[preserve_recent_start..]);
+                // Sanitize to remove orphaned tool messages
+                return Ok(llm::sanitize_messages(&result));
+            }
+        };
 
     // Truncate summary to safety limit
     if summary.len() > COMPACTION_MAX_SUMMARY_CHARS {
         // Find last complete sentence or bullet point within the limit
-        let truncate_at = if let Some(cutoff) = summary[..COMPACTION_MAX_SUMMARY_CHARS]
-            .rfind(|c: char| c == '.' || c == '\n') {
-            cutoff + 1
-        } else {
-            COMPACTION_MAX_SUMMARY_CHARS
-        };
+        let truncate_at =
+            if let Some(cutoff) = summary[..COMPACTION_MAX_SUMMARY_CHARS].rfind(['.', '\n']) {
+                cutoff + 1
+            } else {
+                COMPACTION_MAX_SUMMARY_CHARS
+            };
         summary = format!("{}...", &summary[..truncate_at]);
     }
 
     let tokens_after = {
         let summary_tokens = token_count::count_tokens(&summary, model);
-        let first_user_tokens = token_count::estimate_message_tokens(&messages[first_user_idx], model);
+        let first_user_tokens =
+            token_count::estimate_message_tokens(&messages[first_user_idx], model);
         let recent_tokens: usize = messages[preserve_recent_start..]
             .iter()
             .map(|m| token_count::estimate_message_tokens(m, model))
@@ -258,7 +271,9 @@ pub async fn compact_if_needed(
 
     log::info!(
         "[Context] Compaction complete: {} → {} tokens (removed {} middle messages)",
-        total_tokens, tokens_after, middle_end - middle_start
+        total_tokens,
+        tokens_after,
+        middle_end - middle_start
     );
 
     // Build the compacted message list
@@ -329,7 +344,12 @@ mod tests {
     fn test_compact_messages_too_few() {
         // Fewer than MIN_MESSAGES_FOR_COMPACT should not trigger compaction
         let messages: Vec<llm::ChatMessage> = (0..5)
-            .map(|i| make_msg(if i % 2 == 0 { "user" } else { "assistant" }, &format!("msg {}", i)))
+            .map(|i| {
+                make_msg(
+                    if i % 2 == 0 { "user" } else { "assistant" },
+                    &format!("msg {}", i),
+                )
+            })
             .collect();
 
         let rt = tokio::runtime::Runtime::new().unwrap();

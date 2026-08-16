@@ -1,8 +1,8 @@
-use tauri::{Emitter, State};
 use crate::config::AppSettings;
 use crate::llm::{self, ChatMessage, ChatRequestParams};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tauri::{Emitter, State};
 use tokio::sync::RwLock;
 
 // ── Request / Response types ──────────────────────────────────────────────
@@ -96,16 +96,15 @@ pub async fn edit_inline(
     // Build the user message with full context
     let mut user_prompt = format!(
         "File: {}\n\nInstruction: {}\n\n--- Code to edit ---\n{}\n--- End code ---",
-        request.file_path,
-        request.instruction,
-        request.selected_code
+        request.file_path, request.instruction, request.selected_code
     );
 
     // Multi-turn support: tell the model what was already produced in this
     // conversation so it refines the latest output rather than redoing work.
     if !request.history.is_empty() {
-        let mut history_block =
-            String::from("\n\nPrevious turns of this conversation (their results are already applied to the code above — do not redo them, refine the latest result):\n");
+        let mut history_block = String::from(
+            "\n\nPrevious turns of this conversation (their results are already applied to the code above — do not redo them, refine the latest result):\n",
+        );
         for (i, turn) in request.history.iter().enumerate() {
             history_block.push_str(&format!(
                 "Turn {} instruction: {}\nTurn {} result:\n{}\n",
@@ -125,10 +124,16 @@ pub async fn edit_inline(
     if !request.prefix_context.is_empty() || !request.suffix_context.is_empty() {
         system_prompt.push_str("\n\nSurrounding context for reference:\n");
         if !request.prefix_context.is_empty() {
-            system_prompt.push_str(&format!("--- Before selection ---\n{}\n", request.prefix_context));
+            system_prompt.push_str(&format!(
+                "--- Before selection ---\n{}\n",
+                request.prefix_context
+            ));
         }
         if !request.suffix_context.is_empty() {
-            system_prompt.push_str(&format!("--- After selection ---\n{}\n", request.suffix_context));
+            system_prompt.push_str(&format!(
+                "--- After selection ---\n{}\n",
+                request.suffix_context
+            ));
         }
     }
 
@@ -142,7 +147,7 @@ pub async fn edit_inline(
         messages,
         system: system_prompt.clone(),
         max_tokens: 4096,
-        temperature: 0.1, // Low temperature for precise edits
+        temperature: 0.1,        // Low temperature for precise edits
         thinking_enabled: false, // Disable thinking for inline edit (speed)
         thinking_budget: 0,
     };
@@ -197,9 +202,7 @@ pub async fn edit_inline(
         Err(e) => {
             let _ = app.emit(
                 "edit-inline-event",
-                EditInlineEvent::Error {
-                    message: e.clone(),
-                },
+                EditInlineEvent::Error { message: e.clone() },
             );
             Err(e)
         }

@@ -1,6 +1,6 @@
-use std::path::Path;
-use std::fs;
 use super::ebbinghaus::{self, MemoryCategory, MemoryEntry};
+use std::fs;
+use std::path::Path;
 
 /// Long-term memory store: reads/writes `MEMORY.md` in the memory base directory.
 /// Supports Ebbinghaus forgetting curve metadata for individual entries.
@@ -20,8 +20,7 @@ impl LongTermMemory {
         if !self.file_path.exists() {
             return Ok(String::new());
         }
-        fs::read_to_string(&self.file_path)
-            .map_err(|e| format!("Failed to read MEMORY.md: {}", e))
+        fs::read_to_string(&self.file_path).map_err(|e| format!("Failed to read MEMORY.md: {}", e))
     }
 
     /// Overwrite MEMORY.md with new content.
@@ -30,8 +29,7 @@ impl LongTermMemory {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create memory dir: {}", e))?;
         }
-        fs::write(&self.file_path, content)
-            .map_err(|e| format!("Failed to write MEMORY.md: {}", e))
+        fs::write(&self.file_path, content).map_err(|e| format!("Failed to write MEMORY.md: {}", e))
     }
 
     /// Append a section heading + entry to MEMORY.md.
@@ -65,7 +63,11 @@ impl LongTermMemory {
                     old.text = entry.to_string();
                 }
                 old.last_recalled = chrono::Utc::now().date_naive();
-                log::debug!("[Memory] Merged similar entry (sim={:.2}): '{}'", best_sim, &old.text[..old.text.len().min(60)]);
+                log::debug!(
+                    "[Memory] Merged similar entry (sim={:.2}): '{}'",
+                    best_sim,
+                    &old.text[..old.text.len().min(60)]
+                );
                 return self.write_entries(&entries);
             }
         }
@@ -85,7 +87,12 @@ impl LongTermMemory {
             format!("- {}", entry)
         };
         let mem_entry = MemoryEntry::with_category(bullet.clone(), section.to_string(), category);
-        new_content.push_str(&format!("\n## {}\n\n{}\n{}\n", section, bullet, ebbinghaus::format_metadata(&mem_entry)));
+        new_content.push_str(&format!(
+            "\n## {}\n\n{}\n{}\n",
+            section,
+            bullet,
+            ebbinghaus::format_metadata(&mem_entry)
+        ));
         self.write(&new_content)
     }
 
@@ -127,7 +134,10 @@ impl LongTermMemory {
         for entry in &entries {
             if ebbinghaus::should_archive(entry, now) {
                 archived_count += 1;
-                log::debug!("[Memory] Archiving expired entry: {}", &entry.text[..entry.text.len().min(60)]);
+                log::debug!(
+                    "[Memory] Archiving expired entry: {}",
+                    &entry.text[..entry.text.len().min(60)]
+                );
             } else {
                 retained.push(entry.clone());
             }
@@ -152,7 +162,9 @@ impl LongTermMemory {
         let now = chrono::Utc::now().date_naive();
 
         // Compute retention for each entry, sort ascending (lowest first)
-        let mut indexed: Vec<(usize, f64)> = entries.iter().enumerate()
+        let mut indexed: Vec<(usize, f64)> = entries
+            .iter()
+            .enumerate()
             .map(|(i, e)| {
                 let retention = if e.category.is_evergreen() {
                     f64::MAX // Core entries never evicted
@@ -167,17 +179,25 @@ impl LongTermMemory {
         indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let to_evict = entries.len() - max_entries;
-        let mut evict_indices: Vec<usize> = indexed.iter().take(to_evict).map(|(i, _)| *i).collect();
+        let mut evict_indices: Vec<usize> =
+            indexed.iter().take(to_evict).map(|(i, _)| *i).collect();
         evict_indices.sort_unstable(); // sort for stable removal
         evict_indices.reverse(); // reverse for safe removal by index
 
         for idx in evict_indices {
-            log::debug!("[Memory] Evicting low-retention entry: {}", &entries[idx].text[..entries[idx].text.len().min(60)]);
+            log::debug!(
+                "[Memory] Evicting low-retention entry: {}",
+                &entries[idx].text[..entries[idx].text.len().min(60)]
+            );
             entries.remove(idx);
         }
 
         self.write_entries(&entries)?;
-        log::info!("[Memory] Evicted {} entries to enforce capacity limit of {}", to_evict, max_entries);
+        log::info!(
+            "[Memory] Evicted {} entries to enforce capacity limit of {}",
+            to_evict,
+            max_entries
+        );
         Ok(to_evict)
     }
 }

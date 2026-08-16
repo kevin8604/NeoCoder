@@ -1,47 +1,48 @@
-﻿pub mod utils;
-pub mod tools;
-pub mod definition;
-pub mod sub_agent;
-pub mod token_count;
-pub mod hooks;
-pub mod context;
 pub mod checkpoint;
-pub mod loop_detector;
 pub mod cloud;
+pub mod context;
+pub mod definition;
 pub mod failure_lessons;
+pub mod hooks;
+pub mod loop_detector;
+pub mod sub_agent;
 pub mod task_summarizer;
 pub mod tdd;
+pub mod token_count;
+pub mod tools;
+pub mod utils;
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Instant;
-use chrono;
-use tauri::{Emitter, Manager};
-use tokio::sync::{RwLock, Notify};
-use crate::chat::{ChatEvent, DiffHunk, FileChange, PlanApproved, PlanCreate, PlanRejected, PlanStep, TodoItem};
-use crate::config::LlmProvider;
-use crate::llm;
-use crate::rag::CodeIndexer;
-use crate::lsp::LspManager;
 use crate::agent::definition::AgentDefinition;
 use crate::agent::loop_detector::{LoopDetector, LoopVerdict};
+use crate::chat::{
+    ChatEvent, DiffHunk, FileChange, PlanApproved, PlanCreate, PlanRejected, PlanStep, TodoItem,
+};
+use crate::config::LlmProvider;
+use crate::llm;
+use crate::lsp::LspManager;
+use crate::rag::CodeIndexer;
 use crate::sandbox::SandboxChecker;
+use chrono;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
+use tauri::{Emitter, Manager};
+use tokio::sync::{Notify, RwLock};
 
-use tools::{ToolContext, ToolExecutor, PostExecuteAction, DispatchTask};
-
+use tools::{DispatchTask, PostExecuteAction, ToolContext, ToolExecutor};
 
 #[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all="snake_case")]
+#[serde(rename_all = "snake_case")]
 pub struct Plan {
     pub summary: String,
-    pub steps: Vec <PlanStep>,
+    pub steps: Vec<PlanStep>,
     #[serde(alias = "files")]
     pub affected_files: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub enum  PlanAction {
+pub enum PlanAction {
     Approve,
     Reject(String),
     Skip,
@@ -70,10 +71,14 @@ impl ToolDefinition {
 }
 
 pub type ToolRegistry = Arc<Vec<ToolDefinition>>;
-pub type QuestionAwaiters = Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<String>>>>;
-pub type ConfirmAwaiters = Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>>;
+pub type QuestionAwaiters =
+    Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<String>>>>;
+pub type ConfirmAwaiters =
+    Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>>;
 /// Awaiters for Plan Mode approval — maps session_id → sender that the Agent awaits on.
-pub type PlanApprovalAwaiters = Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<PlanAction>>>>;
+pub type PlanApprovalAwaiters = Arc<
+    std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<PlanAction>>>,
+>;
 
 pub struct ToolCall {
     pub id: String,
@@ -175,34 +180,38 @@ Be thorough and complete the task fully. Do not ask the user for confirmation be
 // ── 工具加载 ──
 
 pub fn get_tools(app: Option<&tauri::AppHandle>) -> Vec<ToolDefinition> {
-    if let Some(handle) = app {
-        if let Some(registry) = handle.try_state::<ToolRegistry>() {
-            return registry.as_ref().clone();
-        }
+    if let Some(handle) = app
+        && let Some(registry) = handle.try_state::<ToolRegistry>()
+    {
+        return registry.as_ref().clone();
     }
-    serde_json::from_str::<Vec<ToolDefinition>>(include_str!("../../tools.json")).unwrap_or_default()
+    serde_json::from_str::<Vec<ToolDefinition>>(include_str!("../../tools.json"))
+        .unwrap_or_default()
 }
 
 pub fn load_tools_from_disk() -> Vec<ToolDefinition> {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let path = dir.join("tools.json");
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(tools) = serde_json::from_str::<Vec<ToolDefinition>>(&content) {
-                    if !tools.is_empty() { return tools; }
-                }
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let path = dir.join("tools.json");
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(tools) = serde_json::from_str::<Vec<ToolDefinition>>(&content)
+            && !tools.is_empty()
+        {
+            return tools;
         }
     }
     if let Ok(cwd) = std::env::current_dir() {
         let path = cwd.join("tools.json");
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(tools) = serde_json::from_str::<Vec<ToolDefinition>>(&content) {
-                if !tools.is_empty() { return tools; }
-            }
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(tools) = serde_json::from_str::<Vec<ToolDefinition>>(&content)
+            && !tools.is_empty()
+        {
+            return tools;
         }
     }
-    serde_json::from_str::<Vec<ToolDefinition>>(include_str!("../../tools.json")).unwrap_or_default()
+    serde_json::from_str::<Vec<ToolDefinition>>(include_str!("../../tools.json"))
+        .unwrap_or_default()
 }
 
 // ── Execution Phase ──
@@ -220,25 +229,51 @@ pub enum ExecutionPhase {
 
 /// Tools allowed during Planning phase (read-only + communication).
 const PLANNING_PHASE_TOOLS: &[&str] = &[
-    "read_file", "glob", "grep", "search_codebase",
-    "list_directory", "get_symbols", "get_diagnostics",
-    "todo_write", "web_search", "web_fetch", "ask_user_question",
+    "read_file",
+    "glob",
+    "grep",
+    "search_codebase",
+    "list_directory",
+    "get_symbols",
+    "get_diagnostics",
+    "todo_write",
+    "web_search",
+    "web_fetch",
+    "ask_user_question",
 ];
 
 /// Tools allowed during early exploration iterations (read-only + todo_write).
 const EXPLORATION_PHASE_TOOLS: &[&str] = &[
-    "read_file", "glob", "grep", "search_codebase",
-    "list_directory", "get_symbols", "get_diagnostics",
-    "todo_write", "web_search", "web_fetch", "ask_user_question",
-    "memory_search", "git_status", "git_diff",
+    "read_file",
+    "glob",
+    "grep",
+    "search_codebase",
+    "list_directory",
+    "get_symbols",
+    "get_diagnostics",
+    "todo_write",
+    "web_search",
+    "web_fetch",
+    "ask_user_question",
+    "memory_search",
+    "git_status",
+    "git_diff",
 ];
 
 /// Tools allowed during verification iterations (read-only + diagnostics + terminal).
 const VERIFICATION_PHASE_TOOLS: &[&str] = &[
-    "read_file", "glob", "grep", "search_codebase",
-    "list_directory", "get_symbols", "get_diagnostics",
-    "todo_write", "run_terminal_command",
-    "memory_search", "git_status", "git_diff",
+    "read_file",
+    "glob",
+    "grep",
+    "search_codebase",
+    "list_directory",
+    "get_symbols",
+    "get_diagnostics",
+    "todo_write",
+    "run_terminal_command",
+    "memory_search",
+    "git_status",
+    "git_diff",
 ];
 
 /// Planning 阶段独立迭代预算：默认取 max_iterations 的 30%（至少 2 轮），
@@ -249,11 +284,20 @@ fn default_planning_budget(max_iterations: usize) -> usize {
 
 /// Tools that are safe to execute in parallel (read-only, no side effects).
 fn is_read_only_tool(name: &str) -> bool {
-    matches!(name,
-        "read_file" | "glob" | "grep" | "search_codebase" |
-        "list_directory" | "get_symbols" | "get_diagnostics" |
-        "memory_search" | "git_status" | "git_diff" |
-        "web_search" | "web_fetch"
+    matches!(
+        name,
+        "read_file"
+            | "glob"
+            | "grep"
+            | "search_codebase"
+            | "list_directory"
+            | "get_symbols"
+            | "get_diagnostics"
+            | "memory_search"
+            | "git_status"
+            | "git_diff"
+            | "web_search"
+            | "web_fetch"
     )
 }
 
@@ -262,7 +306,8 @@ fn is_read_only_tool(name: &str) -> bool {
 /// Session-scoped pause control shared between the frontend commands and the
 /// running AgentInstance. `pause_agent` sets the flag; the agent main loop
 /// blocks on the notify until `resume_agent` fires it.
-pub type PauseControl = std::sync::Mutex<std::collections::HashMap<String, (Arc<AtomicBool>, Arc<Notify>)>>;
+pub type PauseControl =
+    std::sync::Mutex<std::collections::HashMap<String, (Arc<AtomicBool>, Arc<Notify>)>>;
 
 pub struct AgentInstance {
     pub agent_id: String,
@@ -310,7 +355,7 @@ pub struct AgentInstance {
     ///// 计划文本（Planning 阶段产出，执行阶段参考）
     plan_text: Option<String>,
     /// 计划步骤（结构化）
-    plan_steps :Vec<PlanStep>,
+    plan_steps: Vec<PlanStep>,
     /// 影响文件清单
     affected_files: Vec<String>,
     /// 计划最大迭代次数（单独预算，默认为 max_iterations 的 30%）
@@ -340,8 +385,6 @@ pub struct AgentInstance {
     convergence_injected: bool,
     /// Number of times auto-extend has been called (limits budget inflation)
     extend_count: usize,
-    /// Consecutive read-only iterations (forces transition to writing after threshold)
-    read_only_iterations: usize,
     /// Actual token usage from LLM API (accumulated across iterations)
     total_prompt_tokens: usize,
     total_completion_tokens: usize,
@@ -360,9 +403,6 @@ pub struct AgentInstance {
     /// Each entry is a Result to simulate both success and failure responses.
     #[doc(hidden)]
     pub mock_llm_responses: Option<VecDeque<Result<llm::LlmResponse, String>>>,
-
-
-
 }
 
 impl AgentInstance {
@@ -389,22 +429,21 @@ impl AgentInstance {
             let registry = mcp_registry.inner().clone();
             if let Some(mcp_tools_state) =
                 app.try_state::<Arc<std::sync::Mutex<Vec<ToolDefinition>>>>()
+                && let Ok(guard) = mcp_tools_state.lock()
             {
-                if let Ok(guard) = mcp_tools_state.lock() {
-                    for tool_def in guard.iter() {
-                        let wrapper = crate::mcp::tool_bridge::McpToolWrapper::new(
-                            tool_def.name.clone(),
-                            crate::mcp::McpToolDef {
-                                name: tool_def.name.clone(),
-                                description: tool_def.description.clone(),
-                                input_schema: tool_def.parameters.clone(),
-                            },
-                            registry.clone(),
-                        );
-                        executor.register_raw(tool_def.name.clone(), Arc::new(wrapper));
-                    }
-                    log::info!("[Agent] Registered {} MCP tool wrappers", guard.len());
+                for tool_def in guard.iter() {
+                    let wrapper = crate::mcp::tool_bridge::McpToolWrapper::new(
+                        tool_def.name.clone(),
+                        crate::mcp::McpToolDef {
+                            name: tool_def.name.clone(),
+                            description: tool_def.description.clone(),
+                            input_schema: tool_def.parameters.clone(),
+                        },
+                        registry.clone(),
+                    );
+                    executor.register_raw(tool_def.name.clone(), Arc::new(wrapper));
                 }
+                log::info!("[Agent] Registered {} MCP tool wrappers", guard.len());
             }
         }
 
@@ -425,8 +464,12 @@ impl AgentInstance {
             merged.extend(mcp_tools);
             merged
         };
-        let indexer = app.try_state::<Arc<CodeIndexer>>().map(|s| s.inner().clone());
-        let question_awaiters = app.try_state::<QuestionAwaiters>().map(|s| s.inner().clone());
+        let indexer = app
+            .try_state::<Arc<CodeIndexer>>()
+            .map(|s| s.inner().clone());
+        let question_awaiters = app
+            .try_state::<QuestionAwaiters>()
+            .map(|s| s.inner().clone());
 
         // Build SandboxChecker from current AppSettings
         // NOTE: block_in_place is needed because AgentInstance::new() may be called
@@ -464,36 +507,47 @@ impl AgentInstance {
             .unwrap_or(200);
         let tavily_api_key = app
             .try_state::<Arc<RwLock<crate::config::AppSettings>>>()
-            .map(|s| {
-                tokio::task::block_in_place(|| s.blocking_read().tavily_api_key.clone())
-            })
+            .map(|s| tokio::task::block_in_place(|| s.blocking_read().tavily_api_key.clone()))
             .unwrap_or_default();
-        let audit_log_path = app.path().app_config_dir().ok()
+        let audit_log_path = app
+            .path()
+            .app_config_dir()
+            .ok()
             .map(|p| p.join("audit.log"));
         let sandbox = Arc::new(SandboxChecker::new(sandbox_config, audit_log_path));
-        let file_snapshot_store = app.try_state::<crate::commands::chat::FileSnapshotStore>().map(|s| s.inner().clone());
+        let file_snapshot_store = app
+            .try_state::<crate::commands::chat::FileSnapshotStore>()
+            .map(|s| s.inner().clone());
 
         // ── P1: Defensive diagnostics ──
         if app.try_state::<Arc<CodeIndexer>>().is_none() {
             log::warn!("[Agent] CodeIndexer not in app state — codebase search may not work");
         }
         if app.try_state::<QuestionAwaiters>().is_none() {
-            log::warn!("[Agent] QuestionAwaiters not in app state — ask_user_question may not work");
+            log::warn!(
+                "[Agent] QuestionAwaiters not in app state — ask_user_question may not work"
+            );
         }
-        if app.try_state::<crate::agent::definition::AgentRegistry>().is_none() {
+        if app
+            .try_state::<crate::agent::definition::AgentRegistry>()
+            .is_none()
+        {
             log::warn!("[Agent] AgentRegistry not in app state — sub-agents may not work");
         }
 
         // Filter tool_definitions by agent_def.tool_names if provided
         let tool_definitions = if let Some(def) = agent_def {
-            all_tool_definitions.into_iter()
+            all_tool_definitions
+                .into_iter()
                 .filter(|t| def.tool_names.contains(&t.name))
                 .collect()
         } else {
             all_tool_definitions
         };
 
-        let agent_id = agent_def.map(|d| d.id.clone()).unwrap_or_else(|| "agent".into());
+        let agent_id = agent_def
+            .map(|d| d.id.clone())
+            .unwrap_or_else(|| "agent".into());
         let max_iterations = agent_def.and_then(|d| d.max_iterations).unwrap_or(25);
         let temperature = agent_def.and_then(|d| d.temperature).unwrap_or(0.7);
         let max_tokens = agent_def.and_then(|d| d.max_tokens).unwrap_or(4096);
@@ -535,7 +589,9 @@ impl AgentInstance {
                 project_path,
                 indexer,
                 sandbox,
-                lsp_manager: app.try_state::<Arc<LspManager>>().map(|s| s.inner().clone()),
+                lsp_manager: app
+                    .try_state::<Arc<LspManager>>()
+                    .map(|s| s.inner().clone()),
                 app_handle: Some(app),
                 session_id: Some(session_id),
                 tavily_api_key,
@@ -583,35 +639,48 @@ impl AgentInstance {
             review_injected: false,
             convergence_injected: false,
             extend_count: 0,
-            read_only_iterations: 0,
             total_prompt_tokens: 0,
             total_completion_tokens: 0,
             mock_llm_responses: None,
             failed_calls_cache: HashMap::new(),
-            thinking_enabled: thinking_enabled,
-            thinking_budget: thinking_budget,
+            thinking_enabled,
+            thinking_budget,
         };
 
         // ── Auto-enable plan_mode for complex tasks ──
         // If the task mentions multi-step keywords, automatically enable planning phase
         // to anchor the agent's scope and prevent open-ended exploration loops.
         if !agent.plan_mode {
-            let task_text = agent.messages.iter()
+            let task_text = agent
+                .messages
+                .iter()
                 .find(|m| m.role == "user")
                 .map(|m| m.content.to_lowercase())
                 .unwrap_or_default();
             let complex_keywords = [
-                "implement", "build", "create", "refactor", "migrate",
-                "redesign", "add a feature", "add feature", "new module",
-                "rewrite", "architecture", "system design",
+                "implement",
+                "build",
+                "create",
+                "refactor",
+                "migrate",
+                "redesign",
+                "add a feature",
+                "add feature",
+                "new module",
+                "rewrite",
+                "architecture",
+                "system design",
             ];
-            let is_complex = task_text.len() > 150
-                || complex_keywords.iter().any(|kw| task_text.contains(kw));
+            let is_complex =
+                task_text.len() > 150 || complex_keywords.iter().any(|kw| task_text.contains(kw));
             if is_complex {
                 agent.plan_mode = true;
                 agent.execution_phase = ExecutionPhase::Planning;
-                log::info!("[Agent:{}] Auto-enabled plan_mode for complex task ({} chars)",
-                    agent.agent_id, task_text.len());
+                log::info!(
+                    "[Agent:{}] Auto-enabled plan_mode for complex task ({} chars)",
+                    agent.agent_id,
+                    task_text.len()
+                );
             }
         }
 
@@ -635,12 +704,18 @@ impl AgentInstance {
         self.max_iterations = (self.max_iterations + additional).min(200);
         log::info!(
             "[Agent:{}] Extending max_iterations: {} → {} (+{})",
-            self.agent_id, old_max, self.max_iterations, additional
+            self.agent_id,
+            old_max,
+            self.max_iterations,
+            additional
         );
-        self.emit_log("info", &format!(
-            "Iteration budget extended: {} → {} (+{})",
-            old_max, self.max_iterations, additional
-        ));
+        self.emit_log(
+            "info",
+            &format!(
+                "Iteration budget extended: {} → {} (+{})",
+                old_max, self.max_iterations, additional
+            ),
+        );
     }
 
     /// Select the appropriate model based on task complexity and routing configuration.
@@ -658,14 +733,17 @@ impl AgentInstance {
         let has_many_tools = self.tool_definitions.len() > 10;
 
         // Analyze last user message for complexity signals
-        let last_user_msg = self.messages.iter()
+        let last_user_msg = self
+            .messages
+            .iter()
             .rev()
             .find(|m| m.role == "user")
             .map(|m| m.content.as_str())
             .unwrap_or("");
 
         // Complexity assessment based on message content
-        let is_complex_task = Self::assess_task_complexity(last_user_msg, self.tool_definitions.len());
+        let is_complex_task =
+            Self::assess_task_complexity(last_user_msg, self.tool_definitions.len());
 
         if is_complex_task {
             // Complex tasks: use chat_model with thinking if enabled
@@ -685,26 +763,45 @@ impl AgentInstance {
     /// Returns true if the task is complex (requires full reasoning model).
     fn assess_task_complexity(message: &str, tool_count: usize) -> bool {
         let msg_lower = message.to_lowercase();
-        
+
         // High complexity signals: multi-step planning, architecture, debugging
         let high_complexity_keywords = [
-            "design", "architect", "plan", "strategy", "refactor",
-            "debug", "investigate", "analyze", "compare", "evaluate",
-            "implement", "create", "build", "develop", "write",
-            "fix", "solve", "resolve", "troubleshoot",
+            "design",
+            "architect",
+            "plan",
+            "strategy",
+            "refactor",
+            "debug",
+            "investigate",
+            "analyze",
+            "compare",
+            "evaluate",
+            "implement",
+            "create",
+            "build",
+            "develop",
+            "write",
+            "fix",
+            "solve",
+            "resolve",
+            "troubleshoot",
         ];
-        
-        let high_signal_count = high_complexity_keywords.iter()
+
+        let high_signal_count = high_complexity_keywords
+            .iter()
             .filter(|&kw| msg_lower.contains(kw))
             .count();
-        
+
         // Complex if: multiple high-complexity signals OR long message (>500 chars) OR many tools
         high_signal_count >= 2 || message.len() > 500 || tool_count > 15
     }
 
     /// Record a tool usage event for user preferences tracking.
     fn record_tool_usage(&self, tool_name: &str, success: bool, duration_ms: u64) {
-        if let Some(mem_state) = self.app.try_state::<std::sync::Arc<tokio::sync::RwLock<crate::memory::MemoryManager>>>() {
+        if let Some(mem_state) = self
+            .app
+            .try_state::<std::sync::Arc<tokio::sync::RwLock<crate::memory::MemoryManager>>>()
+        {
             let mem = mem_state.inner().clone();
             let name = tool_name.to_string();
             tokio::spawn(async move {
@@ -712,7 +809,14 @@ impl AgentInstance {
                 if let Ok(mut prefs) = mgr.preferences.lock() {
                     prefs.record_tool_usage(&name, success, duration_ms);
                     // Save periodically (every 10 tool uses)
-                    if prefs.tool_stats.values().map(|s| s.total_calls).sum::<u32>() % 10 == 0 {
+                    if prefs
+                        .tool_stats
+                        .values()
+                        .map(|s| s.total_calls)
+                        .sum::<u32>()
+                        % 10
+                        == 0
+                    {
                         let _ = prefs.save(&mgr._base_dir);
                     }
                 }
@@ -722,7 +826,10 @@ impl AgentInstance {
 
     /// Record a file edit event for user preferences tracking.
     fn record_file_edit(&self, file_path: &str) {
-        if let Some(mem_state) = self.app.try_state::<std::sync::Arc<tokio::sync::RwLock<crate::memory::MemoryManager>>>() {
+        if let Some(mem_state) = self
+            .app
+            .try_state::<std::sync::Arc<tokio::sync::RwLock<crate::memory::MemoryManager>>>()
+        {
             let mem = mem_state.inner().clone();
             let path = file_path.to_string();
             tokio::spawn(async move {
@@ -736,17 +843,25 @@ impl AgentInstance {
 
     /// Write a log entry if the agent log is initialized (fire-and-forget).
     async fn log_agent_event(&mut self, entry: crate::memory::agent_log::LogEntryType) {
-        if let Some(ref mut log) = self.agent_log {
-            if let Err(e) = log.append(entry).await {
-                log::debug!("[Agent] Failed to write agent log: {}", e);
-            }
+        if let Some(ref mut log) = self.agent_log
+            && let Err(e) = log.append(entry).await
+        {
+            log::debug!("[Agent] Failed to write agent log: {}", e);
         }
     }
 
     /// Record telemetry for session end (success/error/cancelled).
-    async fn record_telemetry_end(&self, outcome: &str, iterations: usize, error_message: Option<&str>) {
+    async fn record_telemetry_end(
+        &self,
+        outcome: &str,
+        iterations: usize,
+        error_message: Option<&str>,
+    ) {
         if let Some(telemetry) = self.app.try_state::<crate::telemetry::TelemetryCollector>() {
-            let duration_ms = self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
+            let duration_ms = self
+                .started_at
+                .map(|s| s.elapsed().as_millis() as u64)
+                .unwrap_or(0);
             telemetry.record(&crate::telemetry::TelemetryEvent::SessionEnd {
                 session_id: self.session_id.clone(),
                 outcome: outcome.to_string(),
@@ -845,7 +960,9 @@ impl AgentInstance {
                 "info",
                 &format!(
                     "Task progress summarized: {} -> {} messages ({} chars)",
-                    total_before, total_after, outcome.summary.len()
+                    total_before,
+                    total_after,
+                    outcome.summary.len()
                 ),
             );
             let _ = self.app.emit(
@@ -950,7 +1067,8 @@ impl AgentInstance {
             return "Hint: old_string matches multiple locations. Add more context, use start_line/end_line, or set replace_all: true.".to_string();
         }
         if lower.contains("invalid regex") {
-            return "Hint: Check regex syntax or omit the 'regex' parameter for substring search.".to_string();
+            return "Hint: Check regex syntax or omit the 'regex' parameter for substring search."
+                .to_string();
         }
         if lower.contains("timeout") {
             return "Hint: The operation timed out. Try a simpler approach or break the task into smaller steps.".to_string();
@@ -966,7 +1084,10 @@ impl AgentInstance {
         let mut recent_failures: Vec<String> = Vec::new();
         for msg in self.messages.iter().rev().take(10) {
             if msg.role == "tool" && Self::is_tool_failure(&msg.content) {
-                recent_failures.push(format!("Tool result: {}", msg.content.chars().take(300).collect::<String>()));
+                recent_failures.push(format!(
+                    "Tool result: {}",
+                    msg.content.chars().take(300).collect::<String>()
+                ));
             }
             if recent_failures.len() >= 3 {
                 break;
@@ -984,7 +1105,11 @@ impl AgentInstance {
             \
             Analyze the root cause and suggest an alternative approach. \
             Be concise (3-5 sentences). Focus on actionable changes, not restating the problem.",
-            self.consecutive_failures.values().max().copied().unwrap_or(0),
+            self.consecutive_failures
+                .values()
+                .max()
+                .copied()
+                .unwrap_or(0),
             recent_failures.join("\n\n---\n\n")
         );
 
@@ -1018,7 +1143,9 @@ impl AgentInstance {
 
         match response {
             llm::LlmResponse::Text(text) => Ok(text),
-            llm::LlmResponse::ToolCalls { .. } => Err("LLM returned tool calls during reflection (expected text)".to_string()),
+            llm::LlmResponse::ToolCalls { .. } => {
+                Err("LLM returned tool calls during reflection (expected text)".to_string())
+            }
         }
     }
 
@@ -1042,7 +1169,7 @@ impl AgentInstance {
         }
 
         // Initialize agent log (fire-and-forget — failures are non-fatal)
-        if let Some(config_dir) = self.app.path().app_config_dir().ok() {
+        if let Ok(config_dir) = self.app.path().app_config_dir() {
             let sessions_dir = config_dir.join("sessions");
             match crate::memory::agent_log::AgentLog::new(
                 &sessions_dir,
@@ -1066,7 +1193,9 @@ impl AgentInstance {
             if self.execution_phase != last_phase {
                 log::info!(
                     "[Agent:{}] Phase transition {:?} → {:?} — resetting iteration budget",
-                    self.agent_id, last_phase, self.execution_phase
+                    self.agent_id,
+                    last_phase,
+                    self.execution_phase
                 );
                 iteration = 0;
                 last_phase = self.execution_phase;
@@ -1102,9 +1231,11 @@ impl AgentInstance {
             if self.cancelled.load(Ordering::Relaxed) {
                 self.emit_cancelled();
                 self.emit_log("warn", "Agent cancelled by user");
-                self.log_agent_event(crate::memory::agent_log::LogEntryType::Cancelled).await;
+                self.log_agent_event(crate::memory::agent_log::LogEntryType::Cancelled)
+                    .await;
                 // Record telemetry: session cancelled
-                self.record_telemetry_end("cancelled", iteration, None).await;
+                self.record_telemetry_end("cancelled", iteration, None)
+                    .await;
                 return Err("Agent cancelled by user".to_string());
             }
 
@@ -1112,7 +1243,10 @@ impl AgentInstance {
             if self.pause_flag.load(Ordering::Relaxed) {
                 self.emit_log("info", "Agent paused by user — waiting for resume");
                 while self.pause_flag.load(Ordering::Relaxed) {
-                    let elapsed = self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
+                    let elapsed = self
+                        .started_at
+                        .map(|s| s.elapsed().as_millis() as u64)
+                        .unwrap_or(0);
                     self.emit_status(
                         "paused",
                         iteration as u32,
@@ -1130,15 +1264,30 @@ impl AgentInstance {
             }
 
             // 发射思考状态（含迭代进度，按当前阶段预算显示）
-            let elapsed = self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
+            let elapsed = self
+                .started_at
+                .map(|s| s.elapsed().as_millis() as u64)
+                .unwrap_or(0);
             self.emit_status(
-                if iteration == 0 { "Analyzing task and planning..." } else { "Processing results and determining next step..." },
+                if iteration == 0 {
+                    "Analyzing task and planning..."
+                } else {
+                    "Processing results and determining next step..."
+                },
                 iteration as u32,
                 self.phase_budget() as u32,
                 self.total_tokens_est as u32,
                 elapsed,
             );
-            self.emit_log("info", &format!("Iteration {}/{} starting (phase: {:?})", iteration + 1, self.max_iterations, self.execution_phase));
+            self.emit_log(
+                "info",
+                &format!(
+                    "Iteration {}/{} starting (phase: {:?})",
+                    iteration + 1,
+                    self.max_iterations,
+                    self.execution_phase
+                ),
+            );
 
             // ── Convergence injection: at ~70% budget, tell agent to wrap up ──
             // Qoder does this at 80%; we do it earlier to leave more runway for
@@ -1155,12 +1304,14 @@ impl AgentInstance {
                 ));
                 self.messages.push(llm::ChatMessage {
                     role: "system".into(),
-                    content: "[CONVERGENCE_NOTICE] You are approaching your iteration budget limit \
+                    content:
+                        "[CONVERGENCE_NOTICE] You are approaching your iteration budget limit \
                         (approximately 70% used). STOP exploring new files and start wrapping up:\n\
                         1. Summarize what you have accomplished so far\n\
                         2. If there are remaining steps, describe them briefly for the user\n\
                         3. Do NOT call any more write/create tools — finalize your response\n\
-                        Respond with a concise completion summary now.".into(),
+                        Respond with a concise completion summary now."
+                            .into(),
                     images: None,
                     tool_calls: None,
                     tool_call_id: None,
@@ -1170,12 +1321,15 @@ impl AgentInstance {
             // ── Read-only streak injection: force agent to start writing ──
             // If agent has done 15+ read-only iterations without any write, inject a strong hint
             let read_only_streak = self.loop_detector.get_read_only_streak();
-            if read_only_streak >= 15 && read_only_streak % 10 == 0 {
+            if read_only_streak >= 15 && read_only_streak.is_multiple_of(10) {
                 // Inject every 10 read-only iterations after the initial 15
-                self.emit_log("warn", &format!(
-                    "Read-only streak: {} iterations without write operations — forcing action",
-                    read_only_streak
-                ));
+                self.emit_log(
+                    "warn",
+                    &format!(
+                        "Read-only streak: {} iterations without write operations — forcing action",
+                        read_only_streak
+                    ),
+                );
                 self.messages.push(llm::ChatMessage {
                     role: "system".into(),
                     content: format!(
@@ -1206,9 +1360,13 @@ impl AgentInstance {
                     self.api_call_count, self.max_api_calls
                 );
                 self.emit_log("warn", &msg);
-                self.log_agent_event(crate::memory::agent_log::LogEntryType::Error { message: msg.clone() }).await;
+                self.log_agent_event(crate::memory::agent_log::LogEntryType::Error {
+                    message: msg.clone(),
+                })
+                .await;
                 // Record telemetry: session error
-                self.record_telemetry_end("error", iteration, Some(&msg)).await;
+                self.record_telemetry_end("error", iteration, Some(&msg))
+                    .await;
                 return Err(msg);
             }
             self.api_call_count += 1;
@@ -1218,9 +1376,13 @@ impl AgentInstance {
 
             log::debug!(
                 "[Agent:{}] ── Iteration {}/{} ── model={}, msgs={}, tools={}, phase={:?}",
-                self.agent_id, iteration + 1, self.max_iterations,
+                self.agent_id,
+                iteration + 1,
+                self.max_iterations,
                 self.select_model(iteration),
-                self.messages.len(), tool_jsons.len(), self.execution_phase
+                self.messages.len(),
+                tool_jsons.len(),
+                self.execution_phase
             );
 
             let request = llm::ChatRequestParams {
@@ -1235,9 +1397,12 @@ impl AgentInstance {
 
             let (response, usage) = if let Some(ref mut queue) = self.mock_llm_responses {
                 // Test mode: consume from mock queue instead of calling real LLM
-                (queue.pop_front().unwrap_or_else(|| {
-                    Err("Mock LLM response queue exhausted".to_string())
-                })?, None)
+                (
+                    queue
+                        .pop_front()
+                        .unwrap_or_else(|| Err("Mock LLM response queue exhausted".to_string()))?,
+                    None,
+                )
             } else {
                 // Stream tokens to frontend in real time
                 let stream_app = self.app.clone();
@@ -1251,11 +1416,14 @@ impl AgentInstance {
                     &tool_jsons,
                     Some(self.cancelled.clone()),
                     move |token: String| {
-                        let _ = stream_app.emit("chat-event", ChatEvent::Delta {
-                            session_id: stream_session.clone(),
-                            agent_id: Some(stream_agent.clone()),
-                            token,
-                        });
+                        let _ = stream_app.emit(
+                            "chat-event",
+                            ChatEvent::Delta {
+                                session_id: stream_session.clone(),
+                                agent_id: Some(stream_agent.clone()),
+                                token,
+                            },
+                        );
                         Ok(())
                     },
                 )
@@ -1272,30 +1440,38 @@ impl AgentInstance {
                 let response_size = match &response {
                     llm::LlmResponse::Text(t) => t.len(),
                     llm::LlmResponse::ToolCalls { calls, content } => {
-                        content.as_ref().map(|c| c.len()).unwrap_or(0) + calls.iter().map(|c| c.name.len() + c.arguments.to_string().len()).sum::<usize>()
+                        content.as_ref().map(|c| c.len()).unwrap_or(0)
+                            + calls
+                                .iter()
+                                .map(|c| c.name.len() + c.arguments.to_string().len())
+                                .sum::<usize>()
                     }
                 };
                 self.total_tokens_est += response_size / 4;
             }
 
             // Emit token usage update for dashboard
-            let _ = self.app.emit("usage-update", serde_json::json!({
-                "session_id": self.session_id,
-                "agent_id": self.agent_id,
-                "total_tokens_est": self.total_tokens_est,
-                "api_call_count": self.api_call_count,
-                "iteration": iteration + 1,
-                "max_iterations": self.max_iterations,
-            }));
+            let _ = self.app.emit(
+                "usage-update",
+                serde_json::json!({
+                    "session_id": self.session_id,
+                    "agent_id": self.agent_id,
+                    "total_tokens_est": self.total_tokens_est,
+                    "api_call_count": self.api_call_count,
+                    "iteration": iteration + 1,
+                    "max_iterations": self.max_iterations,
+                }),
+            );
 
             match response {
                 llm::LlmResponse::Text(text) => {
                     log::debug!(
                         "[Agent:{}] LLM returned Text ({} chars), no tool_calls. First 200 chars: {:?}",
-                        self.agent_id, text.len(),
+                        self.agent_id,
+                        text.len(),
                         text.chars().take(200).collect::<String>()
                     );
-                    
+
                     // Phase transition: Planning → Executing
                     if self.execution_phase == ExecutionPhase::Planning {
                         if let Some((summary, steps, files)) = try_extract_plan(&text) {
@@ -1318,40 +1494,49 @@ impl AgentInstance {
 
                             // Store sender in shared state so Tauri commands can reach it
                             if let Some(awaiters) = self.app.try_state::<PlanApprovalAwaiters>() {
-                                awaiters.lock()
+                                awaiters
+                                    .lock()
                                     .unwrap_or_else(|e| e.into_inner())
                                     .insert(self.session_id.clone(), tx);
                             }
 
                             // Notify frontend to show PlanCard
-                            let _ = self.app.emit("chat-event", ChatEvent::PlanCreated {
-                                plan: plan_for_event,
-                            });
+                            let _ = self.app.emit(
+                                "chat-event",
+                                ChatEvent::PlanCreated {
+                                    plan: plan_for_event,
+                                },
+                            );
 
                             self.emit_log("info", "Plan extracted — waiting for user approval");
 
                             // Wait for user action (oneshot: single message), with a
                             // timeout so a stalled approval cannot hang the agent forever
-                            let action = match tokio::time::timeout(
-                                std::time::Duration::from_secs(600),
-                                rx,
-                            )
-                            .await
-                            {
-                                Ok(Ok(action)) => action,
-                                Ok(Err(_)) => {
-                                    self.emit_log("warn", "Plan approval channel closed — skipping plan");
-                                    PlanAction::Skip
-                                }
-                                Err(_) => {
-                                    self.emit_log("warn", "Plan approval timed out after 600s — skipping plan");
-                                    PlanAction::Skip
-                                }
-                            };
+                            let action =
+                                match tokio::time::timeout(std::time::Duration::from_secs(600), rx)
+                                    .await
+                                {
+                                    Ok(Ok(action)) => action,
+                                    Ok(Err(_)) => {
+                                        self.emit_log(
+                                            "warn",
+                                            "Plan approval channel closed — skipping plan",
+                                        );
+                                        PlanAction::Skip
+                                    }
+                                    Err(_) => {
+                                        self.emit_log(
+                                            "warn",
+                                            "Plan approval timed out after 600s — skipping plan",
+                                        );
+                                        PlanAction::Skip
+                                    }
+                                };
 
                             // Clean up shared state
                             if let Some(awaiters) = self.app.try_state::<PlanApprovalAwaiters>() {
-                                awaiters.lock()
+                                awaiters
+                                    .lock()
                                     .unwrap_or_else(|e| e.into_inner())
                                     .remove(&self.session_id);
                             }
@@ -1390,7 +1575,10 @@ impl AgentInstance {
                         && self.execution_phase == ExecutionPhase::Executing
                         && iteration < self.max_iterations - 1
                     {
-                        let snapshots = self.hook_context.file_snapshots.lock()
+                        let snapshots = self
+                            .hook_context
+                            .file_snapshots
+                            .lock()
                             .unwrap_or_else(|e| e.into_inner());
                         if !snapshots.is_empty() {
                             drop(snapshots);
@@ -1411,18 +1599,37 @@ impl AgentInstance {
                         }
                     }
 
-                    self.log_agent_event(crate::memory::agent_log::LogEntryType::Completed { final_text: text.clone() }).await;
+                    self.log_agent_event(crate::memory::agent_log::LogEntryType::Completed {
+                        final_text: text.clone(),
+                    })
+                    .await;
                     self.emit_edit_diff();
                     self.emit_finished(&text);
                     // Record telemetry: session success
                     self.record_telemetry_end("success", iteration, None).await;
                     return Ok(text);
                 }
-                llm::LlmResponse::ToolCalls { calls: tool_calls, content: thinking } => {
+                llm::LlmResponse::ToolCalls {
+                    calls: tool_calls,
+                    content: thinking,
+                } => {
                     log::debug!(
                         "[Agent:{}] LLM returned {} tool_calls: [{}], content={} chars",
-                        self.agent_id, tool_calls.len(),
-                        tool_calls.iter().map(|tc| format!("{}({})", tc.name, tc.arguments.to_string().chars().take(80).collect::<String>())).collect::<Vec<_>>().join(", "),
+                        self.agent_id,
+                        tool_calls.len(),
+                        tool_calls
+                            .iter()
+                            .map(|tc| format!(
+                                "{}({})",
+                                tc.name,
+                                tc.arguments
+                                    .to_string()
+                                    .chars()
+                                    .take(80)
+                                    .collect::<String>()
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(", "),
                         thinking.as_ref().map(|t| t.len()).unwrap_or(0)
                     );
                     // 1. 发射 LLM 思考过程（如果有）
@@ -1430,7 +1637,10 @@ impl AgentInstance {
                         let trimmed = thought.trim();
                         if !trimmed.is_empty() {
                             self.emit_thinking(trimmed);
-                            self.emit_log("info", &format!("LLM reasoning ({} chars)", trimmed.len()));
+                            self.emit_log(
+                                "info",
+                                &format!("LLM reasoning ({} chars)", trimmed.len()),
+                            );
                         }
                     }
 
@@ -1460,13 +1670,19 @@ impl AgentInstance {
                     // When LLM returns multiple read-only tool calls, execute them in
                     // parallel for a 2-3× speedup. Write tools remain serial.
                     let parallel_results: std::collections::HashMap<usize, (String, u64)> = {
-                        let read_only_indices: Vec<usize> = tool_calls.iter().enumerate()
+                        let read_only_indices: Vec<usize> = tool_calls
+                            .iter()
+                            .enumerate()
                             .filter(|(_, tc)| is_read_only_tool(&tc.name))
                             .map(|(i, _)| i)
                             .collect();
 
                         if read_only_indices.len() > 1 {
-                            log::info!("[Agent:{}] Parallel executing {} read-only tools", self.agent_id, read_only_indices.len());
+                            log::info!(
+                                "[Agent:{}] Parallel executing {} read-only tools",
+                                self.agent_id,
+                                read_only_indices.len()
+                            );
                             let executor = self.executor.clone();
                             let tool_ctx = self.tool_ctx.clone();
                             let mut join_set = tokio::task::JoinSet::new();
@@ -1477,11 +1693,22 @@ impl AgentInstance {
                                 let ctx = tool_ctx.clone();
                                 let name = tc.name.clone();
                                 let args = tc.arguments.clone();
-                                log::debug!("[Agent:{}] Parallel spawn: tool[{}] = {}({})", self.agent_id, idx, name, args.to_string().chars().take(100).collect::<String>());
+                                log::debug!(
+                                    "[Agent:{}] Parallel spawn: tool[{}] = {}({})",
+                                    self.agent_id,
+                                    idx,
+                                    name,
+                                    args.to_string().chars().take(100).collect::<String>()
+                                );
                                 join_set.spawn(async move {
                                     let start = Instant::now();
                                     let result = exec.execute(&name, args, &ctx).await;
-                                    log::debug!("[Agent:parallel] tool[{}] completed: len={}, preview={:?}", idx, result.len(), result.chars().take(150).collect::<String>());
+                                    log::debug!(
+                                        "[Agent:parallel] tool[{}] completed: len={}, preview={:?}",
+                                        idx,
+                                        result.len(),
+                                        result.chars().take(150).collect::<String>()
+                                    );
                                     (idx, result, start.elapsed().as_millis() as u64)
                                 });
                             }
@@ -1493,13 +1720,21 @@ impl AgentInstance {
                                     // re-executed serially to give tools a fresh attempt
                                     // and avoid inflating the consecutive failure counter.
                                     let is_fail = Self::is_tool_failure(&result);
-                                    log::debug!("[Agent:{}] Parallel result for tool[{}]: is_fail={}, len={}", self.agent_id, idx, is_fail, result.len());
+                                    log::debug!(
+                                        "[Agent:{}] Parallel result for tool[{}]: is_fail={}, len={}",
+                                        self.agent_id,
+                                        idx,
+                                        is_fail,
+                                        result.len()
+                                    );
                                     if !is_fail {
                                         results.insert(idx, (result, duration));
                                     } else {
                                         log::debug!(
                                             "[Agent:{}] Parallel result for tool[{}] was a failure, skipping cache. Preview: {:?}",
-                                            self.agent_id, idx, result.chars().take(200).collect::<String>()
+                                            self.agent_id,
+                                            idx,
+                                            result.chars().take(200).collect::<String>()
                                         );
                                     }
                                 }
@@ -1522,26 +1757,49 @@ impl AgentInstance {
                         }
 
                         self.emit_status(
-                            &format!("Executing tool {}/{}: {}...", i + 1, tool_calls.len(), tc.name),
+                            &format!(
+                                "Executing tool {}/{}: {}...",
+                                i + 1,
+                                tool_calls.len(),
+                                tc.name
+                            ),
                             iteration as u32,
                             self.max_iterations as u32,
                             self.total_tokens_est as u32,
-                            self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0),
+                            self.started_at
+                                .map(|s| s.elapsed().as_millis() as u64)
+                                .unwrap_or(0),
                         );
 
                         let tool_start = Instant::now();
                         let timestamp = chrono::Utc::now().timestamp();
                         self.emit_tool_call(tc, timestamp);
-                        self.emit_log("info", &format!("Executing tool: {} (args: {})", tc.name, tc.arguments.to_string().chars().take(120).collect::<String>()));
+                        self.emit_log(
+                            "info",
+                            &format!(
+                                "Executing tool: {} (args: {})",
+                                tc.name,
+                                tc.arguments
+                                    .to_string()
+                                    .chars()
+                                    .take(120)
+                                    .collect::<String>()
+                            ),
+                        );
                         self.log_agent_event(crate::memory::agent_log::LogEntryType::ToolCall {
                             name: tc.name.clone(),
                             arguments: tc.arguments.clone(),
-                        }).await;
+                        })
+                        .await;
 
                         // Pre-tool hooks (snapshot + confirm)
                         let mut tool_args = tc.arguments.clone();
                         let args_modified;
-                        match self.hook_manager.pre_tool_chain(&tc.name, &mut tool_args, &self.hook_context).await {
+                        match self
+                            .hook_manager
+                            .pre_tool_chain(&tc.name, &mut tool_args, &self.hook_context)
+                            .await
+                        {
                             hooks::HookResult::Deny(msg) => {
                                 self.emit_log("warn", &format!("Hook denied: {}", tc.name));
                                 self.emit_tool_result(&msg, 0);
@@ -1583,60 +1841,108 @@ impl AgentInstance {
 
                         let (result, duration_ms) = if is_cached_failure {
                             // Return cached error — skip execution entirely
-                            let cached_err = self.failed_calls_cache.get(&cache_key).cloned().unwrap_or_default();
+                            let cached_err = self
+                                .failed_calls_cache
+                                .get(&cache_key)
+                                .cloned()
+                                .unwrap_or_default();
                             log::info!(
                                 "[Agent:{}] Returning cached failure for '{}' (same args as before)",
-                                self.agent_id, tc.name
+                                self.agent_id,
+                                tc.name
                             );
                             (cached_err, 0u64)
                         } else if !args_modified {
                             if let Some((r, d)) = parallel_results.get(&i) {
-                                log::debug!("[Agent:{}] Using parallel-cached result for '{}', len={}", self.agent_id, tc.name, r.len());
+                                log::debug!(
+                                    "[Agent:{}] Using parallel-cached result for '{}', len={}",
+                                    self.agent_id,
+                                    tc.name,
+                                    r.len()
+                                );
                                 (r.clone(), *d)
                             } else {
-                                log::debug!("[Agent:{}] Serial executing: {}({})", self.agent_id, tc.name, tool_args.to_string().chars().take(100).collect::<String>());
+                                log::debug!(
+                                    "[Agent:{}] Serial executing: {}({})",
+                                    self.agent_id,
+                                    tc.name,
+                                    tool_args.to_string().chars().take(100).collect::<String>()
+                                );
                                 let result = self.execute_and_handle_special(&effective_tc).await;
-                                log::debug!("[Agent:{}] Serial result for '{}': len={}, preview={:?}", self.agent_id, tc.name, result.len(), result.chars().take(150).collect::<String>());
+                                log::debug!(
+                                    "[Agent:{}] Serial result for '{}': len={}, preview={:?}",
+                                    self.agent_id,
+                                    tc.name,
+                                    result.len(),
+                                    result.chars().take(150).collect::<String>()
+                                );
                                 (result, tool_start.elapsed().as_millis() as u64)
                             }
                         } else {
-                            log::info!("[Agent:{}] Args modified by hook for '{}', skipping parallel cache", self.agent_id, tc.name);
-                            log::debug!("[Agent:{}] Serial executing (hook-modified): {}({})", self.agent_id, tc.name, tool_args.to_string().chars().take(100).collect::<String>());
+                            log::info!(
+                                "[Agent:{}] Args modified by hook for '{}', skipping parallel cache",
+                                self.agent_id,
+                                tc.name
+                            );
+                            log::debug!(
+                                "[Agent:{}] Serial executing (hook-modified): {}({})",
+                                self.agent_id,
+                                tc.name,
+                                tool_args.to_string().chars().take(100).collect::<String>()
+                            );
                             let result = self.execute_and_handle_special(&effective_tc).await;
-                            log::debug!("[Agent:{}] Serial result for '{}': len={}, preview={:?}", self.agent_id, tc.name, result.len(), result.chars().take(150).collect::<String>());
+                            log::debug!(
+                                "[Agent:{}] Serial result for '{}': len={}, preview={:?}",
+                                self.agent_id,
+                                tc.name,
+                                result.len(),
+                                result.chars().take(150).collect::<String>()
+                            );
                             (result, tool_start.elapsed().as_millis() as u64)
                         };
 
                         // Post-tool hooks
-                        let post_result = self.hook_manager.post_tool_chain(&tc.name, &tool_args, &result, &self.hook_context).await;
+                        let post_result = self
+                            .hook_manager
+                            .post_tool_chain(&tc.name, &tool_args, &result, &self.hook_context)
+                            .await;
                         let mut final_result = post_result.modified_result.unwrap_or(result);
 
                         // Track per-tool consecutive failures for self-reflection
                         let _is_fail_1 = Self::is_tool_failure(&final_result);
                         log::debug!(
                             "[Agent:{}] is_tool_failure[1] for '{}': {} | result_preview={:?}",
-                            self.agent_id, tc.name, _is_fail_1,
+                            self.agent_id,
+                            tc.name,
+                            _is_fail_1,
                             final_result.chars().take(150).collect::<String>()
                         );
                         if _is_fail_1 {
                             // Add guidance hint to help LLM recover (only on first failure)
                             if !is_cached_failure {
-                                let guidance = Self::classify_error_guidance(&tc.name, &final_result);
+                                let guidance =
+                                    Self::classify_error_guidance(&tc.name, &final_result);
                                 if !guidance.is_empty() {
                                     final_result = format!("{}\n{}", final_result, guidance);
                                 }
                                 // New failure: cache it and increment counter
-                                self.failed_calls_cache.insert(cache_key, final_result.clone());
-                                let count = self.consecutive_failures
+                                self.failed_calls_cache
+                                    .insert(cache_key, final_result.clone());
+                                let count = self
+                                    .consecutive_failures
                                     .entry(tc.name.clone())
                                     .and_modify(|c| *c += 1)
                                     .or_insert(1);
                                 let failure_count = *count;
                                 batch_has_failure = true;
                                 if failure_count >= 2 {
-                                    self.emit_log("warn", &format!(
-                                        "Tool '{}' has {} consecutive failures", tc.name, failure_count
-                                    ));
+                                    self.emit_log(
+                                        "warn",
+                                        &format!(
+                                            "Tool '{}' has {} consecutive failures",
+                                            tc.name, failure_count
+                                        ),
+                                    );
                                 }
                             }
                             // If is_cached_failure: don't increment, don't re-warn.
@@ -1644,14 +1950,25 @@ impl AgentInstance {
                         } else {
                             // Success: reset failure counter and clear cache for this tool
                             self.consecutive_failures.remove(&tc.name);
-                            self.failed_calls_cache.retain(|(name, _), _| *name != tc.name);
+                            self.failed_calls_cache
+                                .retain(|(name, _), _| *name != tc.name);
                             // Track successfully written files for potential rollback
-                            if matches!(tc.name.as_str(), "write_file" | "edit" | "append_file" | "create_directory" | "delete_file" | "delete_directory") {
-                                if let Some(path) = tool_args.get("file_path").or_else(|| tool_args.get("path")).and_then(|v| v.as_str()) {
-                                    batch_written_files.push(path.to_string());
-                                    // Record file edit for preferences tracking
-                                    self.record_file_edit(path);
-                                }
+                            if matches!(
+                                tc.name.as_str(),
+                                "write_file"
+                                    | "edit"
+                                    | "append_file"
+                                    | "create_directory"
+                                    | "delete_file"
+                                    | "delete_directory"
+                            ) && let Some(path) = tool_args
+                                .get("file_path")
+                                .or_else(|| tool_args.get("path"))
+                                .and_then(|v| v.as_str())
+                            {
+                                batch_written_files.push(path.to_string());
+                                // Record file edit for preferences tracking
+                                self.record_file_edit(path);
                             }
                             // Record tool success for preferences
                             self.record_tool_usage(&tc.name, true, duration_ms);
@@ -1661,22 +1978,30 @@ impl AgentInstance {
                         let _is_fail_2 = Self::is_tool_failure(&final_result);
                         log::debug!(
                             "[Agent:{}] is_tool_failure[2] for '{}': {}",
-                            self.agent_id, tc.name, _is_fail_2
+                            self.agent_id,
+                            tc.name,
+                            _is_fail_2
                         );
                         if _is_fail_2 {
                             self.record_tool_usage(&tc.name, false, duration_ms);
                         }
 
                         self.emit_tool_result(&final_result, duration_ms);
-                        self.emit_log("info", &format!("Tool '{}' completed in {}ms", tc.name, duration_ms));
+                        self.emit_log(
+                            "info",
+                            &format!("Tool '{}' completed in {}ms", tc.name, duration_ms),
+                        );
                         self.log_agent_event(crate::memory::agent_log::LogEntryType::ToolResult {
                             name: tc.name.clone(),
                             result: final_result.chars().take(2000).collect::<String>(),
                             duration_ms,
-                        }).await;
+                        })
+                        .await;
 
                         // Record telemetry: tool call
-                        if let Some(telemetry) = self.app.try_state::<crate::telemetry::TelemetryCollector>() {
+                        if let Some(telemetry) =
+                            self.app.try_state::<crate::telemetry::TelemetryCollector>()
+                        {
                             let is_success = !Self::is_tool_failure(&final_result);
                             telemetry.record(&crate::telemetry::TelemetryEvent::ToolCall {
                                 session_id: self.session_id.clone(),
@@ -1691,12 +2016,21 @@ impl AgentInstance {
                         let is_success = !Self::is_tool_failure(&final_result);
                         log::debug!(
                             "[Agent:{}] is_tool_failure[3] for '{}': {} (is_success={})",
-                            self.agent_id, tc.name, Self::is_tool_failure(&final_result), is_success
+                            self.agent_id,
+                            tc.name,
+                            Self::is_tool_failure(&final_result),
+                            is_success
                         );
-                        self.loop_detector.record_call(&tc.name, &tool_args, &final_result, is_success);
+                        self.loop_detector.record_call(
+                            &tc.name,
+                            &tool_args,
+                            &final_result,
+                            is_success,
+                        );
                         log::debug!(
                             "[Agent:{}] After record_call: consecutive_failures[{}]={}",
-                            self.agent_id, tc.name,
+                            self.agent_id,
+                            tc.name,
                             self.loop_detector.failure_count(&tc.name)
                         );
 
@@ -1715,20 +2049,30 @@ impl AgentInstance {
                     }
 
                     // 3. Post-tool-batch hooks (auto-diagnose)
-                    let batch_msgs = self.hook_manager.post_tool_batch_chain(&tool_calls, &self.hook_context).await;
+                    let batch_msgs = self
+                        .hook_manager
+                        .post_tool_batch_chain(&tool_calls, &self.hook_context)
+                        .await;
                     for msg in batch_msgs {
                         self.messages.push(msg);
                     }
 
                     // 3.5 Atomic rollback: if any tool in batch failed, restore all files modified in this batch
                     if batch_has_failure && !batch_written_files.is_empty() {
-                        let snapshots = self.hook_context.file_snapshots.lock()
+                        let snapshots = self
+                            .hook_context
+                            .file_snapshots
+                            .lock()
                             .unwrap_or_else(|e| e.into_inner());
                         let mut rolled_back = Vec::new();
                         for file_path in &batch_written_files {
                             if let Some(original) = snapshots.get(file_path) {
                                 if let Err(e) = std::fs::write(file_path, original) {
-                                    log::error!("[Rollback] Failed to restore '{}': {}", file_path, e);
+                                    log::error!(
+                                        "[Rollback] Failed to restore '{}': {}",
+                                        file_path,
+                                        e
+                                    );
                                 } else {
                                     rolled_back.push(file_path.clone());
                                 }
@@ -1767,10 +2111,16 @@ impl AgentInstance {
                     );
                     match self.loop_detector.check() {
                         LoopVerdict::Continue => {
-                            log::debug!("[Agent:{}] loop_detector verdict: Continue", self.agent_id);
+                            log::debug!(
+                                "[Agent:{}] loop_detector verdict: Continue",
+                                self.agent_id
+                            );
                         }
                         LoopVerdict::InjectWarning(msg) => {
-                            self.emit_log("warn", &format!("Loop detected: {}", msg.lines().next().unwrap_or("")));
+                            self.emit_log(
+                                "warn",
+                                &format!("Loop detected: {}", msg.lines().next().unwrap_or("")),
+                            );
                             self.messages.push(llm::ChatMessage {
                                 role: "user".into(),
                                 content: format!("[LOOP_WARNING] {}", msg),
@@ -1783,31 +2133,39 @@ impl AgentInstance {
                             self.emit_log("error", &format!("Hard stop: {}", msg));
                             self.log_agent_event(crate::memory::agent_log::LogEntryType::Error {
                                 message: format!("Loop hard-stop: {}", msg),
-                            }).await;
+                            })
+                            .await;
                             return Err(format!("Agent loop terminated: {}", msg));
                         }
                     }
 
                     // 4. Self-reflection: if any tool has consecutive failures >= 2,
                     //    OR if the agent is making no progress (repeated reads without writes)
-                    let max_failures = self.consecutive_failures.values().max().copied().unwrap_or(0);
+                    let max_failures = self
+                        .consecutive_failures
+                        .values()
+                        .max()
+                        .copied()
+                        .unwrap_or(0);
 
                     // ── No-progress detection: read-only tools called 3+ times ──
                     // without any write tool in between → stuck in exploration loop.
                     // Count read-only calls in this batch with no write calls.
-                    let batch_read_only_count = tool_calls.iter()
+                    let batch_read_only_count = tool_calls
+                        .iter()
                         .filter(|tc| is_read_only_tool(&tc.name))
                         .count();
-                    let batch_has_write = tool_calls.iter()
-                        .any(|tc| !is_read_only_tool(&tc.name)
-                            && !matches!(tc.name.as_str(), "todo_write" | "ask_user_question"));
+                    let batch_has_write = tool_calls.iter().any(|tc| {
+                        !is_read_only_tool(&tc.name)
+                            && !matches!(tc.name.as_str(), "todo_write" | "ask_user_question")
+                    });
 
                     // If this entire batch was read-only AND we're past 50% of budget,
                     // treat it as a "no-progress" signal for self-reflection
                     let no_progress_signal = batch_read_only_count >= 3
                         && !batch_has_write
                         && iteration > self.max_iterations / 2
-                        && self.convergence_injected == false; // only before convergence
+                        && !self.convergence_injected; // only before convergence
 
                     if (max_failures >= 2 || no_progress_signal)
                         && self.reflection_count < self.max_iterations / 2
@@ -1815,23 +2173,26 @@ impl AgentInstance {
                         let reason = if no_progress_signal {
                             format!(
                                 "No progress detected: {} read-only tool calls in batch without any write action at iteration {}/{}",
-                                batch_read_only_count, iteration + 1, self.max_iterations
+                                batch_read_only_count,
+                                iteration + 1,
+                                self.max_iterations
                             )
                         } else {
                             format!(
                                 "Tool failures detected (max per-tool: {}, reflection #{})",
-                                max_failures, self.reflection_count + 1
+                                max_failures,
+                                self.reflection_count + 1
                             )
                         };
-                        self.emit_log("info", &format!(
-                            "Triggering self-reflection: {}", reason
-                        ));
+                        self.emit_log("info", &format!("Triggering self-reflection: {}", reason));
                         self.emit_status(
                             "Reflecting on progress...",
                             iteration as u32,
                             self.max_iterations as u32,
                             self.total_tokens_est as u32,
-                            self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0),
+                            self.started_at
+                                .map(|s| s.elapsed().as_millis() as u64)
+                                .unwrap_or(0),
                         );
 
                         match self.reflect_on_failures().await {
@@ -1859,39 +2220,53 @@ impl AgentInstance {
 
                     // 5. Checkpoint: create git checkpoint if files were modified
                     let modified_files: Vec<String> = {
-                        let snapshots = self.hook_context.file_snapshots.lock()
+                        let snapshots = self
+                            .hook_context
+                            .file_snapshots
+                            .lock()
                             .unwrap_or_else(|e| e.into_inner());
                         snapshots.keys().cloned().collect()
                     };
-                    if !modified_files.is_empty() {
-                        if let Some(store) = self.app.try_state::<checkpoint::CheckpointStore>() {
-                            let manager = checkpoint::CheckpointManager::new(self.tool_ctx.project_path.clone());
-                            match manager.create(
+                    if !modified_files.is_empty()
+                        && let Some(store) = self.app.try_state::<checkpoint::CheckpointStore>()
+                    {
+                        let manager =
+                            checkpoint::CheckpointManager::new(self.tool_ctx.project_path.clone());
+                        match manager
+                            .create(
                                 iteration as u32,
                                 modified_files.clone(),
                                 format!("Iteration {}", iteration),
-                            ).await {
-                                Ok(cp) => {
-                                    if let Ok(mut store) = store.lock() {
-                                        store.entry(self.session_id.clone())
-                                            .or_insert_with(Vec::new)
-                                            .push(cp.clone());
-                                    }
-                                    let _ = self.app.emit(
-                                        "chat-event",
-                                        ChatEvent::CheckpointCreated {
-                                            session_id: self.session_id.clone(),
-                                            agent_id: Some(self.agent_id.clone()),
-                                            iteration: iteration as u32,
-                                            commit_hash: cp.commit_hash.clone(),
-                                            files: modified_files,
-                                        },
-                                    );
-                                    self.emit_log("info", &format!("Checkpoint created for iteration {}", iteration));
+                            )
+                            .await
+                        {
+                            Ok(cp) => {
+                                if let Ok(mut store) = store.lock() {
+                                    store
+                                        .entry(self.session_id.clone())
+                                        .or_insert_with(Vec::new)
+                                        .push(cp.clone());
                                 }
-                                Err(e) => {
-                                    self.emit_log("warn", &format!("Checkpoint creation failed: {}", e));
-                                }
+                                let _ = self.app.emit(
+                                    "chat-event",
+                                    ChatEvent::CheckpointCreated {
+                                        session_id: self.session_id.clone(),
+                                        agent_id: Some(self.agent_id.clone()),
+                                        iteration: iteration as u32,
+                                        commit_hash: cp.commit_hash.clone(),
+                                        files: modified_files,
+                                    },
+                                );
+                                self.emit_log(
+                                    "info",
+                                    &format!("Checkpoint created for iteration {}", iteration),
+                                );
+                            }
+                            Err(e) => {
+                                self.emit_log(
+                                    "warn",
+                                    &format!("Checkpoint creation failed: {}", e),
+                                );
                             }
                         }
                     }
@@ -1903,10 +2278,13 @@ impl AgentInstance {
         // ── Soft exit: give agent one final chance to summarize before hard error ──
         // Instead of immediately returning Err, inject a "wrap up now" instruction
         // and allow one more LLM turn. If the agent produces text → Ok; otherwise → Err.
-        self.emit_log("warn", &format!(
-            "Iteration budget exhausted ({}/{}). Requesting final summary...",
-            self.max_iterations, self.max_iterations
-        ));
+        self.emit_log(
+            "warn",
+            &format!(
+                "Iteration budget exhausted ({}/{}). Requesting final summary...",
+                self.max_iterations, self.max_iterations
+            ),
+        );
 
         self.messages.push(llm::ChatMessage {
             role: "system".into(),
@@ -1916,7 +2294,8 @@ impl AgentInstance {
                 1. What was accomplished\n\
                 2. What remains incomplete (if anything)\n\
                 3. Recommended next steps for the user\n\
-                Respond immediately with plain text — no tool calls.".into(),
+                Respond immediately with plain text — no tool calls."
+                .into(),
             images: None,
             tool_calls: None,
             tool_call_id: None,
@@ -1924,7 +2303,11 @@ impl AgentInstance {
 
         // One final LLM call for the summary (use fast_model for cost efficiency)
         let request = llm::ChatRequestParams {
-            model: if self.fast_model.is_empty() { self.chat_model.clone() } else { self.fast_model.clone() },
+            model: if self.fast_model.is_empty() {
+                self.chat_model.clone()
+            } else {
+                self.fast_model.clone()
+            },
             messages: self.messages.clone(),
             system: self.build_system_prompt(),
             max_tokens: self.max_tokens,
@@ -1937,9 +2320,9 @@ impl AgentInstance {
         let stream_session = self.session_id.clone();
         let stream_agent = self.agent_id.clone();
         let final_response = if let Some(ref mut queue) = self.mock_llm_responses {
-            queue.pop_front().unwrap_or_else(|| {
-                Err("Mock LLM response queue exhausted".to_string())
-            })
+            queue
+                .pop_front()
+                .unwrap_or_else(|| Err("Mock LLM response queue exhausted".to_string()))
         } else {
             llm::stream_chat_with_tools(
                 &self.provider,
@@ -1949,11 +2332,14 @@ impl AgentInstance {
                 &[], // empty tools → force text response
                 Some(self.cancelled.clone()),
                 move |token: String| {
-                    let _ = stream_app.emit("chat-event", ChatEvent::Delta {
-                        session_id: stream_session.clone(),
-                        agent_id: Some(stream_agent.clone()),
-                        token,
-                    });
+                    let _ = stream_app.emit(
+                        "chat-event",
+                        ChatEvent::Delta {
+                            session_id: stream_session.clone(),
+                            agent_id: Some(stream_agent.clone()),
+                            token,
+                        },
+                    );
                     Ok(())
                 },
             )
@@ -1963,19 +2349,26 @@ impl AgentInstance {
 
         match final_response {
             Ok(llm::LlmResponse::Text(text)) if !text.trim().is_empty() => {
-                self.emit_log("info", "Soft exit: agent produced summary after budget exhaustion");
+                self.emit_log(
+                    "info",
+                    "Soft exit: agent produced summary after budget exhaustion",
+                );
                 self.log_agent_event(crate::memory::agent_log::LogEntryType::Completed {
                     final_text: text.clone(),
-                }).await;
+                })
+                .await;
                 self.emit_edit_diff();
                 // Emit BudgetExhausted instead of Finished so frontend can show Continue button
-                let _ = self.app.emit("chat-event", ChatEvent::BudgetExhausted {
-                    session_id: self.session_id.clone(),
-                    agent_id: Some(self.agent_id.clone()),
-                    summary: text.clone(),
-                    max_iterations: self.max_iterations as u32,
-                });
-                return Ok(text);
+                let _ = self.app.emit(
+                    "chat-event",
+                    ChatEvent::BudgetExhausted {
+                        session_id: self.session_id.clone(),
+                        agent_id: Some(self.agent_id.clone()),
+                        summary: text.clone(),
+                        max_iterations: self.max_iterations as u32,
+                    },
+                );
+                Ok(text)
             }
             _ => {
                 let msg = format!(
@@ -1984,14 +2377,18 @@ impl AgentInstance {
                 );
                 self.log_agent_event(crate::memory::agent_log::LogEntryType::Error {
                     message: msg.clone(),
-                }).await;
+                })
+                .await;
                 // Even on failure, emit BudgetExhausted so user can click Continue
-                let _ = self.app.emit("chat-event", ChatEvent::BudgetExhausted {
-                    session_id: self.session_id.clone(),
-                    agent_id: Some(self.agent_id.clone()),
-                    summary: msg.clone(),
-                    max_iterations: self.max_iterations as u32,
-                });
+                let _ = self.app.emit(
+                    "chat-event",
+                    ChatEvent::BudgetExhausted {
+                        session_id: self.session_id.clone(),
+                        agent_id: Some(self.agent_id.clone()),
+                        summary: msg.clone(),
+                        max_iterations: self.max_iterations as u32,
+                    },
+                );
                 Err(msg)
             }
         }
@@ -2020,26 +2417,42 @@ impl AgentInstance {
             }
 
             // 发射思考状态
-            let elapsed = self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
+            let elapsed = self
+                .started_at
+                .map(|s| s.elapsed().as_millis() as u64)
+                .unwrap_or(0);
             self.emit_status(
-                if iteration == 0 { "Analyzing task and planning..." } else { "Processing results and determining next step..." },
+                if iteration == 0 {
+                    "Analyzing task and planning..."
+                } else {
+                    "Processing results and determining next step..."
+                },
                 iteration as u32,
                 self.max_iterations as u32,
                 self.total_tokens_est as u32,
                 elapsed,
             );
-            self.emit_log("info", &format!("Sub-agent iteration {}/{} starting", iteration + 1, self.max_iterations));
+            self.emit_log(
+                "info",
+                &format!(
+                    "Sub-agent iteration {}/{} starting",
+                    iteration + 1,
+                    self.max_iterations
+                ),
+            );
 
             // ── Convergence injection for sub-agent (same as orchestrator) ──
             let convergence_threshold = (self.max_iterations as f64 * 0.7).ceil() as usize;
-            if !self.convergence_injected
-                && iteration >= convergence_threshold
-            {
+            if !self.convergence_injected && iteration >= convergence_threshold {
                 self.convergence_injected = true;
-                self.emit_log("info", &format!(
-                    "Sub-agent convergence hint at iteration {}/{}",
-                    iteration + 1, self.max_iterations
-                ));
+                self.emit_log(
+                    "info",
+                    &format!(
+                        "Sub-agent convergence hint at iteration {}/{}",
+                        iteration + 1,
+                        self.max_iterations
+                    ),
+                );
                 self.messages.push(llm::ChatMessage {
                     role: "system".into(),
                     content: "[CONVERGENCE_NOTICE] You are approaching your iteration budget limit. \
@@ -2079,9 +2492,12 @@ impl AgentInstance {
             };
 
             let (response, usage) = if let Some(ref mut queue) = self.mock_llm_responses {
-                (queue.pop_front().unwrap_or_else(|| {
-                    Err("Mock LLM response queue exhausted".to_string())
-                })?, None)
+                (
+                    queue
+                        .pop_front()
+                        .unwrap_or_else(|| Err("Mock LLM response queue exhausted".to_string()))?,
+                    None,
+                )
             } else {
                 // Stream tokens to frontend in real time
                 let stream_app = self.app.clone();
@@ -2095,11 +2511,14 @@ impl AgentInstance {
                     &tool_jsons,
                     Some(self.cancelled.clone()),
                     move |token: String| {
-                        let _ = stream_app.emit("chat-event", ChatEvent::Delta {
-                            session_id: stream_session.clone(),
-                            agent_id: Some(stream_agent.clone()),
-                            token,
-                        });
+                        let _ = stream_app.emit(
+                            "chat-event",
+                            ChatEvent::Delta {
+                                session_id: stream_session.clone(),
+                                agent_id: Some(stream_agent.clone()),
+                                token,
+                            },
+                        );
                         Ok(())
                     },
                 )
@@ -2115,7 +2534,11 @@ impl AgentInstance {
                 let response_size = match &response {
                     llm::LlmResponse::Text(t) => t.len(),
                     llm::LlmResponse::ToolCalls { calls, content } => {
-                        content.as_ref().map(|c| c.len()).unwrap_or(0) + calls.iter().map(|c| c.name.len() + c.arguments.to_string().len()).sum::<usize>()
+                        content.as_ref().map(|c| c.len()).unwrap_or(0)
+                            + calls
+                                .iter()
+                                .map(|c| c.name.len() + c.arguments.to_string().len())
+                                .sum::<usize>()
                     }
                 };
                 self.total_tokens_est += response_size / 4;
@@ -2128,13 +2551,19 @@ impl AgentInstance {
                     self.emit_finished(&text);
                     return Ok(text);
                 }
-                llm::LlmResponse::ToolCalls { calls: tool_calls, content: thinking } => {
+                llm::LlmResponse::ToolCalls {
+                    calls: tool_calls,
+                    content: thinking,
+                } => {
                     // 1. 发射 LLM 思考过程（如果有）
                     if let Some(ref thought) = thinking {
                         let trimmed = thought.trim();
                         if !trimmed.is_empty() {
                             self.emit_thinking(trimmed);
-                            self.emit_log("info", &format!("Sub-agent reasoning ({} chars)", trimmed.len()));
+                            self.emit_log(
+                                "info",
+                                &format!("Sub-agent reasoning ({} chars)", trimmed.len()),
+                            );
                         }
                     }
 
@@ -2169,25 +2598,48 @@ impl AgentInstance {
                         }
 
                         self.emit_status(
-                            &format!("Executing tool {}/{}: {}...", i + 1, tool_calls.len(), tc.name),
+                            &format!(
+                                "Executing tool {}/{}: {}...",
+                                i + 1,
+                                tool_calls.len(),
+                                tc.name
+                            ),
                             iteration as u32,
                             self.max_iterations as u32,
                             self.total_tokens_est as u32,
-                            self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0),
+                            self.started_at
+                                .map(|s| s.elapsed().as_millis() as u64)
+                                .unwrap_or(0),
                         );
 
                         let tool_start = Instant::now();
                         let timestamp = chrono::Utc::now().timestamp();
                         self.emit_tool_call(tc, timestamp);
-                        self.emit_log("info", &format!("Sub-agent tool: {} (args: {})", tc.name, tc.arguments.to_string().chars().take(120).collect::<String>()));
+                        self.emit_log(
+                            "info",
+                            &format!(
+                                "Sub-agent tool: {} (args: {})",
+                                tc.name,
+                                tc.arguments
+                                    .to_string()
+                                    .chars()
+                                    .take(120)
+                                    .collect::<String>()
+                            ),
+                        );
                         self.log_agent_event(crate::memory::agent_log::LogEntryType::ToolCall {
                             name: tc.name.clone(),
                             arguments: tc.arguments.clone(),
-                        }).await;
+                        })
+                        .await;
 
                         // Pre-tool hooks (snapshot + confirm)
                         let mut tool_args = tc.arguments.clone();
-                        match self.hook_manager.pre_tool_chain(&tc.name, &mut tool_args, &self.hook_context).await {
+                        match self
+                            .hook_manager
+                            .pre_tool_chain(&tc.name, &mut tool_args, &self.hook_context)
+                            .await
+                        {
                             hooks::HookResult::Deny(msg) => {
                                 self.emit_log("warn", &format!("Hook denied: {}", tc.name));
                                 self.emit_tool_result(&msg, 0);
@@ -2211,16 +2663,26 @@ impl AgentInstance {
                         let duration_ms = tool_start.elapsed().as_millis() as u64;
 
                         // Post-tool hooks
-                        let post_result = self.hook_manager.post_tool_chain(&tc.name, &tool_args, &result, &self.hook_context).await;
+                        let post_result = self
+                            .hook_manager
+                            .post_tool_chain(&tc.name, &tool_args, &result, &self.hook_context)
+                            .await;
                         let final_result = post_result.modified_result.unwrap_or(result);
 
                         self.emit_tool_result(&final_result, duration_ms);
-                        self.emit_log("info", &format!("Sub-agent tool '{}' completed in {}ms", tc.name, duration_ms));
+                        self.emit_log(
+                            "info",
+                            &format!(
+                                "Sub-agent tool '{}' completed in {}ms",
+                                tc.name, duration_ms
+                            ),
+                        );
                         self.log_agent_event(crate::memory::agent_log::LogEntryType::ToolResult {
                             name: tc.name.clone(),
                             result: final_result.chars().take(2000).collect::<String>(),
                             duration_ms,
-                        }).await;
+                        })
+                        .await;
                         self.messages.push(llm::ChatMessage {
                             role: "tool".into(),
                             content: final_result,
@@ -2235,7 +2697,10 @@ impl AgentInstance {
                     }
 
                     // Post-tool-batch hooks (auto-diagnose)
-                    let batch_msgs = self.hook_manager.post_tool_batch_chain(&tool_calls, &self.hook_context).await;
+                    let batch_msgs = self
+                        .hook_manager
+                        .post_tool_batch_chain(&tool_calls, &self.hook_context)
+                        .await;
                     for msg in batch_msgs {
                         self.messages.push(msg);
                     }
@@ -2247,23 +2712,31 @@ impl AgentInstance {
         }
 
         // ── Soft exit for sub-agent: one final LLM call for summary ──
-        self.emit_log("warn", &format!(
-            "Sub-agent iteration budget exhausted ({}/{}). Requesting final summary...",
-            self.max_iterations, self.max_iterations
-        ));
+        self.emit_log(
+            "warn",
+            &format!(
+                "Sub-agent iteration budget exhausted ({}/{}). Requesting final summary...",
+                self.max_iterations, self.max_iterations
+            ),
+        );
 
         self.messages.push(llm::ChatMessage {
             role: "system".into(),
             content: "[BUDGET_EXHAUSTED] Your iteration budget is fully consumed. \
                 Produce your final response now WITHOUT calling any tools. \
-                Summarize what was accomplished and what remains. Respond immediately.".into(),
+                Summarize what was accomplished and what remains. Respond immediately."
+                .into(),
             images: None,
             tool_calls: None,
             tool_call_id: None,
         });
 
         let request = llm::ChatRequestParams {
-            model: if self.fast_model.is_empty() { self.chat_model.clone() } else { self.fast_model.clone() },
+            model: if self.fast_model.is_empty() {
+                self.chat_model.clone()
+            } else {
+                self.fast_model.clone()
+            },
             messages: self.messages.clone(),
             system: self.build_system_prompt(),
             max_tokens: self.max_tokens,
@@ -2276,9 +2749,9 @@ impl AgentInstance {
         let stream_session = self.session_id.clone();
         let stream_agent = self.agent_id.clone();
         let final_response = if let Some(ref mut queue) = self.mock_llm_responses {
-            queue.pop_front().unwrap_or_else(|| {
-                Err("Mock LLM response queue exhausted".to_string())
-            })
+            queue
+                .pop_front()
+                .unwrap_or_else(|| Err("Mock LLM response queue exhausted".to_string()))
         } else {
             llm::stream_chat_with_tools(
                 &self.provider,
@@ -2288,11 +2761,14 @@ impl AgentInstance {
                 &[],
                 Some(self.cancelled.clone()),
                 move |token: String| {
-                    let _ = stream_app.emit("chat-event", ChatEvent::Delta {
-                        session_id: stream_session.clone(),
-                        agent_id: Some(stream_agent.clone()),
-                        token,
-                    });
+                    let _ = stream_app.emit(
+                        "chat-event",
+                        ChatEvent::Delta {
+                            session_id: stream_session.clone(),
+                            agent_id: Some(stream_agent.clone()),
+                            token,
+                        },
+                    );
                     Ok(())
                 },
             )
@@ -2302,10 +2778,13 @@ impl AgentInstance {
 
         match final_response {
             Ok(llm::LlmResponse::Text(text)) if !text.trim().is_empty() => {
-                self.emit_log("info", "Sub-agent soft exit: produced summary after budget exhaustion");
+                self.emit_log(
+                    "info",
+                    "Sub-agent soft exit: produced summary after budget exhaustion",
+                );
                 self.emit_edit_diff();
                 self.emit_finished(&text);
-                return Ok(text);
+                Ok(text)
             }
             _ => {
                 let msg = format!(
@@ -2314,7 +2793,8 @@ impl AgentInstance {
                 );
                 self.log_agent_event(crate::memory::agent_log::LogEntryType::Error {
                     message: msg.clone(),
-                }).await;
+                })
+                .await;
                 Err(msg)
             }
         }
@@ -2328,9 +2808,7 @@ impl AgentInstance {
         let action = self.executor.post_execute_action(&tc.name, &tc.arguments);
 
         match action {
-            PostExecuteAction::AskUser(questions) => {
-                self.handle_ask_user(questions).await
-            }
+            PostExecuteAction::AskUser(questions) => self.handle_ask_user(questions).await,
             PostExecuteAction::UpdateTodos(todos) => {
                 let result = self.execute_regular_tool(tc).await;
                 self.todo_list = todos;
@@ -2345,12 +2823,16 @@ impl AgentInstance {
                     self.extend_count += 1;
                     log::info!(
                         "[Agent:{}] Auto-extend #{} triggered: +{} iterations for {} tasks",
-                        self.agent_id, self.extend_count, additional, task_count
+                        self.agent_id,
+                        self.extend_count,
+                        additional,
+                        task_count
                     );
                 } else if self.extend_count >= 2 {
                     log::warn!(
                         "[Agent:{}] Auto-extend skipped: already extended {} times without sufficient progress",
-                        self.agent_id, self.extend_count
+                        self.agent_id,
+                        self.extend_count
                     );
                     self.emit_log("warn", &format!(
                         "Iteration budget extension denied (already extended {}x). Focus on completing existing tasks.",
@@ -2368,7 +2850,11 @@ impl AgentInstance {
                 );
                 result
             }
-            PostExecuteAction::DispatchAgent { agent_id, task, background } => {
+            PostExecuteAction::DispatchAgent {
+                agent_id,
+                task,
+                background,
+            } => {
                 // Background mode: fire-and-forget with completion notification.
                 // Registers a CloudTask and returns immediately so the main agent
                 // keeps iterating; the CloudAgentPanel shows progress and the
@@ -2392,7 +2878,9 @@ impl AgentInstance {
                     .unwrap_or_else(|e| e);
                 }
 
-                let registry = self.app.try_state::<crate::agent::definition::AgentRegistry>()
+                let registry = self
+                    .app
+                    .try_state::<crate::agent::definition::AgentRegistry>()
                     .map(|s| s.inner().clone());
                 let registry = match registry {
                     Some(r) => r,
@@ -2412,10 +2900,13 @@ impl AgentInstance {
                     self.base_url.clone(),
                     self.chat_model.clone(),
                     self.tool_ctx.project_path.clone(),
-                ).await
+                )
+                .await
             }
             PostExecuteAction::DispatchAgents(tasks) => {
-                let registry = self.app.try_state::<crate::agent::definition::AgentRegistry>()
+                let registry = self
+                    .app
+                    .try_state::<crate::agent::definition::AgentRegistry>()
                     .map(|s| s.inner().clone());
                 let registry = match registry {
                     Some(r) => r,
@@ -2463,7 +2954,8 @@ impl AgentInstance {
                 // Run foreground tasks in parallel (existing behavior)
                 if !foreground.is_empty() {
                     let task_tuples: Vec<(String, String, Option<String>, Option<Vec<String>>)> =
-                        foreground.into_iter()
+                        foreground
+                            .into_iter()
                             .map(|t| (t.agent_id, t.task, t.file_path, t.depends_on))
                             .collect();
 
@@ -2477,7 +2969,8 @@ impl AgentInstance {
                         self.base_url.as_deref(),
                         &self.chat_model,
                         self.tool_ctx.project_path.as_deref(),
-                    ).await;
+                    )
+                    .await;
                     parts.push(results.join("\n\n---\n\n"));
                 }
 
@@ -2497,9 +2990,7 @@ impl AgentInstance {
                     parts.join("\n\n---\n\n")
                 }
             }
-            PostExecuteAction::None => {
-                self.execute_regular_tool(tc).await
-            }
+            PostExecuteAction::None => self.execute_regular_tool(tc).await,
         }
     }
 
@@ -2508,8 +2999,13 @@ impl AgentInstance {
         // Planning phase: block write operations
         if self.execution_phase == ExecutionPhase::Planning {
             let write_tools = [
-                "write_file", "edit", "append_file", "delete_file",
-                "delete_directory", "create_directory", "run_terminal_command",
+                "write_file",
+                "edit",
+                "append_file",
+                "delete_file",
+                "delete_directory",
+                "create_directory",
+                "run_terminal_command",
             ];
             if write_tools.contains(&tc.name.as_str()) {
                 return format!(
@@ -2529,18 +3025,23 @@ impl AgentInstance {
         };
 
         // 记录本次调用
-        self.recent_tool_calls.push_back((tc.name.clone(), args_hash));
+        self.recent_tool_calls
+            .push_back((tc.name.clone(), args_hash));
         if self.recent_tool_calls.len() > 3 {
             self.recent_tool_calls.pop_front();
         }
 
         // 检测连续 3 次相同工具调用
         if self.recent_tool_calls.len() == 3 {
-            let all_same = self.recent_tool_calls.iter().all(|(name, hash)| {
-                name == &tc.name && *hash == args_hash
-            });
+            let all_same = self
+                .recent_tool_calls
+                .iter()
+                .all(|(name, hash)| name == &tc.name && *hash == args_hash);
             if all_same {
-                log::warn!("Deadlock detected: tool '{}' called 3 times with same args", tc.name);
+                log::warn!(
+                    "Deadlock detected: tool '{}' called 3 times with same args",
+                    tc.name
+                );
                 self.emit_log("warn", &format!(
                     "[DEADLOCK] Tool '{}' called 3 times with identical arguments. You seem to be stuck in a loop.",
                     tc.name
@@ -2554,7 +3055,10 @@ impl AgentInstance {
         }
 
         // Use executor's execute() which includes timeout protection
-        let result = self.executor.execute(&tc.name, tc.arguments.clone(), &self.tool_ctx).await;
+        let result = self
+            .executor
+            .execute(&tc.name, tc.arguments.clone(), &self.tool_ctx)
+            .await;
 
         // Skip retry for timeout and not-found errors
         if result.starts_with("[TIMEOUT]") || result.starts_with("[TOOL_NOT_FOUND]") {
@@ -2562,20 +3066,35 @@ impl AgentInstance {
         }
 
         // 错误分类：区分可重试和不可重试错误
-        if result.starts_with("Error:") || result.starts_with("[SANDBOX_BLOCKED]") || result.starts_with("[PERMISSION_DENIED]") {
+        if result.starts_with("Error:")
+            || result.starts_with("[SANDBOX_BLOCKED]")
+            || result.starts_with("[PERMISSION_DENIED]")
+        {
             let err_msg = result.lines().next().unwrap_or("").to_string();
 
             // 不可重试错误：沙箱拦截、权限拒绝
-            if result.starts_with("[SANDBOX_BLOCKED]") || result.starts_with("[PERMISSION_DENIED]") {
-                log::warn!("Tool '{}' failed with non-retryable error: {}", tc.name, err_msg);
+            if result.starts_with("[SANDBOX_BLOCKED]") || result.starts_with("[PERMISSION_DENIED]")
+            {
+                log::warn!(
+                    "Tool '{}' failed with non-retryable error: {}",
+                    tc.name,
+                    err_msg
+                );
                 return result;
             }
 
             // 可重试错误：其他执行错误
             log::warn!("Tool '{}' failed on first attempt: {}", tc.name, err_msg);
             self.emit_tool_retry(&tc.name, 1, &err_msg);
-            let retry = self.executor.execute(&tc.name, tc.arguments.clone(), &self.tool_ctx).await;
-            if retry.starts_with("Error:") || retry.starts_with("[SANDBOX_BLOCKED]") || retry.starts_with("[PERMISSION_DENIED]") || retry.starts_with("[TIMEOUT]") {
+            let retry = self
+                .executor
+                .execute(&tc.name, tc.arguments.clone(), &self.tool_ctx)
+                .await;
+            if retry.starts_with("Error:")
+                || retry.starts_with("[SANDBOX_BLOCKED]")
+                || retry.starts_with("[PERMISSION_DENIED]")
+                || retry.starts_with("[TIMEOUT]")
+            {
                 format!("[RETRY_FAILED] {}", retry)
             } else {
                 format!("[RETRY_SUCCESS] {}", retry)
@@ -2646,7 +3165,14 @@ impl AgentInstance {
         );
     }
 
-    fn emit_status(&self, status: &str, iteration: u32, total_iterations: u32, estimated_tokens: u32, elapsed_ms: u64) {
+    fn emit_status(
+        &self,
+        status: &str,
+        iteration: u32,
+        total_iterations: u32,
+        estimated_tokens: u32,
+        elapsed_ms: u64,
+    ) {
         let _ = self.app.emit(
             "chat-event",
             ChatEvent::AgentStatus {
@@ -2787,7 +3313,8 @@ impl AgentInstance {
     /// Detect dominant programming languages in the project by scanning file extensions.
     /// Returns language-specific tips string to append to the system prompt.
     fn detect_project_languages(project_path: &str) -> String {
-        let mut lang_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut lang_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
         let pp = std::path::Path::new(project_path);
 
         // Walk project directory (limit depth and count to avoid I/O storms)
@@ -2795,32 +3322,34 @@ impl AgentInstance {
             let mut count = 0;
             for entry in entries.flatten().take(200) {
                 let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                        let lang = match ext {
-                            "rs" => "rust",
-                            "ts" | "tsx" => "typescript",
-                            "js" | "jsx" => "javascript",
-                            "py" => "python",
-                            "go" => "go",
-                            "java" => "java",
-                            "cpp" | "cc" | "cxx" => "cpp",
-                            "c" => "c",
-                            "swift" => "swift",
-                            "kt" => "kotlin",
-                            "vue" => "vue",
-                            "svelte" => "svelte",
-                            "css" | "scss" | "less" => "css",
-                            "html" | "htm" => "html",
-                            _ => continue,
-                        };
-                        *lang_counts.entry(lang).or_default() += 1;
-                        count += 1;
-                        // Recurse into subdirectories (shallow)
-                        // For now just scan top-level; deep scan is done by RAG indexer
-                    }
+                if path.is_file()
+                    && let Some(ext) = path.extension().and_then(|e| e.to_str())
+                {
+                    let lang = match ext {
+                        "rs" => "rust",
+                        "ts" | "tsx" => "typescript",
+                        "js" | "jsx" => "javascript",
+                        "py" => "python",
+                        "go" => "go",
+                        "java" => "java",
+                        "cpp" | "cc" | "cxx" => "cpp",
+                        "c" => "c",
+                        "swift" => "swift",
+                        "kt" => "kotlin",
+                        "vue" => "vue",
+                        "svelte" => "svelte",
+                        "css" | "scss" | "less" => "css",
+                        "html" | "htm" => "html",
+                        _ => continue,
+                    };
+                    *lang_counts.entry(lang).or_default() += 1;
+                    count += 1;
+                    // Recurse into subdirectories (shallow)
+                    // For now just scan top-level; deep scan is done by RAG indexer
                 }
-                if count >= 200 { break; }
+                if count >= 200 {
+                    break;
+                }
             }
         }
 
@@ -2830,7 +3359,7 @@ impl AgentInstance {
 
         // Get top 2 languages
         let mut sorted: Vec<(&str, usize)> = lang_counts.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
         let top: Vec<&str> = sorted.iter().take(2).map(|(l, _)| *l).collect();
 
         let mut tips = String::new();
@@ -2848,7 +3377,7 @@ impl AgentInstance {
         }
 
         if !tips.is_empty() {
-            tips.push_str("\n");
+            tips.push('\n');
         }
         tips
     }
@@ -2865,14 +3394,14 @@ impl AgentInstance {
         // Inject PROJECT_RULES.md from project root
         if let Some(ref pp) = self.tool_ctx.project_path {
             let rules_path = std::path::Path::new(pp).join("PROJECT_RULES.md");
-            if rules_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&rules_path) {
-                    let trimmed = content.trim();
-                    if !trimmed.is_empty() {
-                        prompt.push_str("\n\n## Project Rules\n\n");
-                        prompt.push_str(trimmed);
-                        prompt.push_str("\n\n---\nFollow the above project rules strictly.\n");
-                    }
+            if rules_path.exists()
+                && let Ok(content) = std::fs::read_to_string(&rules_path)
+            {
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    prompt.push_str("\n\n## Project Rules\n\n");
+                    prompt.push_str(trimmed);
+                    prompt.push_str("\n\n---\nFollow the above project rules strictly.\n");
                 }
             }
 
@@ -2894,27 +3423,30 @@ impl AgentInstance {
         }
 
         // Inject cross-session failure lessons (learned error patterns)
-        if let Some(ref pp) = self.tool_ctx.project_path {
-            if let Ok(dir) = self.app.path().app_config_dir() {
-                let store = crate::agent::failure_lessons::FailureLessonsStore::load(dir.join("failure_lessons.json"));
-                let lessons_ctx = store.format_for_prompt(pp);
-                if !lessons_ctx.is_empty() {
-                    prompt.push_str("\n\n## Project Failure Lessons\n\n");
-                    prompt.push_str(&lessons_ctx);
-                }
+        if let Some(ref pp) = self.tool_ctx.project_path
+            && let Ok(dir) = self.app.path().app_config_dir()
+        {
+            let store = crate::agent::failure_lessons::FailureLessonsStore::load(
+                dir.join("failure_lessons.json"),
+            );
+            let lessons_ctx = store.format_for_prompt(pp);
+            if !lessons_ctx.is_empty() {
+                prompt.push_str("\n\n## Project Failure Lessons\n\n");
+                prompt.push_str(&lessons_ctx);
             }
         }
 
         // Inject user preferences context (editing patterns, tool stats)
-        if let Some(mem_state) = self.app.try_state::<std::sync::Arc<tokio::sync::RwLock<crate::memory::MemoryManager>>>() {
-            if let Ok(mgr) = mem_state.inner().try_read() {
-                if let Ok(prefs) = mgr.preferences.lock() {
-                    let prefs_ctx = prefs.to_context_summary();
-                    if !prefs_ctx.is_empty() {
-                        prompt.push_str("\n\n");
-                        prompt.push_str(&prefs_ctx);
-                    }
-                }
+        if let Some(mem_state) = self
+            .app
+            .try_state::<std::sync::Arc<tokio::sync::RwLock<crate::memory::MemoryManager>>>()
+            && let Ok(mgr) = mem_state.inner().try_read()
+            && let Ok(prefs) = mgr.preferences.lock()
+        {
+            let prefs_ctx = prefs.to_context_summary();
+            if !prefs_ctx.is_empty() {
+                prompt.push_str("\n\n");
+                prompt.push_str(&prefs_ctx);
             }
         }
 
@@ -2923,7 +3455,9 @@ impl AgentInstance {
             if !trimmed.is_empty() {
                 prompt.push_str("\n\n## Custom Instructions\n\n");
                 prompt.push_str(trimmed);
-                prompt.push_str("\n\n---\nFollow the above custom instructions as highest priority.\n");
+                prompt.push_str(
+                    "\n\n---\nFollow the above custom instructions as highest priority.\n",
+                );
             }
         }
 
@@ -2941,13 +3475,17 @@ impl AgentInstance {
             prompt.push_str("  3 focused questions in a single call, each with concrete options\n");
             prompt.push_str("- Do NOT ask questions you can answer yourself: verify assumptions by reading the codebase \n");
             prompt.push_str("  with read-only tools first. Only ask when the answer is genuinely unknowable from code\n");
-            prompt.push_str("- After the user answers, incorporate the answers into the final plan\n");
+            prompt.push_str(
+                "- After the user answers, incorporate the answers into the final plan\n",
+            );
         } else if self.execution_phase == ExecutionPhase::Executing {
             prompt.push_str("\n\n## Executing Phase\n\n");
             prompt.push_str("You are in EXECUTING phase. Follow the plan and implement changes using the available tools.\n");
             prompt.push_str("- Read each target file before editing it.\n");
             prompt.push_str("- After completing changes, verify them: run get_diagnostics on modified files and, where applicable, run the build/test command via run_terminal_command.\n");
-            prompt.push_str("- Fix any errors surfaced by verification before declaring the task complete.\n");
+            prompt.push_str(
+                "- Fix any errors surfaced by verification before declaring the task complete.\n",
+            );
         }
 
         prompt
@@ -2958,7 +3496,10 @@ impl AgentInstance {
         let resolved = utils::resolve_path(self.tool_ctx.project_path.as_deref(), file_path);
         let key = resolved.to_string_lossy().to_string();
 
-        let snapshots = self.hook_context.file_snapshots.lock()
+        let snapshots = self
+            .hook_context
+            .file_snapshots
+            .lock()
             .unwrap_or_else(|e| e.into_inner());
         match snapshots.get(&key) {
             Some(original_content) => {
@@ -2985,30 +3526,44 @@ impl AgentInstance {
                 self.emit_log("info", &format!("Restored file: {}", file_path));
                 Ok(format!("File '{}' restored to original state", file_path))
             }
-            None => {
-                Err(format!("No snapshot found for file: {}", file_path))
-            }
+            None => Err(format!("No snapshot found for file: {}", file_path)),
         }
     }
 
     /// 计算文件修改的 diff 并发射 EditDiff 事件
     fn emit_edit_diff(&self) {
         // Read snapshots from hook context
-        let snapshots_guard = self.hook_context.file_snapshots.lock()
+        let snapshots_guard = self
+            .hook_context
+            .file_snapshots
+            .lock()
             .unwrap_or_else(|e| e.into_inner());
-        log::info!("[emit_edit_diff] snapshots count: {}", snapshots_guard.len());
-        if snapshots_guard.is_empty() { return; }
+        log::info!(
+            "[emit_edit_diff] snapshots count: {}",
+            snapshots_guard.len()
+        );
+        if snapshots_guard.is_empty() {
+            return;
+        }
 
         // Save snapshots to global state for accept/reject
-        if let Some(snapshots_state) = self.app.try_state::<crate::commands::project::FileSnapshots>() {
-            crate::commands::project::save_snapshots(snapshots_guard.clone(), snapshots_state.inner());
+        if let Some(snapshots_state) = self
+            .app
+            .try_state::<crate::commands::project::FileSnapshots>()
+        {
+            crate::commands::project::save_snapshots(
+                snapshots_guard.clone(),
+                snapshots_state.inner(),
+            );
         }
 
         let mut changes: Vec<FileChange> = Vec::new();
 
         for (path, original) in snapshots_guard.iter() {
             let current = std::fs::read_to_string(path).unwrap_or_default();
-            if original == &current { continue; } // 无变化
+            if original == &current {
+                continue;
+            } // 无变化
 
             let hunks = compute_diff(original, &current);
             if !hunks.is_empty() {
@@ -3033,47 +3588,61 @@ impl AgentInstance {
     }
 
     fn approve_plan(&mut self) {
-
-        self.execution_phase  = ExecutionPhase::Executing;
+        self.execution_phase = ExecutionPhase::Executing;
         //step 2
         if let Some(ref plan_text) = self.plan_text {
-            self.messages.push(llm::ChatMessage{
+            self.messages.push(llm::ChatMessage {
                 role: "system".into(),
-                content: format!("[Plan Approved]\n\nExecute the following plan step by step:\n\n{}",
-                plan_text),
-                images:None,
+                content: format!(
+                    "[Plan Approved]\n\nExecute the following plan step by step:\n\n{}",
+                    plan_text
+                ),
+                images: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
         }
-        
+
         // step 3 发射to approved the  plan
         let _ = self.app.emit(
             "chat-event",
-            ChatEvent::PlanApproved  { plan: PlanApproved { 
-                session_id: self.session_id.clone(),
-                agent_id: Some(self.agent_id.clone())
-            } }
+            ChatEvent::PlanApproved {
+                plan: PlanApproved {
+                    session_id: self.session_id.clone(),
+                    agent_id: Some(self.agent_id.clone()),
+                },
+            },
         );
 
-        let elapsed = self.started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
-        self.emit_status("Plan approved — executing...", 0, self.max_iterations as u32, self.total_tokens_est as u32, elapsed);
+        let elapsed = self
+            .started_at
+            .map(|s| s.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        self.emit_status(
+            "Plan approved — executing...",
+            0,
+            self.max_iterations as u32,
+            self.total_tokens_est as u32,
+            elapsed,
+        );
     }
-    
-    fn reject_plan(&mut self, reason :&str) {
 
+    fn reject_plan(&mut self, reason: &str) {
         //step1
-        if let Some(_) = self.plan_text {
+        if self.plan_text.is_some() {
             let feedback = if reason.is_empty() {
                 "[Plan Rejected]\n\nThe plan was rejected. Please reconsider and produce a new plan.".to_string()
             } else {
-                format!("[Plan Rejected]\n\nThe plan was rejected. Feedback: {}", reason)
+                format!(
+                    "[Plan Rejected]\n\nThe plan was rejected. Feedback: {}",
+                    reason
+                )
             };
 
-            self.messages.push(llm::ChatMessage{
+            self.messages.push(llm::ChatMessage {
                 role: "system".into(),
                 content: feedback,
-                images:None,
+                images: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
@@ -3082,39 +3651,36 @@ impl AgentInstance {
         self.plan_steps.clear();
         self.affected_files.clear();
 
-
         let _ = self.app.emit(
             "chat-event",
-            ChatEvent::PlanRejected { plan: PlanRejected { 
-                session_id: self.session_id.clone(),
-                agent_id: Some(self.agent_id.clone()),
-                reason: Some(reason.to_string())
-            } }
+            ChatEvent::PlanRejected {
+                plan: PlanRejected {
+                    session_id: self.session_id.clone(),
+                    agent_id: Some(self.agent_id.clone()),
+                    reason: Some(reason.to_string()),
+                },
+            },
         );
-                self.emit_log("info", "Plan rejected"); 
+        self.emit_log("info", "Plan rejected");
     }
-    
-    
+
     fn skip_plan(&mut self) {
-        self.emit_log("info", "Plan skipped"); 
+        self.emit_log("info", "Plan skipped");
         self.execution_phase = ExecutionPhase::Executing;
         if let Some(ref plan_text) = self.plan_text {
-            self.messages.push(llm::ChatMessage{
+            self.messages.push(llm::ChatMessage {
                 role: "system".into(),
-                content: format!("[Plan Skipped]\n\nPlan: {}",
-                            plan_text),
-                images:None,
+                content: format!("[Plan Skipped]\n\nPlan: {}", plan_text),
+                images: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
         }
 
-        self.plan_text=None;
+        self.plan_text = None;
         self.plan_steps.clear();
         self.affected_files.clear();
     }
-
-
 }
 
 // ── Diff 算法 ──
@@ -3190,7 +3756,9 @@ fn compute_diff(original: &str, new_text: &str) -> Vec<DiffHunk> {
 fn lcs_matrix(old: &[&str], new: &[&str]) -> Vec<(usize, usize)> {
     let m = old.len();
     let n = new.len();
-    if m == 0 || n == 0 { return vec![]; }
+    if m == 0 || n == 0 {
+        return vec![];
+    }
 
     let mut dp = vec![vec![0u32; n + 1]; m + 1];
     for i in 1..=m {
@@ -3223,6 +3791,7 @@ fn lcs_matrix(old: &[&str], new: &[&str]) -> Vec<(usize, usize)> {
 
 // ── 兼容旧 API ──
 
+#[allow(clippy::too_many_arguments)] // legacy compatibility wrapper — signature must stay stable
 pub async fn run_agent(
     app: &tauri::AppHandle,
     session_id: &str,
@@ -3253,28 +3822,28 @@ pub async fn run_agent(
         memory_context,
     );
     agent.plan_mode = plan_mode;
-    agent.execution_phase = if plan_mode { ExecutionPhase::Planning } else { ExecutionPhase::Executing };
+    agent.execution_phase = if plan_mode {
+        ExecutionPhase::Planning
+    } else {
+        ExecutionPhase::Executing
+    };
     agent.run().await
 }
 
-fn try_extract_plan(text:&str) ->Option<(String, Vec<PlanStep>, Vec<String>)> {
+fn try_extract_plan(text: &str) -> Option<(String, Vec<PlanStep>, Vec<String>)> {
     let start = text.find("```json")?;
     let json_start = start + "```json".len();
     let json_start = text[json_start..]
-                            .find("\n")
-                            .map(|i| json_start +i+1)
-                            .unwrap_or(json_start);
-    let json_end = text[json_start..]
-                        .find("```")?;
-    let json_str= &text[json_start..json_start + json_end];
+        .find("\n")
+        .map(|i| json_start + i + 1)
+        .unwrap_or(json_start);
+    let json_end = text[json_start..].find("```")?;
+    let json_str = &text[json_start..json_start + json_end];
 
-    let plan :Plan = serde_json::from_str(json_str).ok()?;
+    let plan: Plan = serde_json::from_str(json_str).ok()?;
 
     Some((plan.summary, plan.steps, plan.affected_files))
-    
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -3385,21 +3954,39 @@ mod tests {
     fn test_is_tool_failure() {
         // Failure indicators (prefix-based, matching execute_regular_tool protocol)
         assert!(AgentInstance::is_tool_failure("Error: file not found"));
-        assert!(AgentInstance::is_tool_failure("Error: Command blocked for safety"));
-        assert!(AgentInstance::is_tool_failure("[TIMEOUT] Command timed out"));
-        assert!(AgentInstance::is_tool_failure("[TOOL_NOT_FOUND] Unknown tool"));
-        assert!(AgentInstance::is_tool_failure("[SANDBOX_BLOCKED] Dangerous command"));
-        assert!(AgentInstance::is_tool_failure("[PERMISSION_DENIED] Access denied"));
-        assert!(AgentInstance::is_tool_failure("[RETRY_FAILED] All retries exhausted"));
+        assert!(AgentInstance::is_tool_failure(
+            "Error: Command blocked for safety"
+        ));
+        assert!(AgentInstance::is_tool_failure(
+            "[TIMEOUT] Command timed out"
+        ));
+        assert!(AgentInstance::is_tool_failure(
+            "[TOOL_NOT_FOUND] Unknown tool"
+        ));
+        assert!(AgentInstance::is_tool_failure(
+            "[SANDBOX_BLOCKED] Dangerous command"
+        ));
+        assert!(AgentInstance::is_tool_failure(
+            "[PERMISSION_DENIED] Access denied"
+        ));
+        assert!(AgentInstance::is_tool_failure(
+            "[RETRY_FAILED] All retries exhausted"
+        ));
 
         // Success indicators — content that contains "error" but is NOT a failure
-        assert!(!AgentInstance::is_tool_failure("File content with error variable"));
+        assert!(!AgentInstance::is_tool_failure(
+            "File content with error variable"
+        ));
         assert!(!AgentInstance::is_tool_failure("Successfully wrote file"));
         assert!(!AgentInstance::is_tool_failure("File created"));
         assert!(!AgentInstance::is_tool_failure("OK"));
         assert!(!AgentInstance::is_tool_failure("Completed in 42ms"));
-        assert!(!AgentInstance::is_tool_failure("Directory listing for src/"));
-        assert!(!AgentInstance::is_tool_failure("Grep results: 5 matches for 'error'"));
+        assert!(!AgentInstance::is_tool_failure(
+            "Directory listing for src/"
+        ));
+        assert!(!AgentInstance::is_tool_failure(
+            "Grep results: 5 matches for 'error'"
+        ));
     }
 
     // ── Task 7: Per-tool failure tracking ──
@@ -3435,7 +4022,7 @@ mod tests {
     /// LoopDetector detects identical failing grep calls (threshold 5)
     #[test]
     fn test_loop_detector_same_failure_repeat_agent() {
-        use crate::agent::loop_detector::{LoopDetector, LoopDetectionConfig, LoopVerdict};
+        use crate::agent::loop_detector::{LoopDetectionConfig, LoopDetector, LoopVerdict};
         let mut detector = LoopDetector::new(LoopDetectionConfig {
             no_progress_threshold: 3,
             ping_pong_cycles: 2,
@@ -3482,7 +4069,7 @@ mod tests {
         let result = rt.block_on(crate::agent::context::compact_if_needed(
             &messages,
             "You are helpful",
-            100_000,  // huge budget
+            100_000, // huge budget
             &crate::config::LlmProvider::OpenAI,
             "fake-key",
             Some("http://localhost:9999"),
@@ -3501,7 +4088,7 @@ mod tests {
         // Add old messages (should be trimmed)
         for i in 0..8 {
             messages.push(crate::llm::ChatMessage {
-                role: format!("assistant"),
+                role: "assistant".to_string(),
                 content: format!("Old message {}", i),
                 images: None,
                 tool_calls: None,
@@ -3545,7 +4132,7 @@ mod tests {
         let result = rt.block_on(crate::agent::context::compact_if_needed(
             &messages,
             "You are helpful",
-            40,  // tiny budget forces trimming
+            40, // tiny budget forces trimming
             &crate::config::LlmProvider::OpenAI,
             "fake-key",
             Some("http://localhost:9999"),
@@ -3559,8 +4146,10 @@ mod tests {
                 let has_tool_call = compacted.iter().any(|m| m.tool_calls.is_some());
                 let has_tool_result = compacted.iter().any(|m| m.tool_call_id.is_some());
                 // Both or neither should be present
-                assert_eq!(has_tool_call, has_tool_result,
-                    "tool_call and tool_result should be preserved together");
+                assert_eq!(
+                    has_tool_call, has_tool_result,
+                    "tool_call and tool_result should be preserved together"
+                );
             }
             Err(_) => {
                 // Compaction via LLM API may fail (no server running) — that's fine
@@ -3590,7 +4179,11 @@ mod tests {
         });
 
         let result = outer.await.unwrap();
-        assert!(result.contains("panic caught"), "should catch panic: {}", result);
+        assert!(
+            result.contains("panic caught"),
+            "should catch panic: {}",
+            result
+        );
         assert!(!result.contains("ok"), "should not return ok");
     }
 
@@ -3620,10 +4213,8 @@ mod tests {
         let provider = LlmProvider::DeepSeek;
         let is_ollama = matches!(provider, LlmProvider::Ollama);
 
-        if api_key.trim().is_empty() && !is_ollama {
-            // This should fail-fast in production code
-            assert!(true, "Empty API key should trigger error");
-        }
+        let should_fail = api_key.trim().is_empty() && !is_ollama;
+        assert!(should_fail, "Empty API key should trigger error");
     }
 
     /// Verifies that Ollama provider does NOT require API key.
@@ -3645,9 +4236,7 @@ mod tests {
         let agent_id = "nonexistent_agent";
         let agent_def: Option<crate::agent::definition::AgentDefinition> = None;
 
-        let should_fail = !agent_id.is_empty()
-            && agent_id != "orchestrator"
-            && agent_def.is_none();
+        let should_fail = !agent_id.is_empty() && agent_id != "orchestrator" && agent_def.is_none();
 
         assert!(should_fail, "missing agent def should be detected");
     }
@@ -3658,11 +4247,12 @@ mod tests {
         let agent_id = "orchestrator";
         let agent_def: Option<crate::agent::definition::AgentDefinition> = None;
 
-        let should_fail = !agent_id.is_empty()
-            && agent_id != "orchestrator"
-            && agent_def.is_none();
+        let should_fail = !agent_id.is_empty() && agent_id != "orchestrator" && agent_def.is_none();
 
-        assert!(!should_fail, "orchestrator should pass even without agent_def");
+        assert!(
+            !should_fail,
+            "orchestrator should pass even without agent_def"
+        );
     }
 
     // ── Model Routing Complexity Tests ──────────────────────────────────────
@@ -3709,14 +4299,26 @@ mod tests {
     fn test_model_context_window_deepseek() {
         assert_eq!(crate::config::model_context_window("deepseek-chat"), 64_000);
         assert_eq!(crate::config::model_context_window("deepseek-v4"), 128_000);
-        assert_eq!(crate::config::model_context_window("deepseek-v3-pro"), 128_000);
+        assert_eq!(
+            crate::config::model_context_window("deepseek-v3-pro"),
+            128_000
+        );
     }
 
     #[test]
     fn test_model_context_window_claude() {
-        assert_eq!(crate::config::model_context_window("claude-3.5-sonnet"), 200_000);
-        assert_eq!(crate::config::model_context_window("claude-3.5-haiku"), 200_000);
-        assert_eq!(crate::config::model_context_window("claude-3-opus"), 200_000);
+        assert_eq!(
+            crate::config::model_context_window("claude-3.5-sonnet"),
+            200_000
+        );
+        assert_eq!(
+            crate::config::model_context_window("claude-3.5-haiku"),
+            200_000
+        );
+        assert_eq!(
+            crate::config::model_context_window("claude-3-opus"),
+            200_000
+        );
     }
 
     #[test]

@@ -68,12 +68,12 @@ impl<'de> Deserialize<'de> for LlvmCovSegment {
                 let line: u64 = seq
                     .next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(0, &"segment array"))?;
-                let _col: u64 = seq.next_element()?.ok_or_else(|| {
-                    serde::de::Error::invalid_length(1, &"segment array")
-                })?;
-                let count: u64 = seq.next_element()?.ok_or_else(|| {
-                    serde::de::Error::invalid_length(2, &"segment array")
-                })?;
+                let _col: u64 = seq
+                    .next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &"segment array"))?;
+                let count: u64 = seq
+                    .next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &"segment array"))?;
                 // 消费剩余元素（hasCount / isRegionEntry / isGapRegion），
                 // serde 在 visit_seq 返回后会检查数组是否已耗尽，否则报 trailing characters
                 while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
@@ -106,14 +106,6 @@ impl FileCoverage {
     fn uncovered_lines(&self) -> u64 {
         self.total_lines - self.covered_lines
     }
-
-    fn pct_covered(&self) -> f64 {
-        if self.total_lines == 0 {
-            0.0
-        } else {
-            self.covered_lines as f64 / self.total_lines as f64 * 100.0
-        }
-    }
 }
 
 impl CoverageCache {
@@ -130,11 +122,11 @@ impl CoverageCache {
 fn merge_ranges(lines: &[u64]) -> Vec<(u64, u64)> {
     let mut ranges: Vec<(u64, u64)> = Vec::new();
     for &line in lines {
-        if let Some(last) = ranges.last_mut() {
-            if line == last.1 + 1 {
-                last.1 = line;
-                continue;
-            }
+        if let Some(last) = ranges.last_mut()
+            && line == last.1 + 1
+        {
+            last.1 = line;
+            continue;
         }
         ranges.push((line, line));
     }
@@ -157,15 +149,12 @@ fn parse_llvm_cov_output(text: &str) -> Result<LlvmCovReport, serde_json::Error>
                 }
                 offset += line.len();
             }
-            let json_start = text[offset..]
-                .find('{')
-                .ok_or_else(|| {
-                    serde_json::Error::io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "no JSON object found in output",
-                    ))
-                })?
-                + offset;
+            let json_start = text[offset..].find('{').ok_or_else(|| {
+                serde_json::Error::io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "no JSON object found in output",
+                ))
+            })? + offset;
             serde_json::from_str::<LlvmCovReport>(&text[json_start..])
         }
     }
@@ -251,9 +240,15 @@ fn filter_and_sort(
 }
 
 fn format_ranges(ranges: &[(u64, u64)], cap: usize) -> String {
-    let mut parts: Vec<String> = ranges
+    let parts: Vec<String> = ranges
         .iter()
-        .map(|(s, e)| if s == e { format!("{}", s) } else { format!("{}-{}", s, e) })
+        .map(|(s, e)| {
+            if s == e {
+                format!("{}", s)
+            } else {
+                format!("{}-{}", s, e)
+            }
+        })
         .collect();
     let mut out = String::new();
     for (i, part) in parts.iter().enumerate() {
@@ -292,14 +287,19 @@ fn format_report(
     if rows.is_empty() {
         out.push_str(&format!(
             "No files match the filter (path={:?}, min_lines={})",
-            path_filter.unwrap_or("any"), min_lines
+            path_filter.unwrap_or("any"),
+            min_lines
         ));
         return out;
     }
 
     out.push_str(&format!("Top {} files by uncovered lines:\n", rows.len()));
     for (i, (name, total, uncovered, ranges)) in rows.iter().enumerate() {
-        let pct = if *total == 0 { 0.0 } else { *uncovered as f64 / *total as f64 * 100.0 };
+        let pct = if *total == 0 {
+            0.0
+        } else {
+            *uncovered as f64 / *total as f64 * 100.0
+        };
         out.push_str(&format!(
             "{}. {} — {} uncovered ({} of {} lines, {:.0}% of file): {}\n",
             i + 1,
@@ -363,7 +363,7 @@ impl Tool for CoverageTool {
                         return format!(
                             "Error: no cached coverage report at {} — run coverage {{ action: 'scan' }} first",
                             path.display()
-                        )
+                        );
                     }
                 };
                 let cache = match serde_json::from_str::<CoverageCache>(&content) {
@@ -373,7 +373,7 @@ impl Tool for CoverageTool {
                             "Error: cached report at {} is corrupt ({}). Rescan with coverage {{ action: 'scan', force: true }}.",
                             path.display(),
                             e
-                        )
+                        );
                     }
                 };
                 format_report(
@@ -389,21 +389,22 @@ impl Tool for CoverageTool {
                 // scan: reuse an existing cache unless force=true, so repeated
                 // calls don't recompile the whole crate with instrumentation.
                 let force = args["force"].as_bool().unwrap_or(false);
-                if !force {
-                    if let Some(path) = cache_path(ctx) {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            if let Ok(cache) = serde_json::from_str::<CoverageCache>(&content) {
-                                return format_report(
-                                    &cache,
-                                    &project,
-                                    path_filter,
-                                    limit,
-                                    min_lines,
-                                    &format!(" (cached, scanned at {}; pass force:true to rescan)", cache.scanned_at),
-                                );
-                            }
-                        }
-                    }
+                if !force
+                    && let Some(path) = cache_path(ctx)
+                    && let Ok(content) = std::fs::read_to_string(&path)
+                    && let Ok(cache) = serde_json::from_str::<CoverageCache>(&content)
+                {
+                    return format_report(
+                        &cache,
+                        &project,
+                        path_filter,
+                        limit,
+                        min_lines,
+                        &format!(
+                            " (cached, scanned at {}; pass force:true to rescan)",
+                            cache.scanned_at
+                        ),
+                    );
                 }
 
                 let command = "cargo llvm-cov --json".to_string();
@@ -415,7 +416,7 @@ impl Tool for CoverageTool {
                              If llvm-tools is missing: rustup component add llvm-tools-preview \
                              (slow networks: $env:RUSTUP_DIST_SERVER=\"https://rsproxy.cn\")",
                             command, e
-                        )
+                        );
                     }
                 };
 
@@ -427,7 +428,10 @@ impl Tool for CoverageTool {
                             output.exit_code, e
                         );
                         if !output.stderr.is_empty() {
-                            msg.push_str(&format!("stderr:\n{}", &output.stderr[..output.stderr.len().min(2000)]));
+                            msg.push_str(&format!(
+                                "stderr:\n{}",
+                                &output.stderr[..output.stderr.len().min(2000)]
+                            ));
                         }
                         return msg;
                     }
@@ -465,7 +469,14 @@ impl Tool for CoverageTool {
                         .and_then(|json| std::fs::write(&path, json).ok());
                 }
 
-                format_report(&cache, &project, path_filter, limit, min_lines, " (fresh scan)")
+                format_report(
+                    &cache,
+                    &project,
+                    path_filter,
+                    limit,
+                    min_lines,
+                    " (fresh scan)",
+                )
             }
         }
     }
@@ -486,10 +497,14 @@ mod tests {
         let file = LlvmCovFile {
             filename: "src/foo.rs".to_string(),
             segments: vec![
-                seg(1, 1), seg(2, 1), // covered
-                seg(3, 0), seg(4, 0), // uncovered
-                seg(5, 5),            // covered
-                seg(6, 0), seg(7, 0), seg(8, 0), // uncovered
+                seg(1, 1),
+                seg(2, 1), // covered
+                seg(3, 0),
+                seg(4, 0), // uncovered
+                seg(5, 5), // covered
+                seg(6, 0),
+                seg(7, 0),
+                seg(8, 0), // uncovered
             ],
         };
         let s = summarize_file(&file);
@@ -519,10 +534,14 @@ mod tests {
 
     #[test]
     fn test_is_src_file_filters() {
-        assert!(is_src_file("d:/workspace/NeoCoder/src-tauri/src/agent/hooks.rs"));
+        assert!(is_src_file(
+            "d:/workspace/NeoCoder/src-tauri/src/agent/hooks.rs"
+        ));
         assert!(is_src_file("src/agent/hooks.rs"));
         assert!(!is_src_file("d:/workspace/NeoCoder/target/debug/foo.rs"));
-        assert!(!is_src_file("d:/workspace/NeoCoder/src-tauri/tests/integration.rs"));
+        assert!(!is_src_file(
+            "d:/workspace/NeoCoder/src-tauri/tests/integration.rs"
+        ));
     }
 
     fn sample_cache() -> CoverageCache {
@@ -603,7 +622,7 @@ mod tests {
             eprintln!("skip: no real report found under target/");
             return;
         };
-        let content = std::fs::read_to_string(&path).unwrap();
+        let content = std::fs::read_to_string(path).unwrap();
         let report: LlvmCovReport =
             parse_llvm_cov_output(&content).expect("real report should parse");
         let mut files = 0;
@@ -663,6 +682,16 @@ mod tests {
         let out = manifest.join("../target/coverage_report.json");
         std::fs::write(&out, serde_json::to_string_pretty(&cache).unwrap()).unwrap();
         eprintln!("cache written: {}", out.display());
-        eprintln!("{}", format_report(&cache, manifest.parent().unwrap().to_str().unwrap(), None, 15, 1, " (regenerated)"));
+        eprintln!(
+            "{}",
+            format_report(
+                &cache,
+                manifest.parent().unwrap().to_str().unwrap(),
+                None,
+                15,
+                1,
+                " (regenerated)"
+            )
+        );
     }
 }

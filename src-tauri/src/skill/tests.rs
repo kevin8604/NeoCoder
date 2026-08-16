@@ -38,7 +38,10 @@ Review this code."#;
 
     let skill = parse_skill(content).unwrap();
     assert_eq!(skill.agent, Some("reviewer".to_string()));
-    assert_eq!(skill.tools, Some(vec!["read_file".to_string(), "grep".to_string()]));
+    assert_eq!(
+        skill.tools,
+        Some(vec!["read_file".to_string(), "grep".to_string()])
+    );
     assert_eq!(skill.template, "Review this code.");
 }
 
@@ -115,7 +118,12 @@ fn test_template_render_empty_vars() {
 fn test_builtin_skills_parse() {
     for (filename, content) in builtin::builtin_skills() {
         let result = parse_skill(content);
-        assert!(result.is_ok(), "Failed to parse built-in skill {}: {:?}", filename, result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to parse built-in skill {}: {:?}",
+            filename,
+            result.err()
+        );
         let skill = result.unwrap();
         assert!(!skill.name.is_empty());
         assert!(!skill.trigger.is_empty());

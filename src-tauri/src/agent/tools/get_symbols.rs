@@ -1,6 +1,6 @@
-use crate::lsp::detect_language;
-use crate::agent::utils::resolve_path;
 use super::{Tool, ToolContext};
+use crate::agent::utils::resolve_path;
+use crate::lsp::detect_language;
 
 pub struct GetSymbols;
 
@@ -15,7 +15,10 @@ impl Tool for GetSymbols {
         let scope = resolve_path(ctx.project_path.as_deref(), raw);
         let filter = args["filter"].as_str().unwrap_or("").to_lowercase();
 
-        if let Err(e) = ctx.sandbox.check_path(&scope, ctx.project_path.as_deref(), false) {
+        if let Err(e) = ctx
+            .sandbox
+            .check_path(&scope, ctx.project_path.as_deref(), false)
+        {
             return format!("Error: Sandbox blocked: {}", e);
         }
 
@@ -31,7 +34,11 @@ impl Tool for GetSymbols {
                         return format!("No symbols found in {}", scope.display());
                     }
                     Err(e) => {
-                        log::debug!("LSP get_symbols failed for {} ({}), falling back to regex", scope.display(), e);
+                        log::debug!(
+                            "LSP get_symbols failed for {} ({}), falling back to regex",
+                            scope.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -42,8 +49,13 @@ impl Tool for GetSymbols {
 }
 
 /// 将 LSP 返回的符号格式化为与正则结果一致的文本
-fn format_lsp_symbols(scope: &std::path::Path, symbols: Vec<crate::lsp::LSPSymbol>, filter: &str) -> String {
-    let mut grouped: std::collections::HashMap<String, Vec<&crate::lsp::LSPSymbol>> = std::collections::HashMap::new();
+fn format_lsp_symbols(
+    scope: &std::path::Path,
+    symbols: Vec<crate::lsp::LSPSymbol>,
+    filter: &str,
+) -> String {
+    let mut grouped: std::collections::HashMap<String, Vec<&crate::lsp::LSPSymbol>> =
+        std::collections::HashMap::new();
     for s in &symbols {
         if !filter.is_empty() && !s.name.to_lowercase().contains(filter) {
             continue;
@@ -75,7 +87,12 @@ fn format_lsp_symbols(scope: &std::path::Path, symbols: Vec<crate::lsp::LSPSymbo
         output.push_str(&format!("\n  {} ({})\n", kind, syms.len()));
         for s in syms {
             // LSP 行号是 0-based，转换为 1-based 展示
-            output.push_str(&format!("  Ln {}: {} [{:?}]\n", s.start_line + 1, s.name, kind));
+            output.push_str(&format!(
+                "  Ln {}: {} [{:?}]\n",
+                s.start_line + 1,
+                s.name,
+                kind
+            ));
         }
     }
     output
@@ -161,7 +178,8 @@ fn regex_symbols(scope: &std::path::Path, filter: &str) -> String {
                 other.retain(|s| s.to_lowercase().contains(filter));
             }
 
-            let total = types.len() + functions.len() + imports.len() + constants.len() + other.len();
+            let total =
+                types.len() + functions.len() + imports.len() + constants.len() + other.len();
             if total == 0 {
                 return format!("No symbols found in {}", scope.display());
             }
@@ -170,23 +188,38 @@ fn regex_symbols(scope: &std::path::Path, filter: &str) -> String {
 
             if !types.is_empty() {
                 output.push_str(&format!("\n  Types ({})\n", types.len()));
-                for s in &types { output.push_str(s); output.push('\n'); }
+                for s in &types {
+                    output.push_str(s);
+                    output.push('\n');
+                }
             }
             if !functions.is_empty() {
                 output.push_str(&format!("\n  Functions ({})\n", functions.len()));
-                for s in &functions { output.push_str(s); output.push('\n'); }
+                for s in &functions {
+                    output.push_str(s);
+                    output.push('\n');
+                }
             }
             if !imports.is_empty() {
                 output.push_str(&format!("\n  Imports/Modules ({})\n", imports.len()));
-                for s in &imports { output.push_str(s); output.push('\n'); }
+                for s in &imports {
+                    output.push_str(s);
+                    output.push('\n');
+                }
             }
             if !constants.is_empty() {
                 output.push_str(&format!("\n  Constants/Vars ({})\n", constants.len()));
-                for s in &constants { output.push_str(s); output.push('\n'); }
+                for s in &constants {
+                    output.push_str(s);
+                    output.push('\n');
+                }
             }
             if !other.is_empty() {
                 output.push_str(&format!("\n  Other ({})\n", other.len()));
-                for s in &other { output.push_str(s); output.push('\n'); }
+                for s in &other {
+                    output.push_str(s);
+                    output.push('\n');
+                }
             }
 
             output

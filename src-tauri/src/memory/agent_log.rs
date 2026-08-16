@@ -30,9 +30,7 @@ pub struct LogEntry {
 #[serde(tag = "type")]
 pub enum LogEntryType {
     /// User sent a message
-    UserMessage {
-        content: String,
-    },
+    UserMessage { content: String },
     /// Assistant produced a response (text or tool calls)
     AssistantMessage {
         content: String,
@@ -57,15 +55,11 @@ pub enum LogEntryType {
         tokens_after: usize,
     },
     /// An error occurred
-    Error {
-        message: String,
-    },
+    Error { message: String },
     /// The agent was cancelled by the user
     Cancelled,
     /// The agent completed successfully
-    Completed {
-        final_text: String,
-    },
+    Completed { final_text: String },
 }
 
 /// Compact representation of a tool call for logging.
@@ -216,9 +210,7 @@ impl AgentLog {
                     });
                 }
                 LogEntryType::ToolResult {
-                    name: _,
-                    result,
-                    ..
+                    name: _, result, ..
                 } => {
                     let call_id = pending_tool_call_ids
                         .pop_front()

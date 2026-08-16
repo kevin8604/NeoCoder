@@ -247,7 +247,11 @@ mod tests {
     fn fallback_summary_multiple_files() {
         let ns = "M\tsrc/main.rs\nA\tsrc/lib.rs\nD\tREADME.md\nM\ttests/t.rs";
         let s = fallback_commit_summary(ns);
-        assert!(s.starts_with("Update 4 files: src/main.rs, src/lib.rs, README.md"), "{}", s);
+        assert!(
+            s.starts_with("Update 4 files: src/main.rs, src/lib.rs, README.md"),
+            "{}",
+            s
+        );
         assert!(s.ends_with("+1 more"), "{}", s);
     }
 

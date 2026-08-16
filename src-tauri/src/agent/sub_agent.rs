@@ -1,8 +1,8 @@
-﻿use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use crate::agent::definition::{find_agent, AgentRegistry};
 use crate::agent::AgentInstance;
+use crate::agent::definition::{AgentRegistry, find_agent};
 use crate::llm;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// 执行一个子 Agent
 /// 所有参数均为 owned 类型，支持 tokio::spawn 并行调度。
@@ -24,15 +24,13 @@ pub async fn run_sub_agent(
     let agent_def = find_agent(&registry, &agent_id);
     let cancelled = Arc::new(AtomicBool::new(false));
 
-    let messages = vec![
-        llm::ChatMessage {
-            role: "user".into(),
-            content: task,
-            images: None,
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    ];
+    let messages = vec![llm::ChatMessage {
+        role: "user".into(),
+        content: task,
+        images: None,
+        tool_calls: None,
+        tool_call_id: None,
+    }];
 
     let mut agent = AgentInstance::new(
         app,
@@ -72,11 +70,24 @@ pub async fn run_sub_agents_parallel(
     project_path: Option<&str>,
 ) -> Vec<String> {
     // ── Dependency-aware execution ──
-    let has_deps = tasks.iter().any(|(_, _, _, deps)| deps.as_ref().map_or(false, |d| !d.is_empty()));
+    let has_deps = tasks
+        .iter()
+        .any(|(_, _, _, deps)| deps.as_ref().is_some_and(|d| !d.is_empty()));
 
     if !has_deps {
         // Fast path: no dependencies, run all in parallel
-        return run_all_parallel(app, session_id, tasks, registry, provider, api_key, base_url, chat_model, project_path).await;
+        return run_all_parallel(
+            app,
+            session_id,
+            tasks,
+            registry,
+            provider,
+            api_key,
+            base_url,
+            chat_model,
+            project_path,
+        )
+        .await;
     }
 
     // Build agent_id → output map for completed agents
@@ -91,8 +102,10 @@ pub async fn run_sub_agents_parallel(
 
         for &idx in &remaining {
             let (_, _, _, ref deps) = tasks[idx];
-            let all_deps_met = deps.as_ref().map_or(true, |deps_list| {
-                deps_list.iter().all(|dep_id| completed.contains_key(dep_id.as_str()))
+            let all_deps_met = deps.as_ref().is_none_or(|deps_list| {
+                deps_list
+                    .iter()
+                    .all(|dep_id| completed.contains_key(dep_id.as_str()))
             });
             if all_deps_met {
                 ready.push(idx);
@@ -102,41 +115,60 @@ pub async fn run_sub_agents_parallel(
         }
 
         if ready.is_empty() {
-            log::warn!("Dependency cycle detected: {} tasks stuck", still_waiting.len());
+            log::warn!(
+                "Dependency cycle detected: {} tasks stuck",
+                still_waiting.len()
+            );
             break;
         }
 
         // Build ready tasks with dependency context injected
-        let mut ready_tasks: Vec<(String, String, Option<String>, Option<Vec<String>>)> = Vec::with_capacity(ready.len());
+        let mut ready_tasks: Vec<(String, String, Option<String>, Option<Vec<String>>)> =
+            Vec::with_capacity(ready.len());
         for &idx in &ready {
             let agent_id = tasks[idx].0.clone();
             let file_path = tasks[idx].2.clone();
             let deps = tasks[idx].3.clone();
             let mut enhanced_task = tasks[idx].1.clone();
-            if let Some(ref dep_list) = deps {
-                if !dep_list.is_empty() {
-                    enhanced_task.push_str("\n\n--- Context from dependencies ---\n");
-                    for dep_id in dep_list {
-                        if let Some(output) = completed.get(dep_id.as_str()) {
-                            // Truncate each dependency output to 2000 chars to avoid context overflow
-                            let truncated = if output.len() > 2000 {
-                                format!("{}... [truncated]", crate::agent::utils::safe_truncate(output, 2000))
-                            } else {
-                                output.clone()
-                            };
-                            enhanced_task.push_str(&format!(
-                                "\n[Result from agent '{}']:\n{}\n", dep_id, truncated
-                            ));
-                        }
+            if let Some(ref dep_list) = deps
+                && !dep_list.is_empty()
+            {
+                enhanced_task.push_str("\n\n--- Context from dependencies ---\n");
+                for dep_id in dep_list {
+                    if let Some(output) = completed.get(dep_id.as_str()) {
+                        // Truncate each dependency output to 2000 chars to avoid context overflow
+                        let truncated = if output.len() > 2000 {
+                            format!(
+                                "{}... [truncated]",
+                                crate::agent::utils::safe_truncate(output, 2000)
+                            )
+                        } else {
+                            output.clone()
+                        };
+                        enhanced_task.push_str(&format!(
+                            "\n[Result from agent '{}']:\n{}\n",
+                            dep_id, truncated
+                        ));
                     }
-                    enhanced_task.push_str("--- End dependency context ---\n");
                 }
+                enhanced_task.push_str("--- End dependency context ---\n");
             }
             ready_tasks.push((agent_id, enhanced_task, file_path, deps));
         }
 
         // Run ready tasks in parallel
-        let level_results = run_all_parallel(app, session_id, &ready_tasks, registry, provider, api_key, base_url, chat_model, project_path).await;
+        let level_results = run_all_parallel(
+            app,
+            session_id,
+            &ready_tasks,
+            registry,
+            provider,
+            api_key,
+            base_url,
+            chat_model,
+            project_path,
+        )
+        .await;
 
         // Store results keyed by agent_id for dependency injection
         for (i, &idx) in ready.iter().enumerate() {
@@ -174,7 +206,9 @@ async fn run_all_parallel(
         if indices.len() > 1 {
             log::warn!(
                 "Parallel dispatch conflict: file '{}' targeted by {} agents (indices {:?})",
-                path, indices.len(), indices
+                path,
+                indices.len(),
+                indices
             );
         }
     }
@@ -182,18 +216,21 @@ async fn run_all_parallel(
     // 单任务直接执行，无需 JoinSet 开销
     if tasks.len() == 1 {
         let (agent_id, task, _fp, _deps) = &tasks[0];
-        return vec![run_sub_agent(
-            app.clone(),
-            session_id.to_string(),
-            task.clone(),
-            agent_id.clone(),
-            registry.clone(),
-            provider.clone(),
-            api_key.to_string(),
-            base_url.map(|s| s.to_string()),
-            chat_model.to_string(),
-            project_path.map(|s| s.to_string()),
-        ).await];
+        return vec![
+            run_sub_agent(
+                app.clone(),
+                session_id.to_string(),
+                task.clone(),
+                agent_id.clone(),
+                registry.clone(),
+                provider.clone(),
+                api_key.to_string(),
+                base_url.map(|s| s.to_string()),
+                chat_model.to_string(),
+                project_path.map(|s| s.to_string()),
+            )
+            .await,
+        ];
     }
 
     // 使用 JoinSet 实现真正的并行执行

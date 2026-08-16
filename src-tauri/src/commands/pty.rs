@@ -13,9 +13,9 @@
 
 use crate::terminal::{detect_shell, spawn_pty};
 use portable_pty::PtySize;
+use std::io::{Read, Write};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::io::{Read, Write};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex as TokioMutex;
 
@@ -29,6 +29,12 @@ pub struct PtyState {
     pub shell_cmd: Arc<Mutex<String>>,
     /// PTY size
     pub size: Arc<TokioMutex<PtySize>>,
+}
+
+impl Default for PtyState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PtyState {
@@ -50,10 +56,7 @@ impl PtyState {
 /// Spawn a new shell process with true PTY support.
 /// Emits "pty-output" for stdout/stderr and "pty-exit" on termination.
 #[tauri::command]
-pub async fn start_terminal(
-    app: AppHandle,
-    state: State<'_, PtyState>,
-) -> Result<(), String> {
+pub async fn start_terminal(app: AppHandle, state: State<'_, PtyState>) -> Result<(), String> {
     // Kill previous terminal if running
     stop_terminal_inner(&state).await;
 
@@ -97,7 +100,7 @@ pub async fn start_terminal(
         let reader_state = app_clone.state::<PtyReader>();
         let mut reader_lock = reader_state.reader.lock().await;
         let mut buf = [0u8; 4096];
-        
+
         loop {
             match reader_lock.read(&mut buf) {
                 Ok(0) => {
@@ -161,12 +164,12 @@ pub async fn write_stdin(
     match app.try_state::<PtyWriter>() {
         Some(writer_state) => {
             let mut writer = writer_state.writer.lock().await;
-            writer.write_all(data.as_bytes()).map_err(|e| {
-                format!("Failed to write to PTY: {}", e)
-            })?;
-            writer.flush().map_err(|e| {
-                format!("Failed to flush PTY: {}", e)
-            })?;
+            writer
+                .write_all(data.as_bytes())
+                .map_err(|e| format!("Failed to write to PTY: {}", e))?;
+            writer
+                .flush()
+                .map_err(|e| format!("Failed to flush PTY: {}", e))?;
             Ok(())
         }
         None => Err("No PTY writer available. Start terminal first.".to_string()),
@@ -187,7 +190,7 @@ async fn stop_terminal_inner(state: &State<'_, PtyState>) {
         let _ = child.kill();
         log::info!("Terminal process killed");
     }
-    
+
     let mut master_lock = state.pty_master.lock().await;
     *master_lock = None;
 }

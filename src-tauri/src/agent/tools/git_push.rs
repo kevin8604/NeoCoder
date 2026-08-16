@@ -42,11 +42,7 @@ impl Tool for GitPush {
 
         cmd.current_dir(work_dir);
 
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            cmd.output(),
-        )
-        .await;
+        let output = tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output()).await;
 
         match output {
             Ok(Ok(out)) => {
@@ -61,10 +57,15 @@ impl Tool for GitPush {
                     } else {
                         stderr.trim().to_string() // git push writes progress to stderr
                     };
-                    format!("Pushed successfully to {}/{}{}",
+                    format!(
+                        "Pushed successfully to {}/{}{}",
                         remote,
                         branch.unwrap_or("current branch"),
-                        if info.is_empty() { String::new() } else { format!("\n{}", info) }
+                        if info.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\n{}", info)
+                        }
                     )
                 }
             }

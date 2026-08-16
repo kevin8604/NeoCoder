@@ -1,4 +1,4 @@
-use crate::agent::tools::{ToolContext, PostExecuteAction, DispatchTask};
+use crate::agent::tools::{DispatchTask, PostExecuteAction, ToolContext};
 
 /// `dispatch_agent` 工具 —— 串行调度一个子 Agent
 pub struct DispatchAgent;
@@ -10,11 +10,13 @@ impl super::Tool for DispatchAgent {
     }
 
     async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> String {
-        let agent_id = args.get("agent_id")
+        let agent_id = args
+            .get("agent_id")
             .and_then(|v| v.as_str())
             .unwrap_or("code_writer")
             .to_string();
-        let task = args.get("task")
+        let task = args
+            .get("task")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -27,18 +29,25 @@ impl super::Tool for DispatchAgent {
     }
 
     fn post_execute_action(&self, args: &serde_json::Value) -> PostExecuteAction {
-        let agent_id = args.get("agent_id")
+        let agent_id = args
+            .get("agent_id")
             .and_then(|v| v.as_str())
             .unwrap_or("code_writer")
             .to_string();
-        let task = args.get("task")
+        let task = args
+            .get("task")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let background = args.get("background")
+        let background = args
+            .get("background")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        PostExecuteAction::DispatchAgent { agent_id, task, background }
+        PostExecuteAction::DispatchAgent {
+            agent_id,
+            task,
+            background,
+        }
     }
 }
 
@@ -52,29 +61,35 @@ impl super::Tool for DispatchAgents {
     }
 
     async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> String {
-        let tasks = args.get("tasks")
+        let tasks = args
+            .get("tasks")
             .and_then(|v| v.as_array())
             .map(|arr| {
-                arr.iter().map(|t| {
-                    let agent_id = t.get("agent_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("code_writer")
-                        .to_string();
-                    let task = t.get("task")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let file_path = t.get("file_path")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let depends_on = t.get("depends_on")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect::<Vec<_>>()
-                        );
-                    (agent_id, task, file_path, depends_on)
-                }).collect::<Vec<_>>()
+                arr.iter()
+                    .map(|t| {
+                        let agent_id = t
+                            .get("agent_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("code_writer")
+                            .to_string();
+                        let task = t
+                            .get("task")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let file_path = t
+                            .get("file_path")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let depends_on =
+                            t.get("depends_on").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect::<Vec<_>>()
+                            });
+                        (agent_id, task, file_path, depends_on)
+                    })
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default();
 
@@ -82,7 +97,8 @@ impl super::Tool for DispatchAgents {
             return "Error: tasks array is required and must not be empty".to_string();
         }
 
-        let result_str = tasks.iter()
+        let result_str = tasks
+            .iter()
             .map(|(id, task, _fp, _deps)| format!("Agent '{}': \"{}\"", id, task))
             .collect::<Vec<_>>()
             .join(", ");
@@ -91,32 +107,45 @@ impl super::Tool for DispatchAgents {
     }
 
     fn post_execute_action(&self, args: &serde_json::Value) -> PostExecuteAction {
-        let tasks = args.get("tasks")
+        let tasks = args
+            .get("tasks")
             .and_then(|v| v.as_array())
             .map(|arr| {
-                arr.iter().map(|t| {
-                    let agent_id = t.get("agent_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("code_writer")
-                        .to_string();
-                    let task = t.get("task")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let file_path = t.get("file_path")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let depends_on = t.get("depends_on")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect::<Vec<_>>()
-                        );
-                    let background = t.get("background")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    DispatchTask { agent_id, task, file_path, depends_on, background }
-                }).collect()
+                arr.iter()
+                    .map(|t| {
+                        let agent_id = t
+                            .get("agent_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("code_writer")
+                            .to_string();
+                        let task = t
+                            .get("task")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let file_path = t
+                            .get("file_path")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let depends_on =
+                            t.get("depends_on").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect::<Vec<_>>()
+                            });
+                        let background = t
+                            .get("background")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        DispatchTask {
+                            agent_id,
+                            task,
+                            file_path,
+                            depends_on,
+                            background,
+                        }
+                    })
+                    .collect()
             })
             .unwrap_or_default();
         PostExecuteAction::DispatchAgents(tasks)

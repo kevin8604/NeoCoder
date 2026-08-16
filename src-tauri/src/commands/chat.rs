@@ -1,18 +1,18 @@
-use tauri::{Emitter, State, Manager};
 use crate::agent;
-use crate::agent::definition::AgentRegistry;
-use crate::agent::QuestionAwaiters;
 use crate::agent::ConfirmAwaiters;
+use crate::agent::PauseControl;
 use crate::agent::PlanAction;
 use crate::agent::PlanApprovalAwaiters;
-use crate::agent::PauseControl;
-use crate::chat::{ChatMode, ChatEvent, ConversationMemory, CHAT_SYSTEM_PROMPT};
+use crate::agent::QuestionAwaiters;
+use crate::agent::definition::AgentRegistry;
+use crate::chat::{CHAT_SYSTEM_PROMPT, ChatEvent, ChatMode, ConversationMemory};
 use crate::config::AppSettings;
 use crate::llm::{self, ChatMessage as LlmMessage, ChatRequestParams};
 use crate::rag::CodeIndexer;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{Emitter, Manager, State};
 use tokio::sync::RwLock;
 
 /// Store active Agent cancellation flags, keyed by session_id
@@ -57,9 +57,11 @@ fn sanitize_messages(
 ) -> Vec<crate::chat::ChatMessage> {
     if !is_agent {
         // In Ask/Edit mode, strip all tool-related messages entirely
-        return messages.iter().filter(|m| {
-            !matches!(m.role, crate::chat::Role::Tool) && m.tool_calls.is_none()
-        }).cloned().collect();
+        return messages
+            .iter()
+            .filter(|m| !matches!(m.role, crate::chat::Role::Tool) && m.tool_calls.is_none())
+            .cloned()
+            .collect();
     }
 
     // In Agent mode: ensure proper tool_calls → tool pairing
@@ -78,8 +80,8 @@ fn sanitize_messages(
             if has_tool_response {
                 // Keep assistant + tool messages
                 result.push(msg.clone());
-                for k in (i + 1)..j {
-                    result.push(messages[k].clone());
+                for m in &messages[(i + 1)..j] {
+                    result.push(m.clone());
                 }
                 i = j;
             } else {
@@ -114,21 +116,23 @@ fn sanitize_messages(
 fn parse_context_file_ref(raw: &str) -> (&str, Option<usize>) {
     if let Some(idx) = raw.rfind(':') {
         let line_part = &raw[idx + 1..];
-        if !line_part.is_empty() && line_part.chars().all(|c| c.is_ascii_digit()) {
-            if let Ok(line) = line_part.parse::<usize>() {
-                // Numeric suffix — treat as a line reference (0 → whole file)
-                return if line >= 1 {
-                    (&raw[..idx], Some(line))
-                } else {
-                    (&raw[..idx], None)
-                };
-            }
+        if !line_part.is_empty()
+            && line_part.chars().all(|c| c.is_ascii_digit())
+            && let Ok(line) = line_part.parse::<usize>()
+        {
+            // Numeric suffix — treat as a line reference (0 → whole file)
+            return if line >= 1 {
+                (&raw[..idx], Some(line))
+            } else {
+                (&raw[..idx], None)
+            };
         }
     }
     (raw, None)
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // tauri command — one arg per frontend payload field
 pub async fn send_message(
     app: tauri::AppHandle,
     session_id: String,
@@ -164,184 +168,268 @@ pub async fn send_message(
     // Inject context files as system messages (from @ file mentions) — parallel read
     // `@file:line` references (path:line) inject only the referenced line and its
     // surroundings instead of the whole file
-    if let Some(ref files) = context_files {
-        if !files.is_empty() {
-            const LINE_REFERENCE_RADIUS: usize = 20;
-            let read_futures = files.iter().map(|fp| {
-                let (path, line) = parse_context_file_ref(fp);
-                let path = path.to_string();
+    if let Some(ref files) = context_files
+        && !files.is_empty()
+    {
+        const LINE_REFERENCE_RADIUS: usize = 20;
+        let read_futures = files.iter().map(|fp| {
+            let (path, line) = parse_context_file_ref(fp);
+            let path = path.to_string();
+            async move {
+                match tokio::fs::read_to_string(&path).await {
+                    Ok(content) => Some((fp.clone(), content, line)),
+                    Err(e) => {
+                        log::warn!("[Chat] Failed to read context file {}: {}", fp, e);
+                        None
+                    }
+                }
+            }
+        });
+        let results = futures_util::future::join_all(read_futures).await;
+        for result in results.into_iter().flatten() {
+            let (file_ref, content, line) = result;
+            let truncated = if content.len() > 50_000 {
+                // Use char-aware truncation to avoid UTF-8 boundary panics
+                let truncated: String = content.chars().take(50_000).collect();
+                format!("{}... [truncated at 50KB]", truncated)
+            } else {
+                content
+            };
+            let injected = if let Some(line) = line {
+                // Extract only the referenced line and its surroundings
+                let lines: Vec<&str> = truncated.lines().collect();
+                if lines.is_empty() || line > lines.len() {
+                    // Line out of range — fall back to the whole (truncated) file
+                    truncated
+                } else {
+                    let start = line.saturating_sub(LINE_REFERENCE_RADIUS).max(1);
+                    let end = (line + LINE_REFERENCE_RADIUS).min(lines.len());
+                    format!(
+                        "(line-reference excerpt: lines {}-{})\n{}",
+                        start,
+                        end,
+                        lines[start - 1..end].join("\n")
+                    )
+                }
+            } else {
+                truncated
+            };
+            messages.push(LlmMessage {
+                role: "system".into(),
+                content: format!("File: {}\n```\n{}\n```", file_ref, injected),
+                images: None,
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+    }
+
+    // ── Expand context folders: recursively read source files ──
+    if let Some(ref folders) = context_folders
+        && !folders.is_empty()
+    {
+        // Collect all file paths from all folders first (bounded by depth and count)
+        const MAX_FILES_PER_FOLDER: usize = 50;
+        const MAX_FILE_SIZE: usize = 50_000;
+        const MAX_DEPTH: usize = 3;
+
+        // Common source file extensions to include (skip binaries, images, etc.)
+        let is_source_file = |path: &std::path::Path| -> bool {
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                matches!(
+                    ext,
+                    "rs" | "ts"
+                        | "tsx"
+                        | "js"
+                        | "jsx"
+                        | "py"
+                        | "go"
+                        | "java"
+                        | "kt"
+                        | "c"
+                        | "cpp"
+                        | "h"
+                        | "hpp"
+                        | "cs"
+                        | "rb"
+                        | "php"
+                        | "swift"
+                        | "dart"
+                        | "vue"
+                        | "svelte"
+                        | "html"
+                        | "css"
+                        | "scss"
+                        | "less"
+                        | "json"
+                        | "yaml"
+                        | "yml"
+                        | "toml"
+                        | "xml"
+                        | "md"
+                        | "txt"
+                        | "sql"
+                        | "sh"
+                        | "bash"
+                        | "zsh"
+                        | "ps1"
+                        | "bat"
+                        | "cmd"
+                        | "dockerfile"
+                        | "docker-compose"
+                        | "env"
+                        | "lock"
+                        | "graphql"
+                        | "proto"
+                        | "lua"
+                        | "r"
+                        | "jl"
+                        | "ex"
+                        | "exs"
+                        | "hs"
+                        | "ml"
+                        | "zig"
+                        | "nim"
+                        | "scala"
+                        | "clj"
+                        | "erl"
+                        | "elm"
+                        | "tf"
+                        | "hcl"
+                        | "ini"
+                        | "cfg"
+                        | "conf"
+                        | "log"
+                        | "csv"
+                )
+            } else {
+                // Files without extension (e.g., Makefile, Dockerfile, LICENSE)
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| {
+                        matches!(
+                            n,
+                            "Makefile"
+                                | "Dockerfile"
+                                | "LICENSE"
+                                | "README"
+                                | "CHANGELOG"
+                                | ".gitignore"
+                                | ".env"
+                        )
+                    })
+                    .unwrap_or(false)
+            }
+        };
+
+        // Skip common non-source directories
+        let should_skip_dir = |name: &str| -> bool {
+            matches!(
+                name,
+                "node_modules"
+                    | ".git"
+                    | "target"
+                    | "dist"
+                    | "build"
+                    | "__pycache__"
+                    | ".next"
+                    | ".nuxt"
+                    | ".cache"
+                    | "vendor"
+                    | ".idea"
+                    | ".vscode"
+                    | "bin"
+                    | "obj"
+            )
+        };
+
+        for folder_path in folders {
+            let folder = std::path::Path::new(folder_path);
+            if !folder.is_dir() {
+                log::warn!("[Chat] Context folder is not a directory: {}", folder_path);
+                continue;
+            }
+
+            // Collect files using recursive walk with depth limit
+            let mut files_to_read: Vec<String> = Vec::new();
+            let mut stack: Vec<(std::path::PathBuf, usize)> = vec![(folder.to_path_buf(), 0)];
+
+            while let Some((dir, depth)) = stack.pop() {
+                if depth > MAX_DEPTH || files_to_read.len() >= MAX_FILES_PER_FOLDER {
+                    break;
+                }
+                match tokio::fs::read_dir(&dir).await {
+                    Ok(mut entries) => {
+                        while let Ok(Some(entry)) = entries.next_entry().await {
+                            let entry_path = entry.path();
+                            let entry_name = entry.file_name().to_string_lossy().to_string();
+
+                            if entry_path.is_dir() {
+                                if !should_skip_dir(&entry_name) {
+                                    stack.push((entry_path, depth + 1));
+                                }
+                            } else if is_source_file(&entry_path) {
+                                files_to_read.push(entry_path.to_string_lossy().to_string());
+                                if files_to_read.len() >= MAX_FILES_PER_FOLDER {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[Chat] Failed to read directory {}: {}", folder_path, e);
+                    }
+                }
+            }
+
+            log::info!(
+                "[Chat] Expanding context folder '{}': {} files found",
+                folder_path,
+                files_to_read.len()
+            );
+
+            // Read all files in parallel
+            let read_futures = files_to_read.iter().map(|fp| {
+                let fp = fp.clone();
                 async move {
-                    match tokio::fs::read_to_string(&path).await {
-                        Ok(content) => Some((fp.clone(), content, line)),
+                    match tokio::fs::read_to_string(&fp).await {
+                        Ok(content) => Some((fp, content)),
                         Err(e) => {
-                            log::warn!("[Chat] Failed to read context file {}: {}", fp, e);
+                            log::debug!("[Chat] Failed to read file in folder {}: {}", fp, e);
                             None
                         }
                     }
                 }
             });
             let results = futures_util::future::join_all(read_futures).await;
+            let mut included_count = 0;
             for result in results.into_iter().flatten() {
-                let (file_ref, content, line) = result;
-                let truncated = if content.len() > 50_000 {
-                    // Use char-aware truncation to avoid UTF-8 boundary panics
-                    let truncated: String = content.chars().take(50_000).collect();
-                    format!("{}... [truncated at 50KB]", truncated)
-                } else {
-                    content
-                };
-                let injected = if let Some(line) = line {
-                    // Extract only the referenced line and its surroundings
-                    let lines: Vec<&str> = truncated.lines().collect();
-                    if lines.is_empty() || line > lines.len() {
-                        // Line out of range — fall back to the whole (truncated) file
-                        truncated
-                    } else {
-                        let start = line.saturating_sub(LINE_REFERENCE_RADIUS).max(1);
-                        let end = (line + LINE_REFERENCE_RADIUS).min(lines.len());
-                        format!(
-                            "(line-reference excerpt: lines {}-{})\n{}",
-                            start,
-                            end,
-                            lines[start - 1..end].join("\n")
-                        )
-                    }
-                } else {
-                    truncated
-                };
+                let (file_path, content) = result;
+                if content.len() > MAX_FILE_SIZE {
+                    continue; // Skip very large files in folder context
+                }
                 messages.push(LlmMessage {
                     role: "system".into(),
-                    content: format!("File: {}\n```\n{}\n```", file_ref, injected),
+                    content: format!("File: {}\n```\n{}\n```", file_path, content),
                     images: None,
                     tool_calls: None,
                     tool_call_id: None,
                 });
+                included_count += 1;
             }
-        }
-    }
 
-    // ── Expand context folders: recursively read source files ──
-    if let Some(ref folders) = context_folders {
-        if !folders.is_empty() {
-            // Collect all file paths from all folders first (bounded by depth and count)
-            const MAX_FILES_PER_FOLDER: usize = 50;
-            const MAX_FILE_SIZE: usize = 50_000;
-            const MAX_DEPTH: usize = 3;
-
-            // Common source file extensions to include (skip binaries, images, etc.)
-            let is_source_file = |path: &std::path::Path| -> bool {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    matches!(ext,
-                        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "kt" |
-                        "c" | "cpp" | "h" | "hpp" | "cs" | "rb" | "php" | "swift" | "dart" |
-                        "vue" | "svelte" | "html" | "css" | "scss" | "less" | "json" | "yaml" |
-                        "yml" | "toml" | "xml" | "md" | "txt" | "sql" | "sh" | "bash" | "zsh" |
-                        "ps1" | "bat" | "cmd" | "dockerfile" | "docker-compose" | "env" | "lock" |
-                        "graphql" | "proto" | "lua" | "r" | "jl" | "ex" | "exs" | "hs" | "ml" |
-                        "zig" | "nim" | "scala" | "clj" | "erl" | "elm" | "tf" | "hcl" | "ini" |
-                        "cfg" | "conf" | "log" | "csv"
-                    )
-                } else {
-                    // Files without extension (e.g., Makefile, Dockerfile, LICENSE)
-                    path.file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|n| matches!(n, "Makefile" | "Dockerfile" | "LICENSE" | "README" | "CHANGELOG" | ".gitignore" | ".env"))
-                        .unwrap_or(false)
-                }
-            };
-
-            // Skip common non-source directories
-            let should_skip_dir = |name: &str| -> bool {
-                matches!(name,
-                    "node_modules" | ".git" | "target" | "dist" | "build" | "__pycache__" |
-                    ".next" | ".nuxt" | ".cache" | "vendor" | ".idea" | ".vscode" | "bin" | "obj"
-                )
-            };
-
-            for folder_path in folders {
-                let folder = std::path::Path::new(folder_path);
-                if !folder.is_dir() {
-                    log::warn!("[Chat] Context folder is not a directory: {}", folder_path);
-                    continue;
-                }
-
-                // Collect files using recursive walk with depth limit
-                let mut files_to_read: Vec<String> = Vec::new();
-                let mut stack: Vec<(std::path::PathBuf, usize)> = vec![(folder.to_path_buf(), 0)];
-
-                while let Some((dir, depth)) = stack.pop() {
-                    if depth > MAX_DEPTH || files_to_read.len() >= MAX_FILES_PER_FOLDER {
-                        break;
-                    }
-                    match tokio::fs::read_dir(&dir).await {
-                        Ok(mut entries) => {
-                            while let Ok(Some(entry)) = entries.next_entry().await {
-                                let entry_path = entry.path();
-                                let entry_name = entry.file_name().to_string_lossy().to_string();
-
-                                if entry_path.is_dir() {
-                                    if !should_skip_dir(&entry_name) {
-                                        stack.push((entry_path, depth + 1));
-                                    }
-                                } else if is_source_file(&entry_path) {
-                                    files_to_read.push(entry_path.to_string_lossy().to_string());
-                                    if files_to_read.len() >= MAX_FILES_PER_FOLDER {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!("[Chat] Failed to read directory {}: {}", folder_path, e);
-                        }
-                    }
-                }
-
-                log::info!("[Chat] Expanding context folder '{}': {} files found", folder_path, files_to_read.len());
-
-                // Read all files in parallel
-                let read_futures = files_to_read.iter().map(|fp| {
-                    let fp = fp.clone();
-                    async move {
-                        match tokio::fs::read_to_string(&fp).await {
-                            Ok(content) => Some((fp, content)),
-                            Err(e) => {
-                                log::debug!("[Chat] Failed to read file in folder {}: {}", fp, e);
-                                None
-                            }
-                        }
-                    }
-                });
-                let results = futures_util::future::join_all(read_futures).await;
-                let mut included_count = 0;
-                for result in results.into_iter().flatten() {
-                    let (file_path, content) = result;
-                    if content.len() > MAX_FILE_SIZE {
-                        continue; // Skip very large files in folder context
-                    }
-                    messages.push(LlmMessage {
-                        role: "system".into(),
-                        content: format!("File: {}\n```\n{}\n```", file_path, content),
-                        images: None,
-                        tool_calls: None,
-                        tool_call_id: None,
-                    });
-                    included_count += 1;
-                }
-
-                // Add a summary message so LLM knows the folder structure
-                messages.push(LlmMessage {
-                    role: "system".into(),
-                    content: format!(
-                        "[FOLDER_CONTEXT] Directory '{}' included {} source files as context. \
+            // Add a summary message so LLM knows the folder structure
+            messages.push(LlmMessage {
+                role: "system".into(),
+                content: format!(
+                    "[FOLDER_CONTEXT] Directory '{}' included {} source files as context. \
                          Use the Agent's file reading tools for any files not shown above.",
-                        folder_path, included_count
-                    ),
-                    images: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-            }
+                    folder_path, included_count
+                ),
+                images: None,
+                tool_calls: None,
+                tool_call_id: None,
+            });
         }
     }
 
@@ -364,10 +452,12 @@ pub async fn send_message(
             }).collect())
         });
         let msg_images: Option<Vec<llm::ImageContent>> = msg.images.as_ref().map(|imgs| {
-            imgs.iter().map(|url| llm::ImageContent {
-                url: url.clone(),
-                detail: Some("auto".into()),
-            }).collect()
+            imgs.iter()
+                .map(|url| llm::ImageContent {
+                    url: url.clone(),
+                    detail: Some("auto".into()),
+                })
+                .collect()
         });
         messages.push(LlmMessage {
             role: match msg.role {
@@ -375,7 +465,8 @@ pub async fn send_message(
                 crate::chat::Role::Assistant => "assistant",
                 crate::chat::Role::System => "system",
                 crate::chat::Role::Tool => "tool",
-            }.into(),
+            }
+            .into(),
             content: msg.content.clone(),
             images: msg_images,
             tool_calls: tool_calls_json,
@@ -385,10 +476,12 @@ pub async fn send_message(
 
     // Add user message
     let llm_images: Option<Vec<llm::ImageContent>> = images.as_ref().map(|imgs| {
-        imgs.iter().map(|url| llm::ImageContent {
-            url: url.clone(),
-            detail: Some("auto".into()),
-        }).collect()
+        imgs.iter()
+            .map(|url| llm::ImageContent {
+                url: url.clone(),
+                detail: Some("auto".into()),
+            })
+            .collect()
     });
     messages.push(LlmMessage {
         role: "user".into(),
@@ -402,29 +495,37 @@ pub async fn send_message(
     // 前端 @codebase 提及触发：检索整个代码库并注入最相关片段。
     // 放在 is_agent 块之前，使 Ask/Edit 模式也获得同样的 RAG 上下文。
     let has_codebase = message.contains("#codebase") || message.contains("@codebase");
-    if has_codebase {
-        if let Some(indexer) = app.try_state::<Arc<CodeIndexer>>() {
-            let indexer = indexer.inner().clone();
-            // Extract the actual query (remove markers)
-            let query = message.replace("#codebase", "").replace("@codebase", "").trim().to_string();
-            let search_query = if query.is_empty() { &message } else { &query };
-            if let Ok(results) = indexer.hybrid_search(search_query, 5).await {
-                if !results.is_empty() {
-                    let ctx = crate::rag::build_rag_context(
-                        &results.iter().map(|r| r.chunk.clone()).collect::<Vec<_>>(),
-                        5,
-                    );
-                    // Inject as system context at the beginning
-                    messages.insert(0, LlmMessage {
-                        role: "system".into(),
-                        content: format!("The user has requested codebase context. \
-                            Here are the relevant code chunks from the project:\n\n{}", ctx),
-                        images: None,
-                        tool_calls: None,
-                        tool_call_id: None,
-                    });
-                }
-            }
+    if has_codebase && let Some(indexer) = app.try_state::<Arc<CodeIndexer>>() {
+        let indexer = indexer.inner().clone();
+        // Extract the actual query (remove markers)
+        let query = message
+            .replace("#codebase", "")
+            .replace("@codebase", "")
+            .trim()
+            .to_string();
+        let search_query = if query.is_empty() { &message } else { &query };
+        if let Ok(results) = indexer.hybrid_search(search_query, 5).await
+            && !results.is_empty()
+        {
+            let ctx = crate::rag::build_rag_context(
+                &results.iter().map(|r| r.chunk.clone()).collect::<Vec<_>>(),
+                5,
+            );
+            // Inject as system context at the beginning
+            messages.insert(
+                0,
+                LlmMessage {
+                    role: "system".into(),
+                    content: format!(
+                        "The user has requested codebase context. \
+                            Here are the relevant code chunks from the project:\n\n{}",
+                        ctx
+                    ),
+                    images: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            );
         }
     }
 
@@ -438,18 +539,28 @@ pub async fn send_message(
         let mgr = memory.memory_manager();
         let want_semantic = settings.memory_gc.semantic_search;
         let results = if want_semantic {
-            mgr.hybrid_search_memory(&message, &settings, 5).await
+            mgr.hybrid_search_memory(&message, &settings, 5)
+                .await
                 .or_else(|_| mgr.search_memory(&message, 5))
                 .ok()
         } else {
             mgr.search_memory(&message, 5).ok()
         };
-        results.map(|rs| {
-            rs.iter()
-                .map(|r| format!("- {}:{} — {}", r.file_path, r.line_number, r.line_content.trim()))
-                .collect::<Vec<_>>()
-                .join("\n")
-        }).filter(|s| !s.is_empty())
+        results
+            .map(|rs| {
+                rs.iter()
+                    .map(|r| {
+                        format!(
+                            "- {}:{} — {}",
+                            r.file_path,
+                            r.line_number,
+                            r.line_content.trim()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .filter(|s| !s.is_empty())
     } else {
         None
     };
@@ -460,8 +571,12 @@ pub async fn send_message(
         .or_else(|| settings.project_paths.first().cloned());
     let project_instructions = {
         if let Some(ref pp) = effective_project_path {
-            let file_path = std::path::Path::new(pp).join(".neocoder").join("instructions.md");
-            std::fs::read_to_string(&file_path).ok().filter(|c| !c.trim().is_empty())
+            let file_path = std::path::Path::new(pp)
+                .join(".neocoder")
+                .join("instructions.md");
+            std::fs::read_to_string(&file_path)
+                .ok()
+                .filter(|c| !c.trim().is_empty())
         } else {
             None
         }
@@ -477,66 +592,78 @@ pub async fn send_message(
         let memory_arc = chat_state.memory.clone();
         {
             let mem = memory_arc.write().await;
-            mem.add_message(&session_id, crate::chat::ChatMessage {
-                role: crate::chat::Role::User,
-                content: user_msg_for_storage,
-                images: images.clone(),
-                tool_calls: None,
-            });
+            mem.add_message(
+                &session_id,
+                crate::chat::ChatMessage {
+                    role: crate::chat::Role::User,
+                    content: user_msg_for_storage,
+                    images: images.clone(),
+                    tool_calls: None,
+                },
+            );
         }
 
         // ── 智能上下文注入：Agent 模式自动检索相关文件 ──
-        if !has_codebase {
-            if let Some(ref ctx_files) = context_files {
-                if ctx_files.is_empty() {
-                    // No explicit context files — auto-inject relevant files from index
-                    if let Some(indexer) = app.try_state::<Arc<CodeIndexer>>() {
-                        let indexer = indexer.inner().clone();
-                        if let Ok(results) = indexer.hybrid_search(&message, 3).await {
-                            if !results.is_empty() {
-                                // Group by file path, take top 3 unique files
-                                let mut seen_files = std::collections::HashSet::new();
-                                let mut auto_context = Vec::new();
-                                for r in &results {
-                                    let file_path = r.chunk.file_path.clone();
-                                    if seen_files.insert(file_path.clone()) && auto_context.len() < 3 {
-                                        auto_context.push(file_path);
+        if !has_codebase
+            && let Some(ref ctx_files) = context_files
+            && ctx_files.is_empty()
+        {
+            // No explicit context files — auto-inject relevant files from index
+            if let Some(indexer) = app.try_state::<Arc<CodeIndexer>>() {
+                let indexer = indexer.inner().clone();
+                if let Ok(results) = indexer.hybrid_search(&message, 3).await
+                    && !results.is_empty()
+                {
+                    // Group by file path, take top 3 unique files
+                    let mut seen_files = std::collections::HashSet::new();
+                    let mut auto_context = Vec::new();
+                    for r in &results {
+                        let file_path = r.chunk.file_path.clone();
+                        if seen_files.insert(file_path.clone()) && auto_context.len() < 3 {
+                            auto_context.push(file_path);
+                        }
+                    }
+                    if !auto_context.is_empty() {
+                        let read_futures = auto_context.iter().map(|fp| {
+                            let fp = fp.clone();
+                            async move {
+                                match tokio::fs::read_to_string(&fp).await {
+                                    Ok(content) => {
+                                        let truncated = if content.len() > 20_000 {
+                                            // Use char-aware truncation to avoid UTF-8 boundary panics
+                                            let truncated: String =
+                                                content.chars().take(20_000).collect();
+                                            format!("{}... [truncated at 20KB]", truncated)
+                                        } else {
+                                            content
+                                        };
+                                        Some((fp, truncated))
                                     }
-                                }
-                                if !auto_context.is_empty() {
-                                    let read_futures = auto_context.iter().map(|fp| {
-                                        let fp = fp.clone();
-                                        async move {
-                                            match tokio::fs::read_to_string(&fp).await {
-                                                Ok(content) => {
-                                                    let truncated = if content.len() > 20_000 {
-                                                        // Use char-aware truncation to avoid UTF-8 boundary panics
-                                                        let truncated: String = content.chars().take(20_000).collect();
-                                                        format!("{}... [truncated at 20KB]", truncated)
-                                                    } else {
-                                                        content
-                                                    };
-                                                    Some((fp, truncated))
-                                                }
-                                                Err(_) => None,
-                                            }
-                                        }
-                                    });
-                                    let file_results = futures_util::future::join_all(read_futures).await;
-                                    for file_result in file_results.into_iter().flatten() {
-                                        let (file_path, content) = file_result;
-                                        messages.insert(0, LlmMessage {
-                                            role: "system".into(),
-                                            content: format!("Auto-context file: {}\n```\n{}\n```", file_path, content),
-                                            images: None,
-                                            tool_calls: None,
-                                            tool_call_id: None,
-                                        });
-                                    }
-                                    log::info!("[AutoContext] Injected {} auto-context files", auto_context.len());
+                                    Err(_) => None,
                                 }
                             }
+                        });
+                        let file_results = futures_util::future::join_all(read_futures).await;
+                        for file_result in file_results.into_iter().flatten() {
+                            let (file_path, content) = file_result;
+                            messages.insert(
+                                0,
+                                LlmMessage {
+                                    role: "system".into(),
+                                    content: format!(
+                                        "Auto-context file: {}\n```\n{}\n```",
+                                        file_path, content
+                                    ),
+                                    images: None,
+                                    tool_calls: None,
+                                    tool_call_id: None,
+                                },
+                            );
                         }
+                        log::info!(
+                            "[AutoContext] Injected {} auto-context files",
+                            auto_context.len()
+                        );
                     }
                 }
             }
@@ -567,20 +694,26 @@ pub async fn send_message(
     let memory_arc = chat_state.memory.clone();
     {
         let mem = memory_arc.write().await;
-        mem.add_message(&session_id, crate::chat::ChatMessage {
-            role: crate::chat::Role::User,
-            content: message.clone(),
-            images: images.clone(),
-            tool_calls: None,
-        });
+        mem.add_message(
+            &session_id,
+            crate::chat::ChatMessage {
+                role: crate::chat::Role::User,
+                content: message.clone(),
+                images: images.clone(),
+                tool_calls: None,
+            },
+        );
     }
 
     // Emit started event
     log::info!("[Chat] Starting stream for session {}", session_id);
-    let _ = app.emit("chat-event", ChatEvent::Started {
-        session_id: session_id.clone(),
-        agent_id: None,
-    });
+    let _ = app.emit(
+        "chat-event",
+        ChatEvent::Started {
+            session_id: session_id.clone(),
+            agent_id: None,
+        },
+    );
 
     let app_clone = app.clone();
     let session_id_clone = session_id.clone();
@@ -635,62 +768,78 @@ pub async fn send_message(
                 if let Ok(mut s) = full_text_inner.lock() {
                     s.push_str(&token);
                 }
-                let _ = app_clone.emit("chat-event", ChatEvent::Delta {
-                    session_id: session_id_clone.clone(),
-                    agent_id: None,
-                    token,
-                });
+                let _ = app_clone.emit(
+                    "chat-event",
+                    ChatEvent::Delta {
+                        session_id: session_id_clone.clone(),
+                        agent_id: None,
+                        token,
+                    },
+                );
                 Ok(())
             },
             None,
-        ).await;
+        )
+        .await;
 
         match result {
             Ok(()) => {
                 log::info!("[Chat] Stream completed for session {}", session_id_clone);
-                let accumulated = full_text.lock()
-                    .map(|s| s.clone())
-                    .unwrap_or_default();
+                let accumulated = full_text.lock().map(|s| s.clone()).unwrap_or_default();
 
                 // Persist assistant message to disk
                 {
                     let mem = memory_for_stream.write().await;
-                    mem.add_message(&session_id_clone, crate::chat::ChatMessage {
-                        role: crate::chat::Role::Assistant,
-                        content: accumulated.clone(),
-                        images: None,
-                        tool_calls: None,
-                    });
+                    mem.add_message(
+                        &session_id_clone,
+                        crate::chat::ChatMessage {
+                            role: crate::chat::Role::Assistant,
+                            content: accumulated.clone(),
+                            images: None,
+                            tool_calls: None,
+                        },
+                    );
                 }
 
-                let _ = app_clone.emit("chat-event", ChatEvent::Finished {
-                    session_id: session_id_clone.clone(),
-                    agent_id: None,
-                    full_text: accumulated,
-                });
+                let _ = app_clone.emit(
+                    "chat-event",
+                    ChatEvent::Finished {
+                        session_id: session_id_clone.clone(),
+                        agent_id: None,
+                        full_text: accumulated,
+                    },
+                );
             }
             Err(e) => {
-                log::error!("[Chat] Stream error for session {}: {}", session_id_clone, e);
+                log::error!(
+                    "[Chat] Stream error for session {}: {}",
+                    session_id_clone,
+                    e
+                );
 
                 // Persist partial response if any tokens were received
-                let accumulated = full_text.lock()
-                    .map(|s| s.clone())
-                    .unwrap_or_default();
+                let accumulated = full_text.lock().map(|s| s.clone()).unwrap_or_default();
                 if !accumulated.is_empty() {
                     let mem = memory_for_stream.write().await;
-                    mem.add_message(&session_id_clone, crate::chat::ChatMessage {
-                        role: crate::chat::Role::Assistant,
-                        content: accumulated,
-                        images: None,
-                        tool_calls: None,
-                    });
+                    mem.add_message(
+                        &session_id_clone,
+                        crate::chat::ChatMessage {
+                            role: crate::chat::Role::Assistant,
+                            content: accumulated,
+                            images: None,
+                            tool_calls: None,
+                        },
+                    );
                 }
 
-                let _ = app_clone.emit("chat-event", ChatEvent::Error {
-                    session_id: session_id_clone.clone(),
-                    agent_id: None,
-                    message: e,
-                });
+                let _ = app_clone.emit(
+                    "chat-event",
+                    ChatEvent::Error {
+                        session_id: session_id_clone.clone(),
+                        agent_id: None,
+                        message: e,
+                    },
+                );
             }
         }
     });
@@ -719,11 +868,15 @@ pub(crate) async fn spawn_agent_pipeline(
     let chat_model = settings.chat_model.clone();
 
     // Determine which agent to use
-    let effective_agent_id = agent_id.clone().unwrap_or_else(|| "orchestrator".to_string());
+    let effective_agent_id = agent_id
+        .clone()
+        .unwrap_or_else(|| "orchestrator".to_string());
 
     // Look up agent definition
-    let agent_def: Option<crate::agent::definition::AgentDefinition> = app.try_state::<AgentRegistry>()
-        .and_then(|registry| crate::agent::definition::find_agent(registry.inner(), &effective_agent_id));
+    let agent_def: Option<crate::agent::definition::AgentDefinition> =
+        app.try_state::<AgentRegistry>().and_then(|registry| {
+            crate::agent::definition::find_agent(registry.inner(), &effective_agent_id)
+        });
 
     // Load custom instructions from settings + .neocoder/instructions.md
     let mut custom_instructions = String::new();
@@ -732,14 +885,16 @@ pub(crate) async fn spawn_agent_pipeline(
     }
     // Try loading project-level instructions
     if let Some(ref pp) = project_path {
-        let file_path = std::path::Path::new(pp).join(".neocoder").join("instructions.md");
-        if let Ok(content) = std::fs::read_to_string(&file_path) {
-            if !content.trim().is_empty() {
-                if !custom_instructions.is_empty() {
-                    custom_instructions.push_str("\n\n");
-                }
-                custom_instructions.push_str(&content);
+        let file_path = std::path::Path::new(pp)
+            .join(".neocoder")
+            .join("instructions.md");
+        if let Ok(content) = std::fs::read_to_string(&file_path)
+            && !content.trim().is_empty()
+        {
+            if !custom_instructions.is_empty() {
+                custom_instructions.push_str("\n\n");
             }
+            custom_instructions.push_str(&content);
         }
     }
     // Inject memory context (MEMORY.md + recent notes)
@@ -749,7 +904,11 @@ pub(crate) async fn spawn_agent_pipeline(
         }
         custom_instructions.push_str(&agent_memory_context);
     }
-    let custom_instructions = if custom_instructions.is_empty() { None } else { Some(custom_instructions) };
+    let custom_instructions = if custom_instructions.is_empty() {
+        None
+    } else {
+        Some(custom_instructions)
+    };
 
     // ── P0-2: Pre-flight validation ──
     if api_key.trim().is_empty() && !matches!(provider, crate::config::LlmProvider::Ollama) {
@@ -758,25 +917,32 @@ pub(crate) async fn spawn_agent_pipeline(
     if chat_model.trim().is_empty() {
         return Err("No chat model configured. Please select a model in Settings.".to_string());
     }
-    if !effective_agent_id.is_empty() && effective_agent_id != "orchestrator" && agent_def.is_none() {
-        return Err(format!("Agent '{}' not found in registry. Available agents: orchestrator, explorer, reviewer, architect", effective_agent_id));
+    if !effective_agent_id.is_empty() && effective_agent_id != "orchestrator" && agent_def.is_none()
+    {
+        return Err(format!(
+            "Agent '{}' not found in registry. Available agents: orchestrator, explorer, reviewer, architect",
+            effective_agent_id
+        ));
     }
 
     // Register Agent cancellation flag
     let cancel_flag = Arc::new(AtomicBool::new(false));
-    if let Some(cancel_map) = app.try_state::<AgentCancelMap>() {
-        if let Ok(mut map) = cancel_map.lock() {
-            map.insert(session_id.clone(), cancel_flag.clone());
-        }
+    if let Some(cancel_map) = app.try_state::<AgentCancelMap>()
+        && let Ok(mut map) = cancel_map.lock()
+    {
+        map.insert(session_id.clone(), cancel_flag.clone());
     }
 
     // Register Agent pause control (flag + notify) for this session
     let pause_flag = Arc::new(AtomicBool::new(false));
     let pause_notify = Arc::new(tokio::sync::Notify::new());
-    if let Some(pc) = app.try_state::<PauseControl>() {
-        if let Ok(mut map) = pc.lock() {
-            map.insert(session_id.clone(), (pause_flag.clone(), pause_notify.clone()));
-        }
+    if let Some(pc) = app.try_state::<PauseControl>()
+        && let Ok(mut map) = pc.lock()
+    {
+        map.insert(
+            session_id.clone(),
+            (pause_flag.clone(), pause_notify.clone()),
+        );
     }
 
     let agent_def_cloned = agent_def.clone();
@@ -789,7 +955,12 @@ pub(crate) async fn spawn_agent_pipeline(
     let is_plan_mode = plan_mode.unwrap_or(false);
 
     tokio::spawn(async move {
-        log::info!("[Agent] Spawn started for session '{}', agent '{}' (plan_mode={})", session_id, effective_agent_id, is_plan_mode);
+        log::info!(
+            "[Agent] Spawn started for session '{}', agent '{}' (plan_mode={})",
+            session_id,
+            effective_agent_id,
+            is_plan_mode
+        );
 
         // ── P0-1: Panic-safe agent execution ──
         // Run the agent in a nested spawn so any panic is caught as a JoinError.
@@ -819,7 +990,8 @@ pub(crate) async fn spawn_agent_pipeline(
                 agent_def_cloned2.as_ref(),
                 is_plan_mode,
                 Some(agent_memory_context2.clone()),
-            ).await
+            )
+            .await
         });
 
         let result = match agent_handle.await {
@@ -842,89 +1014,112 @@ pub(crate) async fn spawn_agent_pipeline(
                     format!("Task cancelled: {}", join_err)
                 };
 
-                log::error!("[Agent] Task panicked for session '{}': {}", session_id_for_cleanup, panic_msg);
+                log::error!(
+                    "[Agent] Task panicked for session '{}': {}",
+                    session_id_for_cleanup,
+                    panic_msg
+                );
 
                 // Cleanup cancel flag
-                if let Some(cancel_map) = app.try_state::<AgentCancelMap>() {
-                    if let Ok(mut map) = cancel_map.lock() {
-                        map.remove(&session_id_for_cleanup);
-                    }
+                if let Some(cancel_map) = app.try_state::<AgentCancelMap>()
+                    && let Ok(mut map) = cancel_map.lock()
+                {
+                    map.remove(&session_id_for_cleanup);
                 }
 
                 // Cleanup pause control
-                if let Some(pc) = app.try_state::<PauseControl>() {
-                    if let Ok(mut map) = pc.lock() {
-                        map.remove(&session_id_for_cleanup);
-                    }
+                if let Some(pc) = app.try_state::<PauseControl>()
+                    && let Ok(mut map) = pc.lock()
+                {
+                    map.remove(&session_id_for_cleanup);
                 }
 
                 // Emit error to frontend
-                let _ = app.emit("chat-event", ChatEvent::Error {
-                    session_id: session_id.clone(),
-                    agent_id: Some(effective_agent_id.clone()),
-                    message: format!("Agent task crashed: {}", panic_msg),
-                });
+                let _ = app.emit(
+                    "chat-event",
+                    ChatEvent::Error {
+                        session_id: session_id.clone(),
+                        agent_id: Some(effective_agent_id.clone()),
+                        message: format!("Agent task crashed: {}", panic_msg),
+                    },
+                );
                 return;
             }
         };
 
         // Cleanup cancel flag
-        if let Some(cancel_map) = app.try_state::<AgentCancelMap>() {
-            if let Ok(mut map) = cancel_map.lock() {
-                map.remove(&session_id_for_cleanup);
-            }
+        if let Some(cancel_map) = app.try_state::<AgentCancelMap>()
+            && let Ok(mut map) = cancel_map.lock()
+        {
+            map.remove(&session_id_for_cleanup);
         }
 
         // Cleanup pause control
-        if let Some(pc) = app.try_state::<PauseControl>() {
-            if let Ok(mut map) = pc.lock() {
-                map.remove(&session_id_for_cleanup);
-            }
+        if let Some(pc) = app.try_state::<PauseControl>()
+            && let Ok(mut map) = pc.lock()
+        {
+            map.remove(&session_id_for_cleanup);
         }
 
         // Persist final result to conversation memory
         let result_content = match &result {
             Ok(text) => text.clone(),
             Err(e) => {
-                log::error!("[Agent] Failed for session '{}': {}", session_id_for_cleanup, e);
+                log::error!(
+                    "[Agent] Failed for session '{}': {}",
+                    session_id_for_cleanup,
+                    e
+                );
                 format!("Error: {}", e)
             }
         };
         let mem = memory_arc.write().await;
-        mem.add_message(&session_id_for_cleanup, crate::chat::ChatMessage {
-            role: crate::chat::Role::Assistant,
-            content: result_content.clone(),
-            images: None,
-            tool_calls: None,
-        });
+        mem.add_message(
+            &session_id_for_cleanup,
+            crate::chat::ChatMessage {
+                role: crate::chat::Role::Assistant,
+                content: result_content.clone(),
+                images: None,
+                tool_calls: None,
+            },
+        );
 
         // Memory flush: append session summary to today's notes
         let note = format!(
             "Agent '{}' completed: {}",
-            agent_def_cloned.as_ref().map(|d| d.id.as_str()).unwrap_or("agent"),
+            agent_def_cloned
+                .as_ref()
+                .map(|d| d.id.as_str())
+                .unwrap_or("agent"),
             result_content.chars().take(150).collect::<String>()
         );
         let _ = memory_manager_for_flush.append_note(&note);
 
         // Collect session messages for dreaming before dropping lock
         let context_window = crate::config::model_context_window(&chat_model);
-        let session_msgs: Vec<crate::chat::ChatMessage> = mem.get_context_window(&session_id_for_cleanup, context_window);
+        let session_msgs: Vec<crate::chat::ChatMessage> =
+            mem.get_context_window(&session_id_for_cleanup, context_window);
         drop(mem);
 
         // Dreaming: fire-and-forget LLM summarization of session → MEMORY.md
         // Routes through the LLM Router: local Ollama first (privacy + cost), remote fallback.
         let memory_mgr = memory_manager_for_flush.clone();
         tokio::spawn(async move {
-            memory_mgr.dreaming(&session_msgs, &settings_for_dreaming).await;
+            memory_mgr
+                .dreaming(&session_msgs, &settings_for_dreaming)
+                .await;
         });
 
         if let Err(e) = result {
             log::error!("[Agent] Emitting error event: {}", e);
-            let _ = app.emit("chat-event", ChatEvent::Error {
-                session_id: session_id.clone(),
-                agent_id: None,
-                message: e,
-            });
+            let _ = app.emit(
+                "chat-event",
+                ChatEvent::Error {
+                    session_id: session_id.clone(),
+                    agent_id: None,
+                    message: e,
+                },
+            );
         }
     });
 
@@ -947,8 +1142,14 @@ pub async fn resume_session(
     settings: State<'_, Arc<RwLock<AppSettings>>>,
 ) -> Result<String, String> {
     // Locate the agent log
-    let config_dir = app.path().app_config_dir().map_err(|e| format!("App config dir unavailable: {}", e))?;
-    let log_path = config_dir.join("sessions").join("agent_logs").join(format!("{}.jsonl", session_id));
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("App config dir unavailable: {}", e))?;
+    let log_path = config_dir
+        .join("sessions")
+        .join("agent_logs")
+        .join(format!("{}.jsonl", session_id));
     if !log_path.exists() {
         return Err(format!("No agent task found for session '{}'", session_id));
     }
@@ -958,23 +1159,29 @@ pub async fn resume_session(
     if entries.is_empty() {
         return Err(format!("Agent log for session '{}' is empty", session_id));
     }
-    if let Some(last) = entries.last() {
-        if matches!(last.entry_type, crate::memory::agent_log::LogEntryType::Completed { .. }) {
-            return Err("The agent task for this session already completed".to_string());
-        }
+    if let Some(last) = entries.last()
+        && matches!(
+            last.entry_type,
+            crate::memory::agent_log::LogEntryType::Completed { .. }
+        )
+    {
+        return Err("The agent task for this session already completed".to_string());
     }
 
     // Rebuild LLM messages from the log (tool results paired to their calls)
     let mut messages = crate::memory::agent_log::AgentLog::to_messages(&entries);
 
     // Find the agent that ran this task (from the log), default to orchestrator
-    let log_agent_id = entries.iter().find_map(|e| {
-        if e.agent_id.is_empty() || e.agent_id == "agent" {
-            None
-        } else {
-            Some(e.agent_id.clone())
-        }
-    }).unwrap_or_else(|| "orchestrator".to_string());
+    let log_agent_id = entries
+        .iter()
+        .find_map(|e| {
+            if e.agent_id.is_empty() || e.agent_id == "agent" {
+                None
+            } else {
+                Some(e.agent_id.clone())
+            }
+        })
+        .unwrap_or_else(|| "orchestrator".to_string());
 
     // Inject the resume instruction so the model continues, not restarts
     let followup_hint = match followup {
@@ -1025,7 +1232,10 @@ pub async fn resume_session(
 pub async fn list_resumable_sessions(
     app: tauri::AppHandle,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let config_dir = app.path().app_config_dir().map_err(|e| format!("App config dir unavailable: {}", e))?;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("App config dir unavailable: {}", e))?;
     let logs_dir = config_dir.join("sessions").join("agent_logs");
     let mut resumable = Vec::new();
 
@@ -1058,11 +1268,17 @@ pub async fn list_resumable_sessions(
         }
 
         let Some(last) = last_entry else { continue };
-        if matches!(last.entry_type, crate::memory::agent_log::LogEntryType::Completed { .. }) {
+        if matches!(
+            last.entry_type,
+            crate::memory::agent_log::LogEntryType::Completed { .. }
+        ) {
             continue;
         }
 
-        let session_id = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let session_id = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
         if session_id.is_empty() {
             continue;
         }
@@ -1083,13 +1299,19 @@ pub async fn cancel_agent(
     session_id: String,
     cancel_map: State<'_, AgentCancelMap>,
 ) -> Result<(), String> {
-    if let Ok(mut map) = cancel_map.lock() {
-        if let Some(flag) = map.get(&session_id) {
-            flag.store(true, Ordering::SeqCst);
-            map.remove(&session_id);
-        }
+    if let Ok(mut map) = cancel_map.lock()
+        && let Some(flag) = map.get(&session_id)
+    {
+        flag.store(true, Ordering::SeqCst);
+        map.remove(&session_id);
     }
-    let _ = app.emit("chat-event", ChatEvent::Cancelled { session_id, agent_id: None });
+    let _ = app.emit(
+        "chat-event",
+        ChatEvent::Cancelled {
+            session_id,
+            agent_id: None,
+        },
+    );
     Ok(())
 }
 
@@ -1101,22 +1323,22 @@ pub async fn pause_agent(
     session_id: String,
     pause_control: State<'_, PauseControl>,
 ) -> Result<(), String> {
-    if let Ok(map) = pause_control.lock() {
-        if let Some((flag, _notify)) = map.get(&session_id) {
-            flag.store(true, Ordering::SeqCst);
-            let _ = app.emit(
-                "chat-event",
-                ChatEvent::AgentStatus {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    status: "pause_requested".into(),
-                    iteration: 0,
-                    total_iterations: 0,
-                    estimated_tokens: 0,
-                    elapsed_ms: 0,
-                },
-            );
-        }
+    if let Ok(map) = pause_control.lock()
+        && let Some((flag, _notify)) = map.get(&session_id)
+    {
+        flag.store(true, Ordering::SeqCst);
+        let _ = app.emit(
+            "chat-event",
+            ChatEvent::AgentStatus {
+                session_id: session_id.clone(),
+                agent_id: None,
+                status: "pause_requested".into(),
+                iteration: 0,
+                total_iterations: 0,
+                estimated_tokens: 0,
+                elapsed_ms: 0,
+            },
+        );
     }
     Ok(())
 }
@@ -1129,47 +1351,46 @@ pub async fn resume_agent(
     session_id: String,
     pause_control: State<'_, PauseControl>,
 ) -> Result<(), String> {
-    if let Ok(map) = pause_control.lock() {
-        if let Some((flag, notify)) = map.get(&session_id) {
-            flag.store(false, Ordering::SeqCst);
-            notify.notify_one();
-            let _ = app.emit(
-                "chat-event",
-                ChatEvent::AgentStatus {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    status: "resumed".into(),
-                    iteration: 0,
-                    total_iterations: 0,
-                    estimated_tokens: 0,
-                    elapsed_ms: 0,
-                },
-            );
-        }
+    if let Ok(map) = pause_control.lock()
+        && let Some((flag, notify)) = map.get(&session_id)
+    {
+        flag.store(false, Ordering::SeqCst);
+        notify.notify_one();
+        let _ = app.emit(
+            "chat-event",
+            ChatEvent::AgentStatus {
+                session_id: session_id.clone(),
+                agent_id: None,
+                status: "resumed".into(),
+                iteration: 0,
+                total_iterations: 0,
+                estimated_tokens: 0,
+                elapsed_ms: 0,
+            },
+        );
     }
     Ok(())
 }
 
 #[tauri::command]
-pub async fn new_session(
-    chat_state: State<'_, ChatState>,
-) -> Result<String, String> {
+pub async fn new_session(chat_state: State<'_, ChatState>) -> Result<String, String> {
     let memory = chat_state.memory.write().await;
     Ok(memory.create_session())
 }
 
 #[tauri::command]
-pub async fn list_sessions(
-    chat_state: State<'_, ChatState>,
-) -> Result<Vec<SessionInfo>, String> {
+pub async fn list_sessions(chat_state: State<'_, ChatState>) -> Result<Vec<SessionInfo>, String> {
     let memory = chat_state.memory.read().await;
     let sessions = memory.get_all_sessions();
-    Ok(sessions.into_iter().map(|s| SessionInfo {
-        id: s.id,
-        title: s.title,
-        message_count: s.message_count,
-        created_at: s.created_at.to_rfc3339(),
-    }).collect())
+    Ok(sessions
+        .into_iter()
+        .map(|s| SessionInfo {
+            id: s.id,
+            title: s.title,
+            message_count: s.message_count,
+            created_at: s.created_at.to_rfc3339(),
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -1217,7 +1438,12 @@ pub async fn get_session_messages(
     let messages = memory.get_context_window(&session_id, 48000);
     let result: Vec<SessionMessage> = messages
         .into_iter()
-        .filter(|m| matches!(m.role, crate::chat::Role::User | crate::chat::Role::Assistant))
+        .filter(|m| {
+            matches!(
+                m.role,
+                crate::chat::Role::User | crate::chat::Role::Assistant
+            )
+        })
         .filter(|m| !m.content.is_empty())
         .map(|m| SessionMessage {
             role: match m.role {
@@ -1257,7 +1483,9 @@ pub async fn answer_confirm(
     confirm_id: String,
     allowed: bool,
 ) -> Result<(), String> {
-    let mut map = confirm_awaiters.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let mut map = confirm_awaiters
+        .lock()
+        .map_err(|e| format!("Lock error: {}", e))?;
     if let Some(sender) = map.remove(&confirm_id) {
         let _ = sender.send(allowed);
     }
@@ -1265,7 +1493,6 @@ pub async fn answer_confirm(
 }
 
 /// ── Plan Mode Approval Commands ──
-
 /// Send approval (session_id from PlanCreated event) to the waiting Agent.
 #[tauri::command]
 pub async fn approve_plan(
@@ -1310,9 +1537,10 @@ pub async fn skip_plan(
 pub fn get_terminal_history(count: Option<usize>) -> Vec<String> {
     let n = count.unwrap_or(3);
     let entries = crate::terminal::get_recent_terminal(n);
-    entries.into_iter().map(|(cmd, output, exit)| {
-        format!("$ {}\n{}\nExit: {}", cmd, output, exit)
-    }).collect()
+    entries
+        .into_iter()
+        .map(|(cmd, output, exit)| format!("$ {}\n{}\nExit: {}", cmd, output, exit))
+        .collect()
 }
 
 #[tauri::command]
@@ -1327,7 +1555,9 @@ pub async fn restore_file(
     session_id: String,
     file_path: String,
 ) -> Result<String, String> {
-    let mut snapshots = file_snapshots.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let mut snapshots = file_snapshots
+        .lock()
+        .map_err(|e| format!("Lock error: {}", e))?;
 
     let session_snapshots = snapshots
         .get_mut(&session_id)
@@ -1435,7 +1665,9 @@ pub async fn fork_session(
     let new_session_id = memory.create_session();
 
     // Copy messages up to fork_point (if specified), otherwise all
-    let copy_count = fork_point.unwrap_or(source_messages.len()).min(source_messages.len());
+    let copy_count = fork_point
+        .unwrap_or(source_messages.len())
+        .min(source_messages.len());
     let messages_to_copy = &source_messages[..copy_count];
 
     // Write copied messages to new session
@@ -1446,7 +1678,9 @@ pub async fn fork_session(
 
     log::info!(
         "Forked session '{}' -> '{}' with {} messages",
-        source_session_id, new_session_id, copy_count
+        source_session_id,
+        new_session_id,
+        copy_count
     );
 
     Ok(new_session_id)
@@ -1462,7 +1696,8 @@ pub async fn restore_checkpoint(
 ) -> Result<(), String> {
     let checkpoint = {
         let store = store.lock().unwrap_or_else(|e| e.into_inner());
-        store.get(&session_id)
+        store
+            .get(&session_id)
             .and_then(|cps| cps.iter().find(|cp| cp.iteration == iteration))
             .cloned()
             .ok_or_else(|| format!("No checkpoint found for iteration {}", iteration))?
@@ -1489,13 +1724,15 @@ pub async fn checkpoint_diff(
         .ok_or_else(|| "No project path provided".to_string())?;
     let checkpoint = {
         let store = store.lock().unwrap_or_else(|e| e.into_inner());
-        store.get(&session_id)
+        store
+            .get(&session_id)
             .and_then(|cps| cps.iter().find(|cp| cp.iteration == iteration))
             .cloned()
             .ok_or_else(|| format!("No checkpoint found for iteration {}", iteration))?
     };
-    let hash = checkpoint.commit_hash.as_ref()
-        .ok_or_else(|| "Checkpoint has no commit hash (project is not a git repository)".to_string())?;
+    let hash = checkpoint.commit_hash.as_ref().ok_or_else(|| {
+        "Checkpoint has no commit hash (project is not a git repository)".to_string()
+    })?;
 
     let files: Vec<&str> = checkpoint.files.iter().map(|s| s.as_str()).collect();
     let mut cmd = tokio::process::Command::new("git");
@@ -1506,10 +1743,7 @@ pub async fn checkpoint_diff(
     if !files.is_empty() {
         cmd.arg("--").args(&files);
     }
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        cmd.output(),
-    ).await;
+    let output = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output()).await;
 
     let raw = match output {
         Ok(Ok(out)) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
@@ -1523,11 +1757,17 @@ pub async fn checkpoint_diff(
                     .arg("--format=")
                     .current_dir(&work_dir)
                     .output(),
-            ).await;
+            )
+            .await;
             match output {
-                Ok(Ok(out)) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
+                Ok(Ok(out)) if out.status.success() => {
+                    String::from_utf8_lossy(&out.stdout).to_string()
+                }
                 Ok(Ok(out)) => {
-                    return Err(format!("git diff failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+                    return Err(format!(
+                        "git diff failed: {}",
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    ));
                 }
                 Ok(Err(e)) => return Err(format!("Failed to execute git: {}", e)),
                 Err(_) => return Err("git diff timed out".to_string()),
@@ -1558,7 +1798,10 @@ fn parse_unified_diff(raw: &str) -> Vec<crate::chat::FileChange> {
             // New file section: "a/path b/path" — keep the b/ (new) path
             let path = header.rsplit(" b/").next().unwrap_or(header).trim();
             if let Some((path, hunks)) = current.take() {
-                changes.push(crate::chat::FileChange { file_path: path, hunks });
+                changes.push(crate::chat::FileChange {
+                    file_path: path,
+                    hunks,
+                });
             }
             current = Some((path.to_string(), Vec::new()));
             old_line = 0;
@@ -1577,10 +1820,18 @@ fn parse_unified_diff(raw: &str) -> Vec<crate::chat::FileChange> {
             it.next(); // @@
             let old_part = it.next().unwrap_or("-0");
             let new_part = it.next().unwrap_or("+0");
-            old_line = old_part.trim_start_matches('-').split(',').next()
-                .and_then(|s| s.parse().ok()).unwrap_or(0);
-            new_line = new_part.trim_start_matches('+').split(',').next()
-                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            old_line = old_part
+                .trim_start_matches('-')
+                .split(',')
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            new_line = new_part
+                .trim_start_matches('+')
+                .split(',')
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
         } else if line.starts_with("index ")
             || line.starts_with("---")
             || line.starts_with("+++")
@@ -1615,7 +1866,10 @@ fn parse_unified_diff(raw: &str) -> Vec<crate::chat::FileChange> {
         }
     }
     if let Some((path, hunks)) = current.take() {
-        changes.push(crate::chat::FileChange { file_path: path, hunks });
+        changes.push(crate::chat::FileChange {
+            file_path: path,
+            hunks,
+        });
     }
     changes
 }
@@ -1648,10 +1902,7 @@ pub async fn list_branches(
 }
 
 #[tauri::command]
-pub async fn delete_branch(
-    session_id: String,
-    branch_id: String,
-) -> Result<(), String> {
+pub async fn delete_branch(session_id: String, branch_id: String) -> Result<(), String> {
     let storage = get_session_storage()?;
     storage.delete_branch(&session_id, &branch_id)
 }
@@ -1687,7 +1938,10 @@ new file mode 100644
         let main = &changes[0];
         assert_eq!(main.file_path, "src/main.rs");
         let types: Vec<&str> = main.hunks.iter().map(|h| h.hunk_type.as_str()).collect();
-        assert_eq!(types, vec!["hunk", "context", "remove", "add", "context", "context"]);
+        assert_eq!(
+            types,
+            vec!["hunk", "context", "remove", "add", "context", "context"]
+        );
         assert_eq!(main.hunks[2].content, "println!(\"old\");");
         assert_eq!(main.hunks[3].content, "println!(\"new\");");
         // 行号跟踪：context 后 old/new 同步前进，remove 后 new_start 不前进
@@ -1698,7 +1952,12 @@ new file mode 100644
         // 第二个文件：新增文件
         let readme = &changes[1];
         assert_eq!(readme.file_path, "README.md");
-        assert!(readme.hunks.iter().all(|h| h.hunk_type == "add" || h.hunk_type == "hunk"));
+        assert!(
+            readme
+                .hunks
+                .iter()
+                .all(|h| h.hunk_type == "add" || h.hunk_type == "hunk")
+        );
     }
 
     #[test]
@@ -1717,7 +1976,10 @@ new file mode 100644
     #[test]
     fn test_parse_context_file_ref_with_line() {
         // `path:line` form → path + line
-        assert_eq!(parse_context_file_ref("src/main.rs:42"), ("src/main.rs", Some(42)));
+        assert_eq!(
+            parse_context_file_ref("src/main.rs:42"),
+            ("src/main.rs", Some(42))
+        );
         assert_eq!(parse_context_file_ref("main.rs:1"), ("main.rs", Some(1)));
         assert_eq!(parse_context_file_ref("main.rs:0"), ("main.rs", None));
     }
@@ -1739,9 +2001,10 @@ new file mode 100644
     #[test]
     fn test_parse_context_file_ref_non_numeric_suffix() {
         // A colon not followed by digits is not a line ref (e.g. URLs, labels)
-        assert_eq!(parse_context_file_ref("docs/README.md:section"), ("docs/README.md:section", None));
+        assert_eq!(
+            parse_context_file_ref("docs/README.md:section"),
+            ("docs/README.md:section", None)
+        );
         assert_eq!(parse_context_file_ref("file.rs:"), ("file.rs:", None));
     }
 }
-
-

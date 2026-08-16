@@ -1,11 +1,17 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::agent::tools::{
         Tool, ToolContext,
-        read_file::ReadFile, write_file::WriteFile, edit::Edit,
-        git_status::GitStatus, git_diff::GitDiff, git_commit::GitCommit,
-        memory_search::MemorySearch, coverage::CoverageTool,
         a2a_invoke::{A2aInvoke, resolve_agent_url},
+        coverage::CoverageTool,
+        edit::Edit,
+        git_commit::GitCommit,
+        git_diff::GitDiff,
+        git_status::GitStatus,
+        memory_search::MemorySearch,
+        read_file::ReadFile,
+        write_file::WriteFile,
     };
     use crate::sandbox::{SandboxChecker, SandboxConfig, SandboxMode};
     use serde_json::json;
@@ -166,7 +172,11 @@ mod tests {
         });
 
         let result = WriteFile.execute(args, &ctx).await;
-        assert!(result.contains("Successfully created"), "result: {}", result);
+        assert!(
+            result.contains("Successfully created"),
+            "result: {}",
+            result
+        );
 
         // Verify file was created in nested directory
         assert!(test_file.exists());
@@ -215,7 +225,11 @@ mod tests {
         });
 
         let result = WriteFile.execute(args, &ctx).await;
-        assert!(result.contains("Successfully created"), "result: {}", result);
+        assert!(
+            result.contains("Successfully created"),
+            "result: {}",
+            result
+        );
 
         // Verify file was created in project path
         let test_file = temp_dir.join("relative_file.txt");
@@ -350,7 +364,10 @@ mod tests {
 
         // Verify only first occurrence was replaced
         let content = std::fs::read_to_string(&test_file).unwrap();
-        assert_eq!(content, "fn foo() {\n    let x = 42;\n}\n\nfn bar() {\n    let x = 1;\n}");
+        assert_eq!(
+            content,
+            "fn foo() {\n    let x = 42;\n}\n\nfn bar() {\n    let x = 1;\n}"
+        );
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -400,7 +417,7 @@ mod tests {
         std::fs::write(&test_file, "    let x = 1;\nlet x = 1;").unwrap();
 
         let ctx = create_test_context(None);
-        
+
         // Try to match without proper indentation - should match the second occurrence
         let args = json!({
             "file_path": test_file.to_str().unwrap(),
@@ -456,7 +473,9 @@ mod tests {
         .unwrap();
 
         let ctx = create_test_context(Some(dir.to_str().unwrap()));
-        let result = CoverageTool.execute(json!({ "action": "uncovered" }), &ctx).await;
+        let result = CoverageTool
+            .execute(json!({ "action": "uncovered" }), &ctx)
+            .await;
         assert!(result.contains("60.0% lines covered"), "result: {}", result);
         assert!(result.contains("agent/hooks.rs"));
         assert!(result.contains("1-10"));
@@ -469,7 +488,9 @@ mod tests {
         assert!(result.contains("No files match"), "result: {}", result);
 
         // status 显示缓存信息
-        let result = CoverageTool.execute(json!({ "action": "status" }), &ctx).await;
+        let result = CoverageTool
+            .execute(json!({ "action": "status" }), &ctx)
+            .await;
         assert!(result.contains("Coverage cache"), "result: {}", result);
         assert!(result.contains("60.0%"));
 
@@ -501,7 +522,9 @@ mod tests {
 
         let ctx = create_test_context(Some(dir.to_str().unwrap()));
         // 有缓存且未传 force → 复用缓存，不触发 llvm-cov 执行
-        let result = CoverageTool.execute(json!({ "action": "scan" }), &ctx).await;
+        let result = CoverageTool
+            .execute(json!({ "action": "scan" }), &ctx)
+            .await;
         assert!(result.contains("cached"), "result: {}", result);
         assert!(result.contains("src/a.rs"));
         assert!(result.contains("force:true"), "result: {}", result);
@@ -514,7 +537,11 @@ mod tests {
         let result = CoverageTool
             .execute(json!({ "action": "uncovered" }), &ctx_empty)
             .await;
-        assert!(result.contains("no cached coverage report"), "result: {}", result);
+        assert!(
+            result.contains("no cached coverage report"),
+            "result: {}",
+            result
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&empty);
@@ -527,7 +554,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let ctx = create_test_context(Some(dir.to_str().unwrap()));
-        let result = CoverageTool.execute(json!({ "action": "status" }), &ctx).await;
+        let result = CoverageTool
+            .execute(json!({ "action": "status" }), &ctx)
+            .await;
         assert!(result.contains("no report yet"), "result: {}", result);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -551,7 +580,11 @@ mod tests {
             "contents": original_content
         });
         let write_result = WriteFile.execute(write_args, &ctx).await;
-        assert!(write_result.contains("Successfully created"), "result: {}", write_result);
+        assert!(
+            write_result.contains("Successfully created"),
+            "result: {}",
+            write_result
+        );
 
         // Read
         let read_args = json!({
@@ -643,7 +676,11 @@ mod tests {
 
         let ctx = create_test_context(temp_dir.to_str());
         let result = GitStatus.execute(json!({}), &ctx).await;
-        assert!(result.contains("failed") || result.contains("not a git repository") || result.contains("timed out"));
+        assert!(
+            result.contains("failed")
+                || result.contains("not a git repository")
+                || result.contains("timed out")
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -680,7 +717,10 @@ mod tests {
     async fn test_memory_search_no_app_handle() {
         let ctx = create_test_context(None);
         let result = MemorySearch.execute(json!({"query": "test"}), &ctx).await;
-        assert!(result.contains("app handle not available") || result.contains("chat state not available"));
+        assert!(
+            result.contains("app handle not available")
+                || result.contains("chat state not available")
+        );
     }
 
     // ── Schema Consistency Tests ──────────────────────────────────────────
@@ -730,9 +770,17 @@ mod tests {
         assert!(!registry.is_empty());
         for tool in &registry {
             assert!(!tool.name.is_empty(), "tool name must not be empty");
-            assert!(!tool.description.is_empty(), "tool '{}' has empty description", tool.name);
+            assert!(
+                !tool.description.is_empty(),
+                "tool '{}' has empty description",
+                tool.name
+            );
             let schema = tool.to_openai_tool();
-            assert_eq!(schema["type"], "function", "tool '{}' must be a function type", tool.name);
+            assert_eq!(
+                schema["type"], "function",
+                "tool '{}' must be a function type",
+                tool.name
+            );
             assert!(
                 schema["function"]["parameters"]["type"] == "object",
                 "tool '{}' parameters must be an object schema",
@@ -745,17 +793,13 @@ mod tests {
 
     /// 本地 mock A2A server：Agent Card + message/send + tasks/get（立即 completed）
     async fn spawn_a2a_mock() -> String {
+        use crate::a2a::{JsonRpcResponse, RpcError, Task, TaskState, TaskStatus};
         use axum::{
             Json, Router,
             http::HeaderMap,
             response::IntoResponse,
             routing::{get, post},
         };
-        use crate::a2a::{JsonRpcResponse, RpcError, Task, TaskState, TaskStatus};
-
-        fn task(id: &str, state: TaskState) -> serde_json::Value {
-            serde_json::to_value(Task::new(id.to_string(), TaskStatus::new(state))).unwrap()
-        }
 
         let app = Router::new()
             .route(
@@ -818,6 +862,8 @@ mod tests {
 
     /// mock SSE A2A server：resubscribe 返回 working → completed 事件流
     async fn spawn_a2a_stream_mock() -> String {
+        use crate::a2a::{JsonRpcResponse, Task, TaskState, TaskStatus};
+        use axum::http::StatusCode;
         use axum::{
             Json, Router,
             http::HeaderMap,
@@ -827,9 +873,7 @@ mod tests {
             },
             routing::{get, post},
         };
-        use crate::a2a::{JsonRpcResponse, Task, TaskState, TaskStatus};
         use std::convert::Infallible;
-        use axum::http::StatusCode;
 
         fn task(id: &str, state: TaskState) -> serde_json::Value {
             serde_json::to_value(Task::new(id.to_string(), TaskStatus::new(state))).unwrap()
@@ -908,7 +952,10 @@ mod tests {
         let base = spawn_a2a_stream_mock().await;
         let ctx = create_test_context(None);
         let result = A2aInvoke
-            .execute(json!({ "url": base, "task": "stream it", "mode": "stream" }), &ctx)
+            .execute(
+                json!({ "url": base, "task": "stream it", "mode": "stream" }),
+                &ctx,
+            )
             .await;
         assert!(result.contains("StreamAgent"), "{}", result);
         assert!(result.contains("Completed"), "{}", result);
@@ -918,15 +965,21 @@ mod tests {
     async fn test_a2a_invoke_missing_url_and_agent() {
         let ctx = create_test_context(None);
         // url 和 agent 都缺 → 报错
-        let result = A2aInvoke
-            .execute(json!({ "task": "x" }), &ctx)
-            .await;
-        assert!(result.contains("url or agent parameter is required"), "{}", result);
+        let result = A2aInvoke.execute(json!({ "task": "x" }), &ctx).await;
+        assert!(
+            result.contains("url or agent parameter is required"),
+            "{}",
+            result
+        );
         // 只给 agent（未配置）→ 报错并提示配置
         let result = A2aInvoke
             .execute(json!({ "agent": "ghost", "task": "x" }), &ctx)
             .await;
-        assert!(result.contains("unknown remote agent 'ghost'"), "{}", result);
+        assert!(
+            result.contains("unknown remote agent 'ghost'"),
+            "{}",
+            result
+        );
         assert!(result.contains("Remote Agents"), "{}", result);
     }
 
@@ -964,7 +1017,10 @@ mod tests {
         let ctx = create_test_context(None);
         // skill 参数可选项透传，不影响正常执行
         let result = A2aInvoke
-            .execute(json!({ "url": base, "task": "x", "skill": "code_writer" }), &ctx)
+            .execute(
+                json!({ "url": base, "task": "x", "skill": "code_writer" }),
+                &ctx,
+            )
             .await;
         assert!(result.contains("MockRemote"), "{}", result);
         assert!(!result.contains("Error:"), "{}", result);
@@ -983,9 +1039,16 @@ mod tests {
     async fn test_a2a_invoke_unreachable_url() {
         let ctx = create_test_context(None);
         let result = A2aInvoke
-            .execute(json!({ "url": "http://127.0.0.1:1", "task": "x", "timeout_secs": 2 }), &ctx)
+            .execute(
+                json!({ "url": "http://127.0.0.1:1", "task": "x", "timeout_secs": 2 }),
+                &ctx,
+            )
             .await;
-        assert!(result.starts_with("Error: A2A invocation failed"), "{}", result);
+        assert!(
+            result.starts_with("Error: A2A invocation failed"),
+            "{}",
+            result
+        );
     }
 
     #[tokio::test]
@@ -1004,7 +1067,11 @@ mod tests {
     fn test_a2a_invoke_registration_consistency() {
         // 1) executor 注册
         let executor = crate::agent::tools::build_executor();
-        assert!(executor.registered_names().contains(&"a2a_invoke".to_string()));
+        assert!(
+            executor
+                .registered_names()
+                .contains(&"a2a_invoke".to_string())
+        );
         // 2) tools.json 定义
         let registry: Vec<crate::agent::ToolDefinition> =
             serde_json::from_str(include_str!("../../../tools.json")).unwrap();

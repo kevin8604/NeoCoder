@@ -69,10 +69,7 @@ impl Tool for WebPreview {
         if let Some(err) = url_error(url) {
             return err;
         }
-        let wait_ms = args
-            .get("wait_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1500);
+        let wait_ms = args.get("wait_ms").and_then(|v| v.as_u64()).unwrap_or(1500);
 
         let Some(browser) = find_headless_browser() else {
             return "[ERROR] No headless browser found (searched Edge/Chrome install paths). \
@@ -84,7 +81,11 @@ impl Tool for WebPreview {
         let stamp = chrono::Utc::now().timestamp_millis();
         let out_dir = std::env::temp_dir().join("neocoder_previews");
         if let Err(e) = std::fs::create_dir_all(&out_dir) {
-            return format!("[ERROR] Cannot create preview dir {}: {}", out_dir.display(), e);
+            return format!(
+                "[ERROR] Cannot create preview dir {}: {}",
+                out_dir.display(),
+                e
+            );
         }
         let out_path = out_dir.join(format!("preview_{}.png", stamp));
         let out_str = out_path.to_string_lossy().to_string();
@@ -124,7 +125,9 @@ impl Tool for WebPreview {
                 }
             }
             Ok(Err(e)) => format!("[ERROR] Failed to run browser: {}", e),
-            Err(_) => "[TIMEOUT] Screenshot timed out after 45s. The dev server may be down.".to_string(),
+            Err(_) => {
+                "[TIMEOUT] Screenshot timed out after 45s. The dev server may be down.".to_string()
+            }
         }
     }
 }

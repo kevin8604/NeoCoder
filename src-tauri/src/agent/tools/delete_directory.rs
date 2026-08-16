@@ -1,5 +1,5 @@
-use crate::fs_service::FileService;
 use super::{Tool, ToolContext};
+use crate::fs_service::FileService;
 
 pub struct DeleteDirectory;
 
@@ -29,7 +29,9 @@ impl Tool for DeleteDirectory {
         match FileService::remove(&path, ctx.project_path.as_deref(), Some(&ctx.sandbox)) {
             Ok(()) => format!(
                 "Deleted directory: {} ({} files, {} removed)",
-                path.display(), file_count, size_str
+                path.display(),
+                file_count,
+                size_str
             ),
             Err(e) => format!("Error deleting directory {}: {}", path.display(), e),
         }

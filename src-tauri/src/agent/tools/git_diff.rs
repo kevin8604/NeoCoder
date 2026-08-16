@@ -33,11 +33,7 @@ impl Tool for GitDiff {
 
         cmd.current_dir(work_dir);
 
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            cmd.output(),
-        )
-        .await;
+        let output = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output()).await;
 
         match output {
             Ok(Ok(out)) => {
@@ -56,7 +52,11 @@ impl Tool for GitDiff {
                     // Truncate very long diffs
                     if stdout.len() > 8000 {
                         let head = crate::agent::utils::safe_truncate(&stdout, 6000);
-                        format!("{}\n\n... [TRUNCATED: {} chars omitted] ...", head, stdout.len() - 6000)
+                        format!(
+                            "{}\n\n... [TRUNCATED: {} chars omitted] ...",
+                            head,
+                            stdout.len() - 6000
+                        )
                     } else {
                         stdout.to_string()
                     }

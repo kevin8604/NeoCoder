@@ -88,7 +88,17 @@ impl MemoryCategory {
 
     /// Whether this category represents coding-domain knowledge.
     pub fn is_coding(&self) -> bool {
-        matches!(self, MemoryCategory::Core | MemoryCategory::Pattern | MemoryCategory::Decision | MemoryCategory::Lesson | MemoryCategory::BugFix | MemoryCategory::ApiProtocol | MemoryCategory::Performance | MemoryCategory::Coding)
+        matches!(
+            self,
+            MemoryCategory::Core
+                | MemoryCategory::Pattern
+                | MemoryCategory::Decision
+                | MemoryCategory::Lesson
+                | MemoryCategory::BugFix
+                | MemoryCategory::ApiProtocol
+                | MemoryCategory::Performance
+                | MemoryCategory::Coding
+        )
     }
 
     /// Whether this category is exempt from Ebbinghaus decay.
@@ -110,12 +120,8 @@ impl MemoryCategory {
             MemoryCategory::BugFix | MemoryCategory::ApiProtocol => {
                 (recall_count as f64 + 1.0).ln() * 1.1 // slightly stronger retention — precise facts
             }
-            MemoryCategory::Performance => {
-                (recall_count as f64 + 1.0).ln() * 0.9
-            }
-            MemoryCategory::Lesson => {
-                (recall_count as f64 + 1.0).ln() * 0.8
-            }
+            MemoryCategory::Performance => (recall_count as f64 + 1.0).ln() * 0.9,
+            MemoryCategory::Lesson => (recall_count as f64 + 1.0).ln() * 0.8,
             MemoryCategory::General | MemoryCategory::Custom(_) => 0.2,
         }
     }
@@ -180,15 +186,80 @@ pub struct MemoryEntry {
 
 /// Coding-related keywords for relevance scoring.
 static CODING_KEYWORDS: &[&str] = &[
-    "rust", "tauri", "react", "typescript", "javascript", "python", "go", "java", "c++",
-    "api", "async", "await", "tokio", "function", "struct", "trait", "impl", "enum",
-    "compile", "cargo", "npm", "vite", "webpack", "docker", "git", "commit", "branch",
-    "error", "bug", "fix", "debug", "refactor", "test", "code", "module", "import",
-    "component", "hook", "state", "props", "render", "build", "deploy", "server",
-    "database", "sql", "query", "schema", "migration", "config", "cli", "sdk",
-    "pattern", "architecture", "design", "framework", "library", "dependency",
-    "memory", "cache", "thread", "lock", "mutex", "channel", "future", "stream",
-    "parsing", "serialization", "json", "yaml", "toml", "http", "rest", "rpc",
+    "rust",
+    "tauri",
+    "react",
+    "typescript",
+    "javascript",
+    "python",
+    "go",
+    "java",
+    "c++",
+    "api",
+    "async",
+    "await",
+    "tokio",
+    "function",
+    "struct",
+    "trait",
+    "impl",
+    "enum",
+    "compile",
+    "cargo",
+    "npm",
+    "vite",
+    "webpack",
+    "docker",
+    "git",
+    "commit",
+    "branch",
+    "error",
+    "bug",
+    "fix",
+    "debug",
+    "refactor",
+    "test",
+    "code",
+    "module",
+    "import",
+    "component",
+    "hook",
+    "state",
+    "props",
+    "render",
+    "build",
+    "deploy",
+    "server",
+    "database",
+    "sql",
+    "query",
+    "schema",
+    "migration",
+    "config",
+    "cli",
+    "sdk",
+    "pattern",
+    "architecture",
+    "design",
+    "framework",
+    "library",
+    "dependency",
+    "memory",
+    "cache",
+    "thread",
+    "lock",
+    "mutex",
+    "channel",
+    "future",
+    "stream",
+    "parsing",
+    "serialization",
+    "json",
+    "yaml",
+    "toml",
+    "http",
+    "rest",
+    "rpc",
 ];
 
 /// Compute keyword-based relevance of a memory entry to coding context.
@@ -196,7 +267,8 @@ static CODING_KEYWORDS: &[&str] = &[
 pub fn compute_coding_relevance(text: &str) -> f64 {
     let lower = text.to_lowercase();
     let word_count = lower.split_whitespace().count().max(1) as f64;
-    let matched: usize = CODING_KEYWORDS.iter()
+    let matched: usize = CODING_KEYWORDS
+        .iter()
         .filter(|kw| lower.contains(*kw))
         .count();
     // Score = matched_keywords / sqrt(word_count) — penalizes long text, rewards density
@@ -228,7 +300,9 @@ fn extract_topic_keywords(text: &str) -> Vec<String> {
 
     // Extract file paths (e.g., "pty.rs", "mod.rs", "agent/mod.rs")
     for word in lower.split_whitespace() {
-        let w = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '/' && c != '-' && c != '_');
+        let w = word.trim_matches(|c: char| {
+            !c.is_alphanumeric() && c != '.' && c != '/' && c != '-' && c != '_'
+        });
         if w.contains('.') && !w.starts_with('.') && w.len() > 3 {
             keywords.push(w.to_string());
         }
@@ -236,14 +310,53 @@ fn extract_topic_keywords(text: &str) -> Vec<String> {
 
     // Extract technical terms (camelCase, snake_case, known tech names)
     let tech_terms = [
-        "xterm", "pty", "portable-pty", "tauri", "rust", "tokio", "react",
-        "typescript", "python", "cargo", "npm", "api", "json", "jsonl",
-        "websocket", "stdio", "stdin", "stdout", "resize", "loop",
-        "iteration", "agent", "tool", "memory", "config", "cli",
-        "stream", "async", "await", "mutex", "lock", "thread",
-        "compile", "error", "panic", "debug", "test", "build",
-        "deepseek", "openai", "claude", "anthropic", "ollama",
-        "gpt-4", "gpt-4o", "qwen", "llama",
+        "xterm",
+        "pty",
+        "portable-pty",
+        "tauri",
+        "rust",
+        "tokio",
+        "react",
+        "typescript",
+        "python",
+        "cargo",
+        "npm",
+        "api",
+        "json",
+        "jsonl",
+        "websocket",
+        "stdio",
+        "stdin",
+        "stdout",
+        "resize",
+        "loop",
+        "iteration",
+        "agent",
+        "tool",
+        "memory",
+        "config",
+        "cli",
+        "stream",
+        "async",
+        "await",
+        "mutex",
+        "lock",
+        "thread",
+        "compile",
+        "error",
+        "panic",
+        "debug",
+        "test",
+        "build",
+        "deepseek",
+        "openai",
+        "claude",
+        "anthropic",
+        "ollama",
+        "gpt-4",
+        "gpt-4o",
+        "qwen",
+        "llama",
     ];
     for term in &tech_terms {
         if lower.contains(term) {
@@ -307,7 +420,12 @@ impl MemoryEntry {
     }
 
     /// Create a new entry tied to a specific session.
-    pub fn with_session(text: String, section: String, category: MemoryCategory, session_id: String) -> Self {
+    pub fn with_session(
+        text: String,
+        section: String,
+        category: MemoryCategory,
+        session_id: String,
+    ) -> Self {
         let mut entry = Self::with_category(text, section, category);
         entry.session_id = Some(session_id);
         entry
@@ -555,7 +673,10 @@ pub trait MemoryBackend {
     /// Recall an entry by its named key (idempotent access pattern).
     fn recall_by_key(&self, key: &str) -> Result<Option<MemoryEntry>, String>;
     /// List all entries, optionally filtered by category.
-    fn list_all(&self, category_filter: Option<&MemoryCategory>) -> Result<Vec<MemoryEntry>, String>;
+    fn list_all(
+        &self,
+        category_filter: Option<&MemoryCategory>,
+    ) -> Result<Vec<MemoryEntry>, String>;
     /// Remove an entry by its id.
     fn forget(&self, id: &str) -> Result<(), String>;
     /// Total number of stored entries.
@@ -589,7 +710,10 @@ mod tests {
         let mut entry = MemoryEntry::new("- test".to_string(), "Test".to_string());
         let s0 = entry.stability;
         update_recall(&mut entry);
-        assert!(entry.stability > s0, "Stability should increase after recall");
+        assert!(
+            entry.stability > s0,
+            "Stability should increase after recall"
+        );
         assert_eq!(entry.recall_count, 1);
     }
 
@@ -650,20 +774,18 @@ mod tests {
 
     #[test]
     fn test_serialize_roundtrip() {
-        let entries = vec![
-            MemoryEntry {
-                id: "test-id".to_string(),
-                key: None,
-                text: "- [Lesson] Test".to_string(),
-                created: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
-                last_recalled: NaiveDate::from_ymd_opt(2026, 6, 20).unwrap(),
-                recall_count: 3,
-                stability: 2.5,
-                section: "Patterns".to_string(),
-                category: MemoryCategory::Lesson,
-                session_id: None,
-            },
-        ];
+        let entries = vec![MemoryEntry {
+            id: "test-id".to_string(),
+            key: None,
+            text: "- [Lesson] Test".to_string(),
+            created: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+            last_recalled: NaiveDate::from_ymd_opt(2026, 6, 20).unwrap(),
+            recall_count: 3,
+            stability: 2.5,
+            section: "Patterns".to_string(),
+            category: MemoryCategory::Lesson,
+            session_id: None,
+        }];
         let serialized = serialize_memory_entries(&entries);
         let parsed = parse_memory_entries(&serialized);
         assert_eq!(parsed.len(), 1);

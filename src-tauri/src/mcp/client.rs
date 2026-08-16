@@ -8,8 +8,8 @@
 //!   5. send_request awaits the oneshot receiver
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
@@ -93,10 +93,7 @@ impl McpClient {
                             }
                         } else {
                             // Notification — silently consume
-                            log::trace!(
-                                "[MCP] Notification from '{}'",
-                                config_name_clone
-                            );
+                            log::trace!("[MCP] Notification from '{}'", config_name_clone);
                         }
                     }
                     Err(e) => {
@@ -132,9 +129,7 @@ impl McpClient {
             }
         });
 
-        let response = self
-            .send_request("initialize", Some(params))
-            .await?;
+        let response = self.send_request("initialize", Some(params)).await?;
 
         if let Some(ref err) = response.error {
             return Err(format!(
@@ -146,7 +141,10 @@ impl McpClient {
         log::info!(
             "[MCP] Server '{}' initialized: {:?}",
             self.config_name,
-            response.result.as_ref().and_then(|r| r.get("serverInfo").and_then(|i| i.get("name")))
+            response
+                .result
+                .as_ref()
+                .and_then(|r| r.get("serverInfo").and_then(|i| i.get("name")))
         );
 
         // Send initialized notification (no id)
@@ -193,9 +191,7 @@ impl McpClient {
             "arguments": arguments,
         });
 
-        let response = self
-            .send_request("tools/call", Some(params))
-            .await?;
+        let response = self.send_request("tools/call", Some(params)).await?;
 
         if let Some(ref err) = response.error {
             return Err(format!(
@@ -214,9 +210,16 @@ impl McpClient {
                     .iter()
                     .filter_map(|item| {
                         if item.get("type").and_then(|t| t.as_str()) == Some("text") {
-                            item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                            item.get("text")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
                         } else {
-                            Some(format!("[{}]", item.get("type").and_then(|t| t.as_str()).unwrap_or("unknown")))
+                            Some(format!(
+                                "[{}]",
+                                item.get("type")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("unknown")
+                            ))
                         }
                     })
                     .collect::<Vec<String>>()
@@ -318,7 +321,10 @@ impl McpClient {
             .write_all(b"\n")
             .await
             .map_err(|e| format!("MCP write newline: {}", e))?;
-        stdin.flush().await.map_err(|e| format!("MCP flush: {}", e))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| format!("MCP flush: {}", e))?;
 
         Ok(())
     }
@@ -331,6 +337,12 @@ pub struct McpRegistry {
     clients: Mutex<HashMap<String, Arc<McpClient>>>,
     /// All discovered tools: prefixed_name → (server_name, McpToolDef)
     tools: Mutex<HashMap<String, (String, McpToolDef)>>,
+}
+
+impl Default for McpRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl McpRegistry {
@@ -446,7 +458,10 @@ impl McpRegistry {
     /// Get the number of tools registered by a specific server.
     pub async fn tool_count_for_server(&self, server_name: &str) -> usize {
         let tools = self.tools.lock().await;
-        tools.iter().filter(|(_, (srv, _))| srv == server_name).count()
+        tools
+            .iter()
+            .filter(|(_, (srv, _))| srv == server_name)
+            .count()
     }
 
     /// Disconnect from a server: remove its client (process killed on drop)

@@ -1,12 +1,15 @@
-use tauri::{Emitter, State};
-use crate::completion::{CompletionContext, CompletionEvent, build_fim_prompt, COMPLETION_SYSTEM_PROMPT, edit_intent::EditIntentTracker, multi_file};
+use crate::completion::{
+    COMPLETION_SYSTEM_PROMPT, CompletionContext, CompletionEvent, build_fim_prompt,
+    edit_intent::EditIntentTracker, multi_file,
+};
 use crate::config::AppSettings;
 use crate::llm::{self, FimRequest};
 use crate::rag::CodeIndexer;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{Emitter, State};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -14,7 +17,8 @@ use uuid::Uuid;
 pub type CancelMap = Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>>;
 
 /// Store completion candidates: id -> (candidates list, current index)
-pub type CompletionCandidates = Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, usize)>>>;
+pub type CompletionCandidates =
+    Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, usize)>>>;
 
 /// Drop guard to auto-remove cancel flag on completion
 struct CancelGuard {
@@ -41,7 +45,11 @@ pub struct CompletionCache {
 
 impl CompletionCache {
     pub fn new(max_size: usize) -> Self {
-        Self { entries: std::collections::HashMap::new(), order: Vec::with_capacity(max_size), max_size }
+        Self {
+            entries: std::collections::HashMap::new(),
+            order: Vec::with_capacity(max_size),
+            max_size,
+        }
     }
 
     pub fn get(&self, key: u64) -> Option<&String> {
@@ -71,7 +79,15 @@ fn build_cache_key(ctx: &CompletionContext) -> u64 {
     ctx.file_path.hash(&mut hasher);
     ctx.language.hash(&mut hasher);
     // Use last 80 chars of prefix as context fingerprint
-    let prefix_tail: String = ctx.prefix.chars().rev().take(80).collect::<Vec<_>>().into_iter().rev().collect();
+    let prefix_tail: String = ctx
+        .prefix
+        .chars()
+        .rev()
+        .take(80)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     prefix_tail.hash(&mut hasher);
     // Use first 40 chars of suffix
     let suffix_head: String = ctx.suffix.chars().take(40).collect();
@@ -107,7 +123,10 @@ pub async fn request_completion(
             map.insert(id.clone(), cancel_flag.clone());
         }
     }
-    let _guard = CancelGuard { map: cancel_map.inner().clone(), id: id.clone() };
+    let _guard = CancelGuard {
+        map: cancel_map.inner().clone(),
+        id: id.clone(),
+    };
 
     // Collect related file context (non-blocking, with timeout)
     // 1. Same-directory symbol scan (fast, no index needed)
@@ -121,25 +140,28 @@ pub async fn request_completion(
     )
     .await
     .ok();
-    let related_context = tokio::time::timeout(
-        std::time::Duration::from_millis(200),
-        dir_context,
-    )
-    .await
-    .ok();
+    let related_context = tokio::time::timeout(std::time::Duration::from_millis(200), dir_context)
+        .await
+        .ok();
 
     // Merge: RAG results first (higher signal), then same-directory symbols
     let mut merged_files = Vec::new();
     if let Some(rag) = rag_context {
         for f in rag.files {
-            if !merged_files.iter().any(|x: &crate::completion::multi_file::RelatedFile| x.path == f.path) {
+            if !merged_files
+                .iter()
+                .any(|x: &crate::completion::multi_file::RelatedFile| x.path == f.path)
+            {
                 merged_files.push(f);
             }
         }
     }
     if let Some(dir) = related_context {
         for f in dir.files {
-            if !merged_files.iter().any(|x: &crate::completion::multi_file::RelatedFile| x.path == f.path) {
+            if !merged_files
+                .iter()
+                .any(|x: &crate::completion::multi_file::RelatedFile| x.path == f.path)
+            {
                 merged_files.push(f);
             }
         }
@@ -150,7 +172,13 @@ pub async fn request_completion(
 
     // Enrich context with related files + edit intent
     let enriched_context = CompletionContext {
-        related_context: if merged_files.is_empty() { None } else { Some(crate::completion::multi_file::RelatedContext { files: merged_files }) },
+        related_context: if merged_files.is_empty() {
+            None
+        } else {
+            Some(crate::completion::multi_file::RelatedContext {
+                files: merged_files,
+            })
+        },
         recent_edits,
         ..context
     };
@@ -158,16 +186,25 @@ pub async fn request_completion(
     // Check cache first
     let cache_key = build_cache_key(&enriched_context);
     {
-        let cache_lock = cache.lock().map_err(|e| format!("Cache lock error: {}", e))?;
+        let cache_lock = cache
+            .lock()
+            .map_err(|e| format!("Cache lock error: {}", e))?;
         if let Some(cached) = cache_lock.get(cache_key) {
             log::info!("Completion cache hit for key {}", cache_key);
             let processed = cached.clone();
             drop(cache_lock);
-            let _ = app.emit("completion-event", CompletionEvent::Finished {
-                id: id.clone(),
-                full_text: processed.clone(),
+            let _ = app.emit(
+                "completion-event",
+                CompletionEvent::Finished {
+                    id: id.clone(),
+                    full_text: processed.clone(),
+                },
+            );
+            return Ok(CompletionResponse {
+                id,
+                text: processed,
+                candidates_count: 1,
             });
-            return Ok(CompletionResponse { id, text: processed, candidates_count: 1 });
         }
     }
 
@@ -176,9 +213,10 @@ pub async fn request_completion(
     let fim_prompt = build_fim_prompt(&enriched_context, "openai");
 
     // Emit started event
-    let _ = app.emit("completion-event", CompletionEvent::Started {
-        id: id.clone(),
-    });
+    let _ = app.emit(
+        "completion-event",
+        CompletionEvent::Started { id: id.clone() },
+    );
 
     let api_key = settings.api_key.clone();
     let model = settings.completion_model.clone();
@@ -214,20 +252,25 @@ pub async fn request_completion(
                 }
                 // Only stream tokens for the first candidate (temp=0.0)
                 if temp == 0.0 {
-                    let _ = app_clone.emit("completion-event", CompletionEvent::Delta {
-                        id: id_clone.clone(),
-                        token,
-                    });
+                    let _ = app_clone.emit(
+                        "completion-event",
+                        CompletionEvent::Delta {
+                            id: id_clone.clone(),
+                            token,
+                        },
+                    );
                 }
                 Ok(())
             },
             Some(cancel),
-        ).await;
+        )
+        .await;
 
         match result {
             Ok(()) => {
                 let accumulated = full_text.lock().map(|s| s.clone()).unwrap_or_default();
-                let processed = crate::completion::post_process_completion(&accumulated, &enriched_context);
+                let processed =
+                    crate::completion::post_process_completion(&accumulated, &enriched_context);
                 if processed.len() > 1 && !candidates.contains(&processed) {
                     candidates.push(processed);
                 }
@@ -235,10 +278,13 @@ pub async fn request_completion(
             Err(e) => {
                 // If first candidate fails, abort entirely
                 if candidates.is_empty() {
-                    let _ = app.emit("completion-event", CompletionEvent::Error {
-                        id: id.clone(),
-                        message: e.clone(),
-                    });
+                    let _ = app.emit(
+                        "completion-event",
+                        CompletionEvent::Error {
+                            id: id.clone(),
+                            message: e.clone(),
+                        },
+                    );
                     return Err(e);
                 }
                 // Subsequent candidate failures are acceptable
@@ -249,10 +295,13 @@ pub async fn request_completion(
 
     // Fallback: if no candidates generated
     if candidates.is_empty() {
-        let _ = app.emit("completion-event", CompletionEvent::Error {
-            id: id.clone(),
-            message: "No completion candidates generated".to_string(),
-        });
+        let _ = app.emit(
+            "completion-event",
+            CompletionEvent::Error {
+                id: id.clone(),
+                message: "No completion candidates generated".to_string(),
+            },
+        );
         return Err("No completion candidates generated".to_string());
     }
 
@@ -265,16 +314,19 @@ pub async fn request_completion(
     }
 
     // Store primary in cache
-    if primary.len() > 1 {
-        if let Ok(mut cache_lock) = cache.lock() {
-            cache_lock.insert(cache_key, primary.clone());
-        }
+    if primary.len() > 1
+        && let Ok(mut cache_lock) = cache.lock()
+    {
+        cache_lock.insert(cache_key, primary.clone());
     }
 
-    let _ = app.emit("completion-event", CompletionEvent::Finished {
-        id: id.clone(),
-        full_text: primary.clone(),
-    });
+    let _ = app.emit(
+        "completion-event",
+        CompletionEvent::Finished {
+            id: id.clone(),
+            full_text: primary.clone(),
+        },
+    );
 
     Ok(CompletionResponse {
         id,
@@ -291,8 +343,12 @@ pub async fn cycle_completion(
     direction: i32,
     candidates_state: State<'_, CompletionCandidates>,
 ) -> Result<String, String> {
-    let mut map = candidates_state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let entry = map.get_mut(&id).ok_or_else(|| "No candidates for this completion id".to_string())?;
+    let mut map = candidates_state
+        .lock()
+        .map_err(|e| format!("Lock error: {}", e))?;
+    let entry = map
+        .get_mut(&id)
+        .ok_or_else(|| "No candidates for this completion id".to_string())?;
     let (ref candidates, ref mut index) = *entry;
     if candidates.is_empty() {
         return Err("No candidates available".to_string());
@@ -307,10 +363,13 @@ pub async fn cycle_completion(
     let text = candidates[new_index].clone();
     drop(map);
 
-    let _ = app.emit("completion-event", CompletionEvent::Finished {
-        id: id.clone(),
-        full_text: text.clone(),
-    });
+    let _ = app.emit(
+        "completion-event",
+        CompletionEvent::Finished {
+            id: id.clone(),
+            full_text: text.clone(),
+        },
+    );
     Ok(text)
 }
 
@@ -326,9 +385,12 @@ pub async fn cancel_completion(
                 flag.store(true, Ordering::SeqCst);
             }
         }
-        let _ = app.emit("completion-event", CompletionEvent::Cancelled {
-            id: ids.first().cloned().unwrap_or_default(),
-        });
+        let _ = app.emit(
+            "completion-event",
+            CompletionEvent::Cancelled {
+                id: ids.first().cloned().unwrap_or_default(),
+            },
+        );
     }
     Ok(())
 }

@@ -78,7 +78,12 @@ pub struct CodeIndexer {
 }
 
 impl CodeIndexer {
-    pub fn new(provider: LlmProvider, api_key: String, base_url: Option<String>, embed_model: String) -> Self {
+    pub fn new(
+        provider: LlmProvider,
+        api_key: String,
+        base_url: Option<String>,
+        embed_model: String,
+    ) -> Self {
         CodeIndexer {
             chunks: Arc::new(RwLock::new(Vec::new())),
             file_map: Arc::new(RwLock::new(HashMap::new())),
@@ -87,11 +92,31 @@ impl CodeIndexer {
             base_url,
             embed_model,
             supported_extensions: vec![
-                "rs".into(), "go".into(), "py".into(), "js".into(), "ts".into(),
-                "jsx".into(), "tsx".into(), "java".into(), "rb".into(), "php".into(),
-                "c".into(), "h".into(), "cpp".into(), "hpp".into(), "cs".into(),
-                "swift".into(), "kt".into(), "scala".into(), "sql".into(), "sh".into(),
-                "html".into(), "css".into(), "json".into(), "yaml".into(), "toml".into(),
+                "rs".into(),
+                "go".into(),
+                "py".into(),
+                "js".into(),
+                "ts".into(),
+                "jsx".into(),
+                "tsx".into(),
+                "java".into(),
+                "rb".into(),
+                "php".into(),
+                "c".into(),
+                "h".into(),
+                "cpp".into(),
+                "hpp".into(),
+                "cs".into(),
+                "swift".into(),
+                "kt".into(),
+                "scala".into(),
+                "sql".into(),
+                "sh".into(),
+                "html".into(),
+                "css".into(),
+                "json".into(),
+                "yaml".into(),
+                "toml".into(),
                 "md".into(),
             ],
         }
@@ -172,7 +197,10 @@ impl CodeIndexer {
                 Err(_) => continue,
             };
 
-            match self.index_file(&file_path.to_string_lossy(), &content).await {
+            match self
+                .index_file(&file_path.to_string_lossy(), &content)
+                .await
+            {
                 Ok(count) => {
                     total_files += 1;
                     total_chunks += count;
@@ -199,8 +227,7 @@ impl CodeIndexer {
             // Mark removed indices by setting them to None (we use a sentinel approach)
             // Since we're using Vec, we rebuild the Vec without the removed indices
             let mut new_chunks: Vec<IndexedChunk> = Vec::with_capacity(chunks_lock.len());
-            let removed_set: HashSet<usize> =
-                indices.into_iter().collect();
+            let removed_set: HashSet<usize> = indices.into_iter().collect();
             let mut new_index_map: HashMap<String, Vec<usize>> = HashMap::new();
 
             let old_chunks = std::mem::take(&mut *chunks_lock);
@@ -231,14 +258,22 @@ impl CodeIndexer {
     /// Handle file change event: re-index on create/modify, remove on delete.
     /// Called by the background auto-reindex loop in lib.rs for incremental RAG updates.
     /// Returns `true` if the index was actually modified.
-    pub async fn handle_file_change(&self, path: &Path, kind: crate::fs_watcher::FileChangeKind) -> bool {
+    pub async fn handle_file_change(
+        &self,
+        path: &Path,
+        kind: crate::fs_watcher::FileChangeKind,
+    ) -> bool {
         let path_str = path.to_string_lossy().to_string();
 
         // Check if file extension is supported
-        let ext = path.extension()
+        let ext = path
+            .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_lowercase());
-        let is_supported = ext.as_ref().map(|e| self.supported_extensions.contains(e)).unwrap_or(false);
+        let is_supported = ext
+            .as_ref()
+            .map(|e| self.supported_extensions.contains(e))
+            .unwrap_or(false);
 
         if !is_supported {
             return false;
@@ -247,23 +282,25 @@ impl CodeIndexer {
         match kind {
             crate::fs_watcher::FileChangeKind::Deleted => {
                 self.remove_file(&path_str).await;
-                log::info!("[RAG] Removed indexed chunks for deleted file: {}", path_str);
+                log::info!(
+                    "[RAG] Removed indexed chunks for deleted file: {}",
+                    path_str
+                );
                 true
             }
-            crate::fs_watcher::FileChangeKind::Created | crate::fs_watcher::FileChangeKind::Modified => {
+            crate::fs_watcher::FileChangeKind::Created
+            | crate::fs_watcher::FileChangeKind::Modified => {
                 match tokio::fs::read_to_string(path).await {
-                    Ok(content) => {
-                        match self.index_file(&path_str, &content).await {
-                            Ok(count) => {
-                                log::info!("[RAG] Re-indexed {} chunks for file: {}", count, path_str);
-                                true
-                            }
-                            Err(e) => {
-                                log::warn!("[RAG] Failed to index file {}: {}", path_str, e);
-                                false
-                            }
+                    Ok(content) => match self.index_file(&path_str, &content).await {
+                        Ok(count) => {
+                            log::info!("[RAG] Re-indexed {} chunks for file: {}", count, path_str);
+                            true
                         }
-                    }
+                        Err(e) => {
+                            log::warn!("[RAG] Failed to index file {}: {}", path_str, e);
+                            false
+                        }
+                    },
                     Err(e) => {
                         log::warn!("[RAG] Failed to read file {}: {}", path_str, e);
                         false
@@ -274,7 +311,11 @@ impl CodeIndexer {
     }
 
     /// Search for code chunks similar to the query (vector similarity).
-    pub async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>, String> {
+    pub async fn search(
+        &self,
+        query: &str,
+        max_results: usize,
+    ) -> Result<Vec<SearchResult>, String> {
         let chunks_lock = self.chunks.read().await;
         if chunks_lock.is_empty() {
             return Ok(vec![]);
@@ -286,7 +327,11 @@ impl CodeIndexer {
         }
 
         // Truncate to prevent token limit issues
-        let safe_query = if trimmed.len() > 500 { crate::agent::utils::safe_truncate(trimmed, 500) } else { trimmed };
+        let safe_query = if trimmed.len() > 500 {
+            crate::agent::utils::safe_truncate(trimmed, 500)
+        } else {
+            trimmed
+        };
         let query_texts = vec![safe_query.to_string()];
         let query_embeddings = llm::embed_texts(
             &self.provider,
@@ -328,17 +373,31 @@ impl CodeIndexer {
     /// Returns scored results using BM25 ranking.
     pub async fn bm25_search(&self, query: &str, max_results: usize) -> Vec<SearchResult> {
         let chunks = self.chunks.read().await;
-        if chunks.is_empty() { return vec![]; }
+        if chunks.is_empty() {
+            return vec![];
+        }
 
         let trimmed = query.trim();
-        if trimmed.is_empty() || trimmed.len() < 2 { return vec![]; }
-        let safe_query = if trimmed.len() > 500 { crate::agent::utils::safe_truncate(trimmed, 500) } else { trimmed };
+        if trimmed.is_empty() || trimmed.len() < 2 {
+            return vec![];
+        }
+        let safe_query = if trimmed.len() > 500 {
+            crate::agent::utils::safe_truncate(trimmed, 500)
+        } else {
+            trimmed
+        };
 
         let query_terms: Vec<String> = tokenize(safe_query);
-        if query_terms.is_empty() { return vec![]; }
+        if query_terms.is_empty() {
+            return vec![];
+        }
 
         let n = chunks.len() as f32;
-        let avg_dl: f32 = chunks.iter().map(|c| c.chunk.content.len() as f32).sum::<f32>() / n.max(1.0);
+        let avg_dl: f32 = chunks
+            .iter()
+            .map(|c| c.chunk.content.len() as f32)
+            .sum::<f32>()
+            / n.max(1.0);
 
         // Precompute document frequency for each query term (one pass)
         let query_terms_lower: Vec<String> = query_terms.iter().map(|t| t.to_lowercase()).collect();
@@ -367,7 +426,9 @@ impl CodeIndexer {
                     .map(|qt| {
                         let tf = tf_map.get(qt).copied().unwrap_or(0.0);
                         let df = df_map.get(qt).copied().unwrap_or(0.0);
-                        if df == 0.0 { return 0.0; }
+                        if df == 0.0 {
+                            return 0.0;
+                        }
                         let idf = ((n - df + 0.5) / (df + 0.5)).ln_1p();
                         (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * dl / avg_dl)) * idf
                     })
@@ -391,7 +452,11 @@ impl CodeIndexer {
     }
 
     /// Hybrid search: vector + BM25, merged via RRF (Reciprocal Rank Fusion).
-    pub async fn hybrid_search(&self, query: &str, max_results: usize) -> Result<Vec<SearchResult>, String> {
+    pub async fn hybrid_search(
+        &self,
+        query: &str,
+        max_results: usize,
+    ) -> Result<Vec<SearchResult>, String> {
         let trimmed = query.trim();
         if trimmed.is_empty() || trimmed.len() < 2 {
             return Ok(vec![]);
@@ -399,27 +464,33 @@ impl CodeIndexer {
 
         let k = max_results * 2; // fetch more for better fusion
 
-        let (vec_results, bm25_results) = tokio::join!(
-            self.search(query, k),
-            async { self.bm25_search(query, k).await },
-        );
+        let (vec_results, bm25_results) = tokio::join!(self.search(query, k), async {
+            self.bm25_search(query, k).await
+        },);
 
         let vec_results = vec_results.unwrap_or_default();
 
         // Reciprocal Rank Fusion
         let rrf_k = 60f32;
-        let mut merged: std::collections::HashMap<String, (f32, &CodeChunk)> = std::collections::HashMap::new();
+        let mut merged: std::collections::HashMap<String, (f32, &CodeChunk)> =
+            std::collections::HashMap::new();
 
         for (rank, sr) in vec_results.iter().enumerate() {
             let key = &sr.chunk.id;
             let rrf_score = 1.0 / (rrf_k + rank as f32 + 1.0);
-            merged.entry(key.clone()).or_insert_with(|| (0.0, &sr.chunk)).0 += rrf_score;
+            merged
+                .entry(key.clone())
+                .or_insert_with(|| (0.0, &sr.chunk))
+                .0 += rrf_score;
         }
 
         for (rank, sr) in bm25_results.iter().enumerate() {
             let key = &sr.chunk.id;
             let rrf_score = 1.0 / (rrf_k + rank as f32 + 1.0);
-            merged.entry(key.clone()).or_insert_with(|| (0.0, &sr.chunk)).0 += rrf_score;
+            merged
+                .entry(key.clone())
+                .or_insert_with(|| (0.0, &sr.chunk))
+                .0 += rrf_score;
         }
 
         let mut results: Vec<SearchResult> = merged
@@ -430,15 +501,19 @@ impl CodeIndexer {
             })
             .collect();
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(max_results);
         Ok(results)
     }
 
     /// Save indexed chunks to SQLite database.
     pub async fn save_to_db(&self, db_path: &str) -> Result<usize, String> {
-        let conn = rusqlite::Connection::open(db_path)
-            .map_err(|e| format!("Failed to open DB: {}", e))?;
+        let conn =
+            rusqlite::Connection::open(db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS chunks (
@@ -464,10 +539,8 @@ impl CodeIndexer {
             .map_err(|e| format!("Prepare: {}", e))?;
 
         for ic in chunks.iter() {
-            let embedding_bytes: Vec<u8> = ic.embedding
-                .iter()
-                .flat_map(|f| f.to_le_bytes())
-                .collect();
+            let embedding_bytes: Vec<u8> =
+                ic.embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
             let ctype = format!("{:?}", ic.chunk.chunk_type);
             stmt.execute(rusqlite::params![
                 ic.chunk.id,
@@ -493,7 +566,15 @@ impl CodeIndexer {
         // synchronously and collect rows *before* the first .await point —
         // this keeps the future Send (required inside tauri commands).
         let rows: Vec<(
-            String, String, i64, i64, String, ChunkType, String, String, Vec<f32>,
+            String,
+            String,
+            i64,
+            i64,
+            String,
+            ChunkType,
+            String,
+            String,
+            Vec<f32>,
         )> = {
             let conn = rusqlite::Connection::open(db_path)
                 .map_err(|e| format!("Failed to open DB: {}", e))?;
@@ -527,7 +608,10 @@ impl CodeIndexer {
                         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                         .collect();
 
-                    Ok((id, file_path, start_line, end_line, language, chunk_type, content, summary, embedding))
+                    Ok((
+                        id, file_path, start_line, end_line, language, chunk_type, content,
+                        summary, embedding,
+                    ))
                 })
                 .map_err(|e| format!("Query: {}", e))?;
 
@@ -544,7 +628,18 @@ impl CodeIndexer {
         file_map.clear();
 
         let mut count = 0usize;
-        for (id, file_path, start_line, end_line, language, chunk_type, content, summary, embedding) in rows {
+        for (
+            id,
+            file_path,
+            start_line,
+            end_line,
+            language,
+            chunk_type,
+            content,
+            summary,
+            embedding,
+        ) in rows
+        {
             let idx = chunks.len();
             chunks.push(IndexedChunk {
                 chunk: CodeChunk {
@@ -595,7 +690,9 @@ pub(super) fn tokenize(text: &str) -> Vec<String> {
 pub(super) fn term_frequencies(doc: &str) -> std::collections::HashMap<String, f32> {
     let tokens = tokenize(doc);
     let total = tokens.len() as f32;
-    if total == 0.0 { return std::collections::HashMap::new(); }
+    if total == 0.0 {
+        return std::collections::HashMap::new();
+    }
     let mut tf: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
     for t in tokens {
         *tf.entry(t).or_default() += 1.0;
@@ -684,10 +781,10 @@ fn chunk_code(file_path: &str, content: &str) -> Vec<CodeChunk> {
         // Remove overlapping ranges (keep the one that starts later if overlap)
         let mut filtered: Vec<(usize, usize, ChunkType, String)> = Vec::new();
         for range in chunk_ranges {
-            if let Some(last) = filtered.last() {
-                if range.0 < last.1 {
-                    continue; // Overlap, skip
-                }
+            if let Some(last) = filtered.last()
+                && range.0 < last.1
+            {
+                continue; // Overlap, skip
             }
             filtered.push(range);
         }
@@ -774,8 +871,8 @@ pub(super) fn find_block_end(lines: &[&str], start: usize, _language: &str) -> O
     let mut brace_depth = 0i32;
     let mut found_open = false;
 
-    for i in start..lines.len() {
-        for c in lines[i].chars() {
+    for (i, line) in lines.iter().enumerate().skip(start) {
+        for c in line.chars() {
             match c {
                 '{' => {
                     brace_depth += 1;
@@ -805,7 +902,11 @@ fn collect_files(dir: &Path, files: &mut Vec<PathBuf>, extensions: &[String]) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             // Skip common non-source directories
             if !name.starts_with('.')
                 && name != "node_modules"
@@ -817,12 +918,11 @@ fn collect_files(dir: &Path, files: &mut Vec<PathBuf>, extensions: &[String]) {
             {
                 collect_files(&path, files, extensions);
             }
-        } else if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if extensions.contains(&ext.to_string_lossy().to_lowercase()) {
-                    files.push(path);
-                }
-            }
+        } else if path.is_file()
+            && let Some(ext) = path.extension()
+            && extensions.contains(&ext.to_string_lossy().to_lowercase())
+        {
+            files.push(path);
         }
     }
 }

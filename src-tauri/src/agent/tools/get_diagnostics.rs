@@ -40,7 +40,10 @@ async fn run_diagnostic_cmd(
                 }
             } else {
                 if combined.len() > 4000 {
-                    format!("{}\n... (truncated at 4KB)", crate::agent::utils::safe_truncate(&combined, 4000))
+                    format!(
+                        "{}\n... (truncated at 4KB)",
+                        crate::agent::utils::safe_truncate(&combined, 4000)
+                    )
                 } else {
                     combined
                 }
@@ -64,12 +67,14 @@ impl Tool for GetDiagnostics {
         let resolved = match file_path {
             Some(p) => crate::agent::utils::resolve_path(ctx.project_path.as_deref(), p),
             None => {
-                return "Error: file_path is required. Specify the file to get diagnostics for.".to_string();
+                return "Error: file_path is required. Specify the file to get diagnostics for."
+                    .to_string();
             }
         };
 
         let path_str = resolved.to_string_lossy().to_string();
-        let file_name = resolved.file_name()
+        let file_name = resolved
+            .file_name()
             .map(|f| f.to_string_lossy().to_string())
             .unwrap_or_default();
 
@@ -87,48 +92,65 @@ impl Tool for GetDiagnostics {
         match lsp_lang {
             "rust" => {
                 let result = run_diagnostic_cmd(
-                    "cargo", &["check", "--message-format=short"], work_dir, Some(&path_str),
-                ).await;
+                    "cargo",
+                    &["check", "--message-format=short"],
+                    work_dir,
+                    Some(&path_str),
+                )
+                .await;
                 output.push_str(&result);
             }
             "typescript" | "javascript" => {
                 // Try tsc first
                 let result = run_diagnostic_cmd(
-                    "npx", &["tsc", "--noEmit", "--pretty", "false"], work_dir, Some(&file_name),
-                ).await;
+                    "npx",
+                    &["tsc", "--noEmit", "--pretty", "false"],
+                    work_dir,
+                    Some(&file_name),
+                )
+                .await;
                 output.push_str(&result);
             }
             "python" => {
                 // Try py_compile
-                let result = run_diagnostic_cmd(
-                    "python", &["-m", "py_compile", &path_str], work_dir, None,
-                ).await;
+                let result =
+                    run_diagnostic_cmd("python", &["-m", "py_compile", &path_str], work_dir, None)
+                        .await;
                 output.push_str(&result);
             }
             "go" => {
-                let result = run_diagnostic_cmd(
-                    "go", &["vet", "./..."], work_dir, Some(&file_name),
-                ).await;
+                let result =
+                    run_diagnostic_cmd("go", &["vet", "./..."], work_dir, Some(&file_name)).await;
                 output.push_str(&result);
             }
             "c" | "cpp" => {
                 // Try gcc/g++ syntax check
                 let compiler = if lsp_lang == "c" { "gcc" } else { "g++" };
                 let result = run_diagnostic_cmd(
-                    compiler, &["-fsyntax-only", "-Wall", &path_str], work_dir, Some(&file_name),
-                ).await;
+                    compiler,
+                    &["-fsyntax-only", "-Wall", &path_str],
+                    work_dir,
+                    Some(&file_name),
+                )
+                .await;
                 output.push_str(&result);
             }
             "java" => {
                 let result = run_diagnostic_cmd(
-                    "javac", &["-Xlint:all", &path_str], work_dir, Some(&file_name),
-                ).await;
+                    "javac",
+                    &["-Xlint:all", &path_str],
+                    work_dir,
+                    Some(&file_name),
+                )
+                .await;
                 output.push_str(&result);
             }
             _ => {
                 output.push_str("Language-specific diagnostics not available. ");
                 output.push_str("Supported: Rust (cargo check), TypeScript (tsc), Python (py_compile), Go (go vet), C/C++ (gcc/g++), Java (javac).\n");
-                output.push_str("Use `run_terminal_command` with your project's linter for other languages.\n");
+                output.push_str(
+                    "Use `run_terminal_command` with your project's linter for other languages.\n",
+                );
             }
         }
 

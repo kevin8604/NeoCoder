@@ -18,7 +18,10 @@ impl Tool for RunTerminalCommand {
         // 安全检查: sandbox command check (includes built-in + user-configured blocked commands)
         if let Err(reason) = ctx.sandbox.check_command(cmd) {
             log::warn!("Blocked dangerous command '{}': {}", cmd, reason);
-            return format!("Error: Command blocked for safety: {}. If you believe this is a false positive, ask the user to run it manually.", reason);
+            return format!(
+                "Error: Command blocked for safety: {}. If you believe this is a false positive, ask the user to run it manually.",
+                reason
+            );
         }
 
         let work_dir = ctx.project_path.as_deref().unwrap_or(".");
@@ -44,7 +47,7 @@ impl Tool for RunTerminalCommand {
                 }
                 if !stderr_str.is_empty() {
                     if !result.is_empty() {
-                        result.push_str("\n");
+                        result.push('\n');
                     }
                     result.push_str("STDERR:\n");
                     if stderr_str.len() > max_output {

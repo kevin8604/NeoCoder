@@ -33,7 +33,11 @@ impl Tool for SearchCodebase {
                             };
                             output.push_str(&format!(
                                 "{}. {} ({}, score: {:.3})\n```\n{}\n```\n\n",
-                                i + 1, r.chunk.file_path, lines, r.score, r.chunk.content
+                                i + 1,
+                                r.chunk.file_path,
+                                lines,
+                                r.score,
+                                r.chunk.content
                             ));
                         }
                         output

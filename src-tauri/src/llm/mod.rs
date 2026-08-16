@@ -1,8 +1,8 @@
 use crate::config::LlmProvider;
 use futures_util::StreamExt;
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub mod health;
@@ -73,14 +73,13 @@ impl Serialize for ChatMessage {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let has_images = self.images.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
-        let field_count = 2usize
-            + if has_images { 0 } else { 0 }  // content is always present
-            + self.tool_calls.is_some() as usize
-            + self.tool_call_id.is_some() as usize;
+        let field_count =
+            2usize + self.tool_calls.is_some() as usize + self.tool_call_id.is_some() as usize;
         let mut s = serializer.serialize_struct("ChatMessage", field_count)?;
         s.serialize_field("role", &self.role)?;
         if has_images {
-            let mut parts: Vec<serde_json::Value> = vec![serde_json::json!({"type": "text", "text": self.content})];
+            let mut parts: Vec<serde_json::Value> =
+                vec![serde_json::json!({"type": "text", "text": self.content})];
             for img in self.images.as_ref().unwrap() {
                 let mut image_url = serde_json::json!({"url": img.url});
                 if let Some(ref detail) = img.detail {
@@ -125,15 +124,28 @@ pub async fn stream_fim(
     cancel: Option<CancelFlag>,
 ) -> Result<(), String> {
     match provider {
-        LlmProvider::OpenAI => stream_openai_fim(api_key, base_url, request, &mut on_token, cancel).await,
+        LlmProvider::OpenAI => {
+            stream_openai_fim(api_key, base_url, request, &mut on_token, cancel).await
+        }
         LlmProvider::DeepSeek => {
             let b = base_url.unwrap_or_else(|| provider.default_base_url());
             stream_openai_fim(api_key, Some(b), request, &mut on_token, cancel).await
         }
-        LlmProvider::Anthropic => stream_anthropic_fim(api_key, base_url, request, &mut on_token, cancel).await,
-        LlmProvider::Ollama => stream_ollama_fim(api_key, base_url.unwrap_or("http://localhost:11434"), request, &mut on_token, cancel).await,
+        LlmProvider::Anthropic => {
+            stream_anthropic_fim(api_key, base_url, request, &mut on_token, cancel).await
+        }
+        LlmProvider::Ollama => {
+            stream_ollama_fim(
+                api_key,
+                base_url.unwrap_or("http://localhost:11434"),
+                request,
+                &mut on_token,
+                cancel,
+            )
+            .await
+        }
     }
-} 
+}
 
 /// Stream a chat completion from the configured provider
 pub async fn stream_chat(
@@ -145,13 +157,26 @@ pub async fn stream_chat(
     cancel: Option<CancelFlag>,
 ) -> Result<(), String> {
     match provider {
-        LlmProvider::OpenAI => stream_openai_chat(api_key, base_url, request, &mut on_token, cancel).await,
+        LlmProvider::OpenAI => {
+            stream_openai_chat(api_key, base_url, request, &mut on_token, cancel).await
+        }
         LlmProvider::DeepSeek => {
             let b = base_url.unwrap_or_else(|| provider.default_base_url());
             stream_openai_chat(api_key, Some(b), request, &mut on_token, cancel).await
         }
-        LlmProvider::Anthropic => stream_anthropic_chat(api_key, base_url, request, &mut on_token, cancel).await,
-        LlmProvider::Ollama => stream_ollama_chat(api_key, base_url.unwrap_or("http://localhost:11434"), request, &mut on_token, cancel).await,
+        LlmProvider::Anthropic => {
+            stream_anthropic_chat(api_key, base_url, request, &mut on_token, cancel).await
+        }
+        LlmProvider::Ollama => {
+            stream_ollama_chat(
+                api_key,
+                base_url.unwrap_or("http://localhost:11434"),
+                request,
+                &mut on_token,
+                cancel,
+            )
+            .await
+        }
     }
 }
 
@@ -200,10 +225,10 @@ async fn stream_openai_fim(
     let mut buffer = String::new();
 
     while let Some(chunk) = stream.next().await {
-        if let Some(ref cancel) = cancel {
-            if cancel.load(Ordering::Relaxed) {
-                return Err("Cancelled".to_string());
-            }
+        if let Some(ref cancel) = cancel
+            && cancel.load(Ordering::Relaxed)
+        {
+            return Err("Cancelled".to_string());
         }
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -219,12 +244,11 @@ async fn stream_openai_fim(
             if line == "data: [DONE]" {
                 return Ok(());
             }
-            if let Some(data) = line.strip_prefix("data: ") {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                    if let Some(text) = parsed["choices"][0]["text"].as_str() {
-                        on_token(text.to_string())?;
-                    }
-                }
+            if let Some(data) = line.strip_prefix("data: ")
+                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
+                && let Some(text) = parsed["choices"][0]["text"].as_str()
+            {
+                on_token(text.to_string())?;
             }
         }
     }
@@ -244,7 +268,9 @@ async fn stream_openai_chat(
 
     log::info!(
         "[LLM] stream_chat: model={}, url={}, messages={}",
-        request.model, url, request.messages.len()
+        request.model,
+        url,
+        request.messages.len()
     );
     let stream_start = std::time::Instant::now();
 
@@ -284,7 +310,11 @@ async fn stream_openai_chat(
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        log::error!("[LLM] stream_chat FAILED: status={}, body={}", status, text.chars().take(500).collect::<String>());
+        log::error!(
+            "[LLM] stream_chat FAILED: status={}, body={}",
+            status,
+            text.chars().take(500).collect::<String>()
+        );
         return Err(format!("OpenAI API error ({}): {}", status, text));
     }
 
@@ -293,11 +323,11 @@ async fn stream_openai_chat(
     let mut token_count = 0u32;
 
     while let Some(chunk) = stream.next().await {
-        if let Some(ref cancel) = cancel {
-            if cancel.load(Ordering::Relaxed) {
-                log::info!("[LLM] stream_chat cancelled after {} tokens", token_count);
-                return Err("Cancelled".to_string());
-            }
+        if let Some(ref cancel) = cancel
+            && cancel.load(Ordering::Relaxed)
+        {
+            log::info!("[LLM] stream_chat cancelled after {} tokens", token_count);
+            return Err("Cancelled".to_string());
         }
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -310,21 +340,28 @@ async fn stream_openai_chat(
                 continue;
             }
             if line == "data: [DONE]" {
-                log::info!("[LLM] stream_chat completed: {} tokens, elapsed={}ms", token_count, stream_start.elapsed().as_millis());
+                log::info!(
+                    "[LLM] stream_chat completed: {} tokens, elapsed={}ms",
+                    token_count,
+                    stream_start.elapsed().as_millis()
+                );
                 return Ok(());
             }
-            if let Some(data) = line.strip_prefix("data: ") {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                    if let Some(delta) = parsed["choices"][0]["delta"]["content"].as_str() {
-                        token_count += 1;
-                        on_token(delta.to_string())?;
-                    }
-                }
+            if let Some(data) = line.strip_prefix("data: ")
+                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
+                && let Some(delta) = parsed["choices"][0]["delta"]["content"].as_str()
+            {
+                token_count += 1;
+                on_token(delta.to_string())?;
             }
         }
     }
 
-    log::info!("[LLM] stream_chat ended (no DONE signal): {} tokens, elapsed={}ms", token_count, stream_start.elapsed().as_millis());
+    log::info!(
+        "[LLM] stream_chat ended (no DONE signal): {} tokens, elapsed={}ms",
+        token_count,
+        stream_start.elapsed().as_millis()
+    );
     Ok(())
 }
 
@@ -419,10 +456,10 @@ async fn stream_anthropic_chat(
     let mut buffer = String::new();
 
     while let Some(chunk) = stream.next().await {
-        if let Some(ref cancel) = cancel {
-            if cancel.load(Ordering::Relaxed) {
-                return Err("Cancelled".to_string());
-            }
+        if let Some(ref cancel) = cancel
+            && cancel.load(Ordering::Relaxed)
+        {
+            return Err("Cancelled".to_string());
         }
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -434,30 +471,27 @@ async fn stream_anthropic_chat(
             if line.is_empty() || line.starts_with(':') {
                 continue;
             }
-            if let Some(data) = line.strip_prefix("data: ") {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                    let event_type = parsed.get("type").and_then(|t| t.as_str());
+            if let Some(data) = line.strip_prefix("data: ")
+                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
+            {
+                let event_type = parsed.get("type").and_then(|t| t.as_str());
 
-                    match event_type {
-                        Some("content_block_delta") => {
-                            // Check delta type: "text_delta" for regular text, "thinking_delta" for thinking
-                            let delta_type = parsed["delta"]["type"].as_str().unwrap_or("");
-                            match delta_type {
-                                "thinking_delta" => {
-                                    // Thinking content - emit with [THINKING] prefix for frontend to parse
-                                    if let Some(thinking) = parsed["delta"]["thinking"].as_str() {
-                                        on_token(format!("[THINKING]{}", thinking))?;
-                                    }
-                                }
-                                "text_delta" | _ => {
-                                    // Regular text content
-                                    if let Some(text) = parsed["delta"]["text"].as_str() {
-                                        on_token(text.to_string())?;
-                                    }
-                                }
+                if let Some("content_block_delta") = event_type {
+                    // Check delta type: "text_delta" for regular text, "thinking_delta" for thinking
+                    let delta_type = parsed["delta"]["type"].as_str().unwrap_or("");
+                    match delta_type {
+                        "thinking_delta" => {
+                            // Thinking content - emit with [THINKING] prefix for frontend to parse
+                            if let Some(thinking) = parsed["delta"]["thinking"].as_str() {
+                                on_token(format!("[THINKING]{}", thinking))?;
                             }
                         }
-                        _ => {}
+                        _ => {
+                            // Regular text content
+                            if let Some(text) = parsed["delta"]["text"].as_str() {
+                                on_token(text.to_string())?;
+                            }
+                        }
                     }
                 }
             }
@@ -511,10 +545,10 @@ async fn stream_ollama_fim(
     let mut buffer = String::new();
 
     while let Some(chunk) = stream.next().await {
-        if let Some(ref cancel) = cancel {
-            if cancel.load(Ordering::Relaxed) {
-                return Err("Cancelled".to_string());
-            }
+        if let Some(ref cancel) = cancel
+            && cancel.load(Ordering::Relaxed)
+        {
+            return Err("Cancelled".to_string());
         }
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -527,7 +561,11 @@ async fn stream_ollama_fim(
                 continue;
             }
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
-                if parsed.get("done").and_then(|d| d.as_bool()).unwrap_or(false) {
+                if parsed
+                    .get("done")
+                    .and_then(|d| d.as_bool())
+                    .unwrap_or(false)
+                {
                     return Ok(());
                 }
                 if let Some(text) = parsed["response"].as_str() {
@@ -593,10 +631,10 @@ async fn stream_ollama_chat(
     let mut buffer = String::new();
 
     while let Some(chunk) = stream.next().await {
-        if let Some(ref cancel) = cancel {
-            if cancel.load(Ordering::Relaxed) {
-                return Err("Cancelled".to_string());
-            }
+        if let Some(ref cancel) = cancel
+            && cancel.load(Ordering::Relaxed)
+        {
+            return Err("Cancelled".to_string());
         }
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -609,13 +647,17 @@ async fn stream_ollama_chat(
                 continue;
             }
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
-                if parsed.get("done").and_then(|d| d.as_bool()).unwrap_or(false) {
+                if parsed
+                    .get("done")
+                    .and_then(|d| d.as_bool())
+                    .unwrap_or(false)
+                {
                     return Ok(());
                 }
-                if let Some(msg) = parsed.get("message") {
-                    if let Some(content) = msg["content"].as_str() {
-                        on_token(content.to_string())?;
-                    }
+                if let Some(msg) = parsed.get("message")
+                    && let Some(content) = msg["content"].as_str()
+                {
+                    on_token(content.to_string())?;
                 }
             }
         }
@@ -636,7 +678,15 @@ pub async fn embed_texts(
 ) -> Result<Vec<Vec<f32>>, String> {
     match provider {
         LlmProvider::OpenAI => embed_openai(api_key, base_url, model, texts).await,
-        LlmProvider::Ollama => embed_ollama(api_key, base_url.unwrap_or("http://localhost:11434"), model, texts).await,
+        LlmProvider::Ollama => {
+            embed_ollama(
+                api_key,
+                base_url.unwrap_or("http://localhost:11434"),
+                model,
+                texts,
+            )
+            .await
+        }
         LlmProvider::Anthropic => Err("Anthropic does not provide embeddings".to_string()),
         LlmProvider::DeepSeek => Err("DeepSeek does not provide embeddings".to_string()),
     }
@@ -737,7 +787,11 @@ async fn embed_ollama(
         for item in arr {
             let emb: Vec<f32> = item
                 .as_array()
-                .map(|v| v.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect())
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|x| x.as_f64().map(|f| f as f32))
+                        .collect()
+                })
                 .unwrap_or_default();
             embeddings.push(emb);
         }
@@ -747,9 +801,9 @@ async fn embed_ollama(
 }
 
 pub struct ToolCallRequest {
-    pub id :String,
-    pub name :String,
-    pub arguments :serde_json::Value,
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 /// Token usage statistics from LLM API response
@@ -762,9 +816,11 @@ pub struct TokenUsage {
 
 pub enum LlmResponse {
     Text(String),
-    ToolCalls { calls: Vec<ToolCallRequest>, content: Option<String> },
+    ToolCalls {
+        calls: Vec<ToolCallRequest>,
+        content: Option<String>,
+    },
 }
-
 
 pub async fn chat_with_tools(
     provider: &LlmProvider,
@@ -775,7 +831,9 @@ pub async fn chat_with_tools(
     cancel: Option<CancelFlag>,
 ) -> Result<(LlmResponse, Option<TokenUsage>), String> {
     match provider {
-        LlmProvider::OpenAI => chat_with_tools_openai(api_key, base_url, request, tools, cancel).await,
+        LlmProvider::OpenAI => {
+            chat_with_tools_openai(api_key, base_url, request, tools, cancel).await
+        }
         LlmProvider::DeepSeek => {
             let b = base_url.unwrap_or_else(|| provider.default_base_url());
             chat_with_tools_openai(api_key, Some(b), request, tools, cancel).await
@@ -785,32 +843,34 @@ pub async fn chat_with_tools(
     }
 }
 pub async fn chat_with_tools_openai(
-        api_key: &str, 
-    base_url : Option<&str>,
-    request: ChatRequestParams, 
+    api_key: &str,
+    base_url: Option<&str>,
+    request: ChatRequestParams,
     tools: &[serde_json::Value],
     cancel: Option<CancelFlag>,
-)-> Result<(LlmResponse, Option<TokenUsage>), String> {
+) -> Result<(LlmResponse, Option<TokenUsage>), String> {
     let real_base_url = base_url.unwrap_or("https://api.openai.com/v1");
-    let url =  format!("{}/chat/completions", real_base_url);
+    let url = format!("{}/chat/completions", real_base_url);
 
     log::info!(
         "[LLM] chat_with_tools: model={}, url={}, messages={}, tools={}",
-        request.model, url, request.messages.len(), tools.len()
+        request.model,
+        url,
+        request.messages.len(),
+        tools.len()
     );
     let request_start = std::time::Instant::now();
 
     let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(180))
-            .build()
-            .map_err(|e|
-            format!("Failed to create HTTP client: {}", e))?;
+        .timeout(Duration::from_secs(180))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
     let mut api_message = vec![serde_json::json!({
         "role": "system",
         "content": request.system,
     })];
-    
+
     let sanitized = sanitize_messages(&request.messages);
     for msg in &sanitized {
         let mut json_msg = serde_json::json!({
@@ -867,24 +927,23 @@ pub async fn chat_with_tools_openai(
             .await
             .map_err(|e| format!("Chat request failed: {}", e))?
     };
-        
 
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         log::error!(
             "[LLM] chat_with_tools FAILED: status={}, body={}, elapsed={}ms",
-            status, text.chars().take(500).collect::<String>(), request_start.elapsed().as_millis()
+            status,
+            text.chars().take(500).collect::<String>(),
+            request_start.elapsed().as_millis()
         );
         return Err(format!("Chat request failed ({}): {}", status, text));
     }
 
-    let data =response.json::<serde_json::Value>()
-        .await
-        .map_err(|e| {
-            log::error!("[LLM] Failed to parse response JSON: {}", e);
-            format!("Failed to parse chat response: {}", e)
-        })?;
+    let data = response.json::<serde_json::Value>().await.map_err(|e| {
+        log::error!("[LLM] Failed to parse response JSON: {}", e);
+        format!("Failed to parse chat response: {}", e)
+    })?;
 
     let message = &data["choices"][0]["message"];
     let elapsed_ms = request_start.elapsed().as_millis();
@@ -896,7 +955,12 @@ pub async fn chat_with_tools_openai(
         total_tokens: u["total_tokens"].as_u64().unwrap_or(0) as usize,
     });
     if let Some(ref u) = usage {
-        log::info!("[LLM] Token usage: prompt={}, completion={}, total={}", u.prompt_tokens, u.completion_tokens, u.total_tokens);
+        log::info!(
+            "[LLM] Token usage: prompt={}, completion={}, total={}",
+            u.prompt_tokens,
+            u.completion_tokens,
+            u.total_tokens
+        );
     }
 
     // 检查是否有 tool_calls
@@ -904,9 +968,9 @@ pub async fn chat_with_tools_openai(
         let mut calls = Vec::new();
         for tc in tool_calls {
             let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-            let args: serde_json::Value = serde_json::from_str(args_str)
-                .unwrap_or(serde_json::json!({}));
-    
+            let args: serde_json::Value =
+                serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+
             calls.push(ToolCallRequest {
                 id: tc["id"].as_str().unwrap_or("").to_string(),
                 name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
@@ -916,7 +980,8 @@ pub async fn chat_with_tools_openai(
         let content = message["content"].as_str().map(|s| s.to_string());
         log::info!(
             "[LLM] chat_with_tools OK: {} tool_calls, elapsed={}ms",
-            calls.len(), elapsed_ms
+            calls.len(),
+            elapsed_ms
         );
         Ok((LlmResponse::ToolCalls { calls, content }, usage))
     } else {
@@ -924,11 +989,11 @@ pub async fn chat_with_tools_openai(
         let content = message["content"].as_str().unwrap_or("").to_string();
         log::info!(
             "[LLM] chat_with_tools OK: text ({} chars), elapsed={}ms",
-            content.len(), elapsed_ms
+            content.len(),
+            elapsed_ms
         );
         Ok((LlmResponse::Text(content), usage))
     }
-    
 }
 
 /// Streaming version of `chat_with_tools` — emits text tokens in real time via callback,
@@ -952,10 +1017,13 @@ pub async fn stream_chat_with_tools(
     match provider {
         LlmProvider::OpenAI | LlmProvider::DeepSeek => {
             let b = base_url.unwrap_or_else(|| provider.default_base_url());
-            stream_chat_with_tools_openai(api_key, Some(b), request, tools, cancel, &mut on_token).await
+            stream_chat_with_tools_openai(api_key, Some(b), request, tools, cancel, &mut on_token)
+                .await
         }
         LlmProvider::Ollama => Err("Ollama streaming tool calling not yet supported".to_string()),
-        LlmProvider::Anthropic => Err("Anthropic streaming tool calling not yet supported".to_string()),
+        LlmProvider::Anthropic => {
+            Err("Anthropic streaming tool calling not yet supported".to_string())
+        }
     }
 }
 
@@ -972,7 +1040,10 @@ async fn stream_chat_with_tools_openai(
 
     log::info!(
         "[LLM] stream_chat_with_tools: model={}, url={}, messages={}, tools={}",
-        request.model, url, request.messages.len(), tools.len()
+        request.model,
+        url,
+        request.messages.len(),
+        tools.len()
     );
     let request_start = std::time::Instant::now();
 
@@ -1047,7 +1118,9 @@ async fn stream_chat_with_tools_openai(
         let text = response.text().await.unwrap_or_default();
         log::error!(
             "[LLM] stream_chat_with_tools FAILED: status={}, body={}, elapsed={}ms",
-            status, text.chars().take(500).collect::<String>(), request_start.elapsed().as_millis()
+            status,
+            text.chars().take(500).collect::<String>(),
+            request_start.elapsed().as_millis()
         );
         return Err(format!("Chat request failed ({}): {}", status, text));
     }
@@ -1063,11 +1136,14 @@ async fn stream_chat_with_tools_openai(
     let mut tc_accumulation: Vec<(String, String, String)> = Vec::new();
 
     while let Some(chunk) = stream.next().await {
-        if let Some(ref cancel_flag) = cancel {
-            if cancel_flag.load(Ordering::Relaxed) {
-                log::info!("[LLM] stream_chat_with_tools cancelled after {} tokens", token_count);
-                return Err("Cancelled by user".to_string());
-            }
+        if let Some(ref cancel_flag) = cancel
+            && cancel_flag.load(Ordering::Relaxed)
+        {
+            log::info!(
+                "[LLM] stream_chat_with_tools cancelled after {} tokens",
+                token_count
+            );
+            return Err("Cancelled by user".to_string());
         }
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -1083,7 +1159,8 @@ async fn stream_chat_with_tools_openai(
                 let elapsed_ms = request_start.elapsed().as_millis();
                 log::info!(
                     "[LLM] stream_chat_with_tools completed: {} tokens, elapsed={}ms",
-                    token_count, elapsed_ms
+                    token_count,
+                    elapsed_ms
                 );
 
                 // Decide: tool calls or plain text?
@@ -1093,53 +1170,63 @@ async fn stream_chat_with_tools_openai(
                         .map(|(id, name, args_str)| {
                             let arguments: serde_json::Value =
                                 serde_json::from_str(&args_str).unwrap_or(serde_json::json!({}));
-                            ToolCallRequest { id, name, arguments }
+                            ToolCallRequest {
+                                id,
+                                name,
+                                arguments,
+                            }
                         })
                         .collect();
-                    let content = if accumulated_text.is_empty() { None } else { Some(accumulated_text) };
+                    let content = if accumulated_text.is_empty() {
+                        None
+                    } else {
+                        Some(accumulated_text)
+                    };
                     log::info!(
                         "[LLM] stream_chat_with_tools OK: {} tool_calls, elapsed={}ms",
-                        calls.len(), elapsed_ms
+                        calls.len(),
+                        elapsed_ms
                     );
                     return Ok((LlmResponse::ToolCalls { calls, content }, None));
                 } else {
                     log::info!(
                         "[LLM] stream_chat_with_tools OK: text ({} chars), elapsed={}ms",
-                        accumulated_text.len(), elapsed_ms
+                        accumulated_text.len(),
+                        elapsed_ms
                     );
                     return Ok((LlmResponse::Text(accumulated_text), None));
                 }
             }
-            if let Some(data) = line.strip_prefix("data: ") {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                    let delta = &parsed["choices"][0]["delta"];
+            if let Some(data) = line.strip_prefix("data: ")
+                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
+            {
+                let delta = &parsed["choices"][0]["delta"];
 
-                    // Text content token — emit immediately
-                    if let Some(text) = delta["content"].as_str() {
-                        if !text.is_empty() {
-                            token_count += 1;
-                            accumulated_text.push_str(text);
-                            let _ = on_token(text.to_string());
+                // Text content token — emit immediately
+                if let Some(text) = delta["content"].as_str()
+                    && !text.is_empty()
+                {
+                    token_count += 1;
+                    accumulated_text.push_str(text);
+                    let _ = on_token(text.to_string());
+                }
+
+                // Tool call chunk — accumulate by index
+                if let Some(tc_array) = delta["tool_calls"].as_array() {
+                    for tc in tc_array {
+                        let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                        // Ensure slot exists
+                        while tc_accumulation.len() <= idx {
+                            tc_accumulation.push((String::new(), String::new(), String::new()));
                         }
-                    }
-
-                    // Tool call chunk — accumulate by index
-                    if let Some(tc_array) = delta["tool_calls"].as_array() {
-                        for tc in tc_array {
-                            let idx = tc["index"].as_u64().unwrap_or(0) as usize;
-                            // Ensure slot exists
-                            while tc_accumulation.len() <= idx {
-                                tc_accumulation.push((String::new(), String::new(), String::new()));
-                            }
-                            if let Some(id) = tc["id"].as_str() {
-                                tc_accumulation[idx].0 = id.to_string();
-                            }
-                            if let Some(name) = tc["function"]["name"].as_str() {
-                                tc_accumulation[idx].1.push_str(name);
-                            }
-                            if let Some(args) = tc["function"]["arguments"].as_str() {
-                                tc_accumulation[idx].2.push_str(args);
-                            }
+                        if let Some(id) = tc["id"].as_str() {
+                            tc_accumulation[idx].0 = id.to_string();
+                        }
+                        if let Some(name) = tc["function"]["name"].as_str() {
+                            tc_accumulation[idx].1.push_str(name);
+                        }
+                        if let Some(args) = tc["function"]["arguments"].as_str() {
+                            tc_accumulation[idx].2.push_str(args);
                         }
                     }
                 }
@@ -1151,7 +1238,8 @@ async fn stream_chat_with_tools_openai(
     let elapsed_ms = request_start.elapsed().as_millis();
     log::info!(
         "[LLM] stream_chat_with_tools ended (no DONE signal): {} tokens, elapsed={}ms",
-        token_count, elapsed_ms
+        token_count,
+        elapsed_ms
     );
     if !tc_accumulation.is_empty() {
         let calls: Vec<ToolCallRequest> = tc_accumulation
@@ -1159,10 +1247,18 @@ async fn stream_chat_with_tools_openai(
             .map(|(id, name, args_str)| {
                 let arguments: serde_json::Value =
                     serde_json::from_str(&args_str).unwrap_or(serde_json::json!({}));
-                ToolCallRequest { id, name, arguments }
+                ToolCallRequest {
+                    id,
+                    name,
+                    arguments,
+                }
             })
             .collect();
-        let content = if accumulated_text.is_empty() { None } else { Some(accumulated_text) };
+        let content = if accumulated_text.is_empty() {
+            None
+        } else {
+            Some(accumulated_text)
+        };
         Ok((LlmResponse::ToolCalls { calls, content }, None))
     } else {
         Ok((LlmResponse::Text(accumulated_text), None))
@@ -1195,8 +1291,8 @@ pub fn sanitize_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
             if has_tool_response {
                 // Keep assistant(tool_calls) + all tool responses
                 result.push(msg.clone());
-                for k in (i + 1)..j {
-                    result.push(messages[k].clone());
+                for m in &messages[(i + 1)..j] {
+                    result.push(m.clone());
                 }
                 i = j;
             } else {

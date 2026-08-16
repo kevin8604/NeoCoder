@@ -98,61 +98,78 @@ pub fn get(session_id: &str) -> Option<TddState> {
 
 /// Overwrite the phase for a session (used by the gate hook on transitions).
 pub fn set_phase(session_id: &str, phase: TddPhase) {
-    if let Ok(mut states) = TDD_STATES.lock() {
-        if let Some(s) = states.get_mut(session_id) {
-            s.phase = phase;
-        }
+    if let Ok(mut states) = TDD_STATES.lock()
+        && let Some(s) = states.get_mut(session_id)
+    {
+        s.phase = phase;
     }
 }
 
 /// Bump the green-run counter (used by the gate hook).
 pub fn record_green(session_id: &str) {
-    if let Ok(mut states) = TDD_STATES.lock() {
-        if let Some(s) = states.get_mut(session_id) {
-            s.green_count = s.green_count.saturating_add(1);
-        }
+    if let Ok(mut states) = TDD_STATES.lock()
+        && let Some(s) = states.get_mut(session_id)
+    {
+        s.green_count = s.green_count.saturating_add(1);
     }
 }
 
 /// Phase-specific guidance text injected into the LLM context.
 pub fn phase_guidance(phase: TddPhase) -> &'static str {
     match phase {
-        TddPhase::Red => "TDD[RED] Write a FAILING test first that captures the desired behavior. \
+        TddPhase::Red => {
+            "TDD[RED] Write a FAILING test first that captures the desired behavior. \
                           Run it with the run_tests tool and confirm it FAILS (red) before writing \
-                          any implementation code.",
-        TddPhase::Green => "TDD[GREEN] The failing test is confirmed. Now write the MINIMAL \
+                          any implementation code."
+        }
+        TddPhase::Green => {
+            "TDD[GREEN] The failing test is confirmed. Now write the MINIMAL \
                             implementation to make it pass. Run run_tests — the phase advances \
-                            automatically once the suite goes green.",
-        TddPhase::Refactor => "TDD[REFACTOR] The suite is green. Clean up the implementation \
+                            automatically once the suite goes green."
+        }
+        TddPhase::Refactor => {
+            "TDD[REFACTOR] The suite is green. Clean up the implementation \
                                (naming, duplication, structure) while keeping run_tests green. \
-                               Re-run run_tests after refactoring.",
-        TddPhase::Done => "TDD[DONE] All phases completed with a green suite. Summarize what was \
-                           implemented and the final test results.",
+                               Re-run run_tests after refactoring."
+        }
+        TddPhase::Done => {
+            "TDD[DONE] All phases completed with a green suite. Summarize what was \
+                           implemented and the final test results."
+        }
     }
 }
 
 /// True when a file path looks like a test file.
 pub fn is_test_file(path: &str) -> bool {
     let p = std::path::Path::new(path);
-    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
     let lower = name.to_lowercase();
 
-    if lower.ends_with("_test.rs") || lower.ends_with(".test.ts") || lower.ends_with(".test.tsx")
-        || lower.ends_with(".test.js") || lower.ends_with(".test.jsx")
-        || lower.ends_with(".spec.ts") || lower.ends_with(".spec.tsx")
-        || lower.ends_with(".spec.js") || lower.ends_with(".spec.jsx")
-        || lower.starts_with("test_") || lower.ends_with("_test.py")
+    if lower.ends_with("_test.rs")
+        || lower.ends_with(".test.ts")
+        || lower.ends_with(".test.tsx")
+        || lower.ends_with(".test.js")
+        || lower.ends_with(".test.jsx")
+        || lower.ends_with(".spec.ts")
+        || lower.ends_with(".spec.tsx")
+        || lower.ends_with(".spec.js")
+        || lower.ends_with(".spec.jsx")
+        || lower.starts_with("test_")
+        || lower.ends_with("_test.py")
         || lower.ends_with("_test.go")
     {
         return true;
     }
 
     // Directory conventions: tests/ (Rust), __tests__/ (JS), test/ (python-ish)
-    let is_in_test_dir = p.components().any(|c| {
+
+    p.components().any(|c| {
         let s = c.as_os_str().to_string_lossy();
         s == "tests" || s == "__tests__" || s == "test"
-    });
-    is_in_test_dir
+    })
 }
 
 /// True when a file path looks like a source (non-test) file.
@@ -163,8 +180,25 @@ pub fn is_source_file(path: &str) -> bool {
         .unwrap_or_default();
     matches!(
         ext.as_str(),
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "c" | "cpp" | "h" | "hpp"
-            | "css" | "scss" | "vue" | "svelte" | "rb" | "php" | "kt" | "swift"
+        "rs" | "ts"
+            | "tsx"
+            | "js"
+            | "jsx"
+            | "py"
+            | "go"
+            | "java"
+            | "c"
+            | "cpp"
+            | "h"
+            | "hpp"
+            | "css"
+            | "scss"
+            | "vue"
+            | "svelte"
+            | "rb"
+            | "php"
+            | "kt"
+            | "swift"
     ) && !is_test_file(path)
 }
 

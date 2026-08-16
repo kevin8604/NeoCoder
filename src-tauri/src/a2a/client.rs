@@ -9,7 +9,9 @@ use futures_util::StreamExt;
 use serde_json::json;
 use tokio_stream::wrappers::ReceiverStream;
 
-use super::{A2aError, AgentCard, JsonRpcRequest, JsonRpcResponse, Message, MessageRole, Part, Task};
+use super::{
+    A2aError, AgentCard, JsonRpcRequest, JsonRpcResponse, Message, MessageRole, Part, Task,
+};
 
 /// A2A protocol JSON-RPC method names.
 pub mod methods {
@@ -84,8 +86,12 @@ impl A2aClient {
                             .text()
                             .await
                             .map_err(|e| A2aError::Transport(e.to_string()))?;
-                        return serde_json::from_str::<AgentCard>(&text)
-                            .map_err(|e| A2aError::Transport(format!("invalid Agent Card JSON from {}: {}", url, e)));
+                        return serde_json::from_str::<AgentCard>(&text).map_err(|e| {
+                            A2aError::Transport(format!(
+                                "invalid Agent Card JSON from {}: {}",
+                                url, e
+                            ))
+                        });
                     }
                     if status.as_u16() == 404 {
                         attempts.push(url);
@@ -93,15 +99,14 @@ impl A2aClient {
                     }
                     return Err(A2aError::Transport(format!(
                         "GET {} returned HTTP {}",
-                        url,
-                        status
+                        url, status
                     )));
                 }
                 Err(e) => {
                     return Err(A2aError::Transport(format!(
                         "failed to reach {}: {}",
                         url, e
-                    )))
+                    )));
                 }
             }
         }
@@ -136,13 +141,15 @@ impl A2aClient {
         }
         let req = JsonRpcRequest::new(json!(1), methods::MESSAGE_SEND).with_params(params);
         let resp = self.rpc_call(&card.url, &req).await?;
-        serde_json::from_value::<Task>(resp)
-            .map_err(|e| A2aError::Transport(format!("invalid Task in message/send response: {}", e)))
+        serde_json::from_value::<Task>(resp).map_err(|e| {
+            A2aError::Transport(format!("invalid Task in message/send response: {}", e))
+        })
     }
 
     /// POST `tasks/get` to poll task state.
     pub async fn get_task(&self, url: &str, task_id: &str) -> Result<Task, A2aError> {
-        let req = JsonRpcRequest::new(json!(1), methods::TASKS_GET).with_params(json!({ "id": task_id }));
+        let req =
+            JsonRpcRequest::new(json!(1), methods::TASKS_GET).with_params(json!({ "id": task_id }));
         let resp = self.rpc_call(url, &req).await?;
         serde_json::from_value::<Task>(resp)
             .map_err(|e| A2aError::Transport(format!("invalid Task in tasks/get response: {}", e)))
@@ -150,11 +157,12 @@ impl A2aClient {
 
     /// POST `tasks/cancel`.
     pub async fn cancel_task(&self, url: &str, task_id: &str) -> Result<Task, A2aError> {
-        let req =
-            JsonRpcRequest::new(json!(1), methods::TASKS_CANCEL).with_params(json!({ "id": task_id }));
+        let req = JsonRpcRequest::new(json!(1), methods::TASKS_CANCEL)
+            .with_params(json!({ "id": task_id }));
         let resp = self.rpc_call(url, &req).await?;
-        serde_json::from_value::<Task>(resp)
-            .map_err(|e| A2aError::Transport(format!("invalid Task in tasks/cancel response: {}", e)))
+        serde_json::from_value::<Task>(resp).map_err(|e| {
+            A2aError::Transport(format!("invalid Task in tasks/cancel response: {}", e))
+        })
     }
 
     /// POST `tasks/resubscribe` and consume the SSE stream of task updates.
@@ -191,23 +199,15 @@ impl A2aClient {
                     Ok(bytes) => {
                         buf.push_str(&String::from_utf8_lossy(&bytes));
                         // 提取所有完整事件块（以空行分隔）
-                        loop {
-                            match find_event_boundary(&buf) {
-                                Some(end) => {
-                                    let block = buf[..end].to_string();
-                                    buf = buf[end..].to_string();
-                                    for data in parse_sse_events(&block) {
-                                        match serde_json::from_str::<Task>(&data) {
-                                            Ok(task) => {
-                                                if tx.send(Ok(task)).await.is_err() {
-                                                    return;
-                                                }
-                                            }
-                                            Err(_) => {} // 跳过非 Task 的 data
-                                        }
-                                    }
+                        while let Some(end) = find_event_boundary(&buf) {
+                            let block = buf[..end].to_string();
+                            buf = buf[end..].to_string();
+                            for data in parse_sse_events(&block) {
+                                if let Ok(task) = serde_json::from_str::<Task>(&data)
+                                    && tx.send(Ok(task)).await.is_err()
+                                {
+                                    return;
                                 }
-                                None => break,
                             }
                         }
                     }
@@ -317,7 +317,11 @@ impl A2aClient {
 
     /// POST a JSON-RPC request and extract the `result` value.
     /// Surfaces remote JSON-RPC errors as `A2aError::Remote`.
-    async fn rpc_call(&self, url: &str, req: &JsonRpcRequest) -> Result<serde_json::Value, A2aError> {
+    async fn rpc_call(
+        &self,
+        url: &str,
+        req: &JsonRpcRequest,
+    ) -> Result<serde_json::Value, A2aError> {
         let mut builder = self.http.post(url);
         if let Some((k, v)) = self.bearer_header() {
             builder = builder.header(k, v);
@@ -334,10 +338,9 @@ impl A2aClient {
                 resp.status()
             )));
         }
-        let body: JsonRpcResponse = resp
-            .json()
-            .await
-            .map_err(|e| A2aError::Transport(format!("invalid JSON-RPC response from {}: {}", url, e)))?;
+        let body: JsonRpcResponse = resp.json().await.map_err(|e| {
+            A2aError::Transport(format!("invalid JSON-RPC response from {}: {}", url, e))
+        })?;
         if let Some(err) = body.error {
             return Err(A2aError::Remote {
                 code: err.code,
@@ -345,7 +348,10 @@ impl A2aClient {
             });
         }
         body.result.ok_or_else(|| {
-            A2aError::Transport(format!("JSON-RPC response from {} has neither result nor error", url))
+            A2aError::Transport(format!(
+                "JSON-RPC response from {} has neither result nor error",
+                url
+            ))
         })
     }
 }
@@ -405,12 +411,15 @@ pub fn parse_sse_events(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::a2a::{JsonRpcResponse, RpcError, TaskStatus, TaskState};
+    use crate::a2a::{JsonRpcResponse, RpcError, TaskState, TaskStatus};
     use axum::{
         Json, Router,
         extract::State,
         http::{HeaderMap, StatusCode},
-        response::{IntoResponse, Response, sse::{Event, KeepAlive, Sse}},
+        response::{
+            IntoResponse, Response,
+            sse::{Event, KeepAlive, Sse},
+        },
         routing::{get, post},
     };
     use serde_json::Value;
@@ -468,10 +477,7 @@ mod tests {
         task_id: String,
     }
 
-    async fn mock_a2a_handler(
-        State(behavior): State<MockBehavior>,
-        body: String,
-    ) -> Response {
+    async fn mock_a2a_handler(State(behavior): State<MockBehavior>, body: String) -> Response {
         let req: Value = serde_json::from_str(&body).unwrap();
         let method = req["method"].as_str().unwrap_or("");
         let n = behavior.counter.fetch_add(1, Ordering::SeqCst);
@@ -479,17 +485,18 @@ mod tests {
             "message/send" => {
                 if n < 2 {
                     // 前 2 次返回 working，之后 completed
-                    rpc_ok_result(task_json(&behavior.task_id, TaskState::Working))
-                        .into_response()
+                    rpc_ok_result(task_json(&behavior.task_id, TaskState::Working)).into_response()
                 } else {
-                    rpc_ok_result(task_json(&behavior.task_id, TaskState::Completed)).into_response()
+                    rpc_ok_result(task_json(&behavior.task_id, TaskState::Completed))
+                        .into_response()
                 }
             }
             "tasks/get" => {
                 if n < 2 {
                     rpc_ok_result(task_json(&behavior.task_id, TaskState::Working)).into_response()
                 } else {
-                    rpc_ok_result(task_json(&behavior.task_id, TaskState::Completed)).into_response()
+                    rpc_ok_result(task_json(&behavior.task_id, TaskState::Completed))
+                        .into_response()
                 }
             }
             "tasks/cancel" => {
@@ -543,7 +550,10 @@ mod tests {
     async fn test_discover_falls_back_to_agent_card_json() {
         // agent.json 404 → agent-card.json 成功
         let app = Router::new()
-            .route("/.well-known/agent.json", get(|| async { StatusCode::NOT_FOUND }))
+            .route(
+                "/.well-known/agent.json",
+                get(|| async { StatusCode::NOT_FOUND }),
+            )
             .route(
                 "/.well-known/agent-card.json",
                 get(|| async { Json(card_json("Fallback", "http://x/a2a")) }),
@@ -573,8 +583,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_invalid_json_returns_error() {
-        let app = Router::new()
-            .route("/.well-known/agent.json", get(|| async { "not json at all" }));
+        let app = Router::new().route(
+            "/.well-known/agent.json",
+            get(|| async { "not json at all" }),
+        );
         let base = spawn_mock_server(app).await;
         let client = A2aClient::with_defaults(&base, None);
         let err = client.discover().await.unwrap_err();
@@ -596,8 +608,12 @@ mod tests {
         );
         let base = spawn_mock_server(app).await;
         let client = A2aClient::with_defaults(&base, None);
-        let card: AgentCard = serde_json::from_value(card_json("M", &format!("{}/a2a", base))).unwrap();
-        let task = client.send_message(&card, "hello", false, None).await.unwrap();
+        let card: AgentCard =
+            serde_json::from_value(card_json("M", &format!("{}/a2a", base))).unwrap();
+        let task = client
+            .send_message(&card, "hello", false, None)
+            .await
+            .unwrap();
         assert_eq!(task.status.state, TaskState::Completed);
     }
 
@@ -635,7 +651,10 @@ mod tests {
         assert_eq!(body["params"]["metadata"]["skillId"], "code_writer");
 
         // None → 不带 metadata
-        client.send_message(&card, "hello", false, None).await.unwrap();
+        client
+            .send_message(&card, "hello", false, None)
+            .await
+            .unwrap();
         let body = seen.lock().await.clone().unwrap();
         assert!(body["params"].get("metadata").is_none());
     }
@@ -644,8 +663,12 @@ mod tests {
     async fn test_send_message_returns_working_task() {
         let (base, _) = spawn_full_mock_server().await;
         let client = A2aClient::with_defaults(&base, None);
-        let card: AgentCard = serde_json::from_value(card_json("M", &format!("{}/a2a", base))).unwrap();
-        let task = client.send_message(&card, "hello", true, None).await.unwrap();
+        let card: AgentCard =
+            serde_json::from_value(card_json("M", &format!("{}/a2a", base))).unwrap();
+        let task = client
+            .send_message(&card, "hello", true, None)
+            .await
+            .unwrap();
         assert_eq!(task.id, "task-1");
         assert_eq!(task.status.state, TaskState::Working);
     }
@@ -663,7 +686,11 @@ mod tests {
         let task = client.poll_until_terminal(&url, "task-1").await.unwrap();
         assert_eq!(task.status.state, TaskState::Completed);
         // message/send + 2×tasks/get（working→completed）
-        assert!(counter.load(Ordering::SeqCst) >= 3, "calls: {}", counter.load(Ordering::SeqCst));
+        assert!(
+            counter.load(Ordering::SeqCst) >= 3,
+            "calls: {}",
+            counter.load(Ordering::SeqCst)
+        );
     }
 
     #[tokio::test]
@@ -701,7 +728,12 @@ mod tests {
     #[tokio::test]
     async fn test_invoke_sync_mode() {
         let (base, _) = spawn_full_mock_server().await;
-        let client = A2aClient::new(&base, None, Duration::from_millis(10), Duration::from_secs(5));
+        let client = A2aClient::new(
+            &base,
+            None,
+            Duration::from_millis(10),
+            Duration::from_secs(5),
+        );
         let result = client.invoke("do something", "sync", None).await.unwrap();
         assert!(result.contains("Remote agent 'MockAgent'"), "{}", result);
         assert!(result.contains("skills: sk1"), "{}", result);
@@ -711,7 +743,12 @@ mod tests {
     #[tokio::test]
     async fn test_invoke_poll_mode() {
         let (base, _) = spawn_full_mock_server().await;
-        let client = A2aClient::new(&base, None, Duration::from_millis(10), Duration::from_secs(5));
+        let client = A2aClient::new(
+            &base,
+            None,
+            Duration::from_millis(10),
+            Duration::from_secs(5),
+        );
         let result = client.invoke("do something", "poll", None).await.unwrap();
         assert!(result.contains("task completed"), "{}", result);
     }
@@ -750,14 +787,21 @@ mod tests {
                                     Event::default().event("task_update").data(t2.to_string()),
                                 ),
                             ]);
-                            Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+                            Sse::new(stream)
+                                .keep_alive(KeepAlive::default())
+                                .into_response()
                         }
                         _ => rpc_err_result(-32601, "method not found").into_response(),
                     }
                 }),
             );
         let base = spawn_mock_server(app).await;
-        let client = A2aClient::new(&base, None, Duration::from_millis(10), Duration::from_secs(5));
+        let client = A2aClient::new(
+            &base,
+            None,
+            Duration::from_millis(10),
+            Duration::from_secs(5),
+        );
         let result = client.invoke("stream task", "stream", None).await.unwrap();
         assert!(result.contains("SseAgent"), "{}", result);
         assert!(result.contains("completed"), "{}", result);

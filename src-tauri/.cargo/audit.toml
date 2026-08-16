@@ -1,0 +1,44 @@
+# cargo-audit configuration for NeoCoder.
+#
+# All ignored advisories are transitive dependencies of the Tauri GTK/wayland
+# stack (Linux-only) that have no upstream fix available — they cannot be
+# upgraded by bumping a direct dependency:
+#   * quick-xml 0.39 (HIGH) is pinned by wayland-scanner 0.31 used by the
+#     clipboard chain (arboard -> wl-clipboard-rs); the Windows build does not
+#     link these crates at all.
+#   * gtk3 / glib / atk / gdk / unic / instant / proc-macro-error are
+#     unmaintained upstream but still required by tauri's Linux backend.
+#
+# Fixable advisories (e.g. anyhow RUSTSEC-2026-0190) are NOT ignored — those
+# must be upgraded in Cargo.lock.
+
+[advisories]
+ignore = [
+    # quick-xml quadratic start-tag check (wayland-scanner chain, Linux-only)
+    "RUSTSEC-2026-0194",
+    # quick-xml unbounded namespace-declaration allocation (wayland chain)
+    "RUSTSEC-2026-0195",
+    # gtk-rs GTK3 bindings — no longer maintained (tauri Linux backend)
+    "RUSTSEC-2024-0411",
+    "RUSTSEC-2024-0412",
+    "RUSTSEC-2024-0413",
+    "RUSTSEC-2024-0414",
+    "RUSTSEC-2024-0415",
+    "RUSTSEC-2024-0416",
+    "RUSTSEC-2024-0417",
+    "RUSTSEC-2024-0418",
+    "RUSTSEC-2024-0419",
+    "RUSTSEC-2024-0420",
+    # instant — unmaintained, pulled by old glib chain
+    "RUSTSEC-2024-0384",
+    # proc-macro-error — unmaintained (transitive)
+    "RUSTSEC-2024-0370",
+    # unic-* — unmaintained, pulled by glib chain
+    "RUSTSEC-2025-0075",
+    "RUSTSEC-2025-0080",
+    "RUSTSEC-2025-0081",
+    "RUSTSEC-2025-0098",
+    "RUSTSEC-2025-0100",
+    # glib VariantStrIter unsoundness — fixed only in glib 0.20+ (tauri pins 0.18)
+    "RUSTSEC-2024-0429",
+]

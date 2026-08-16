@@ -34,7 +34,14 @@ const SOURCE_EXTENSIONS: &[&str] = &[
 
 /// Directories to skip during scanning
 const SKIP_DIRS: &[&str] = &[
-    "node_modules", "target", ".git", "dist", "build", "__pycache__", ".venv", "vendor",
+    "node_modules",
+    "target",
+    ".git",
+    "dist",
+    "build",
+    "__pycache__",
+    ".venv",
+    "vendor",
 ];
 
 /// Analyze project dependencies and generate a Mermaid graph.
@@ -95,16 +102,16 @@ pub async fn get_dependency_graph(
 
         for dep in deps {
             // Try to resolve the dependency to a project file
-            if let Some(resolved) = resolve_dependency(&dep, &rel_path, &file_map, &ext) {
-                if resolved != rel_path {
-                    let key = (rel_path.clone(), resolved.clone());
-                    if edge_set.insert(key) {
-                        node_ids.insert(resolved.clone());
-                        edges.push(GraphEdge {
-                            from: rel_path.clone(),
-                            to: resolved,
-                        });
-                    }
+            if let Some(resolved) = resolve_dependency(&dep, &rel_path, &file_map, &ext)
+                && resolved != rel_path
+            {
+                let key = (rel_path.clone(), resolved.clone());
+                if edge_set.insert(key) {
+                    node_ids.insert(resolved.clone());
+                    edges.push(GraphEdge {
+                        from: rel_path.clone(),
+                        to: resolved,
+                    });
                 }
             }
         }
@@ -115,11 +122,7 @@ pub async fn get_dependency_graph(
         .iter()
         .map(|id| {
             let label = id.rsplit('/').next().unwrap_or(id).to_string();
-            let file_type = id
-                .rsplit('.')
-                .next()
-                .unwrap_or("unknown")
-                .to_string();
+            let file_type = id.rsplit('.').next().unwrap_or("unknown").to_string();
             GraphNode {
                 id: id.clone(),
                 label,
@@ -144,7 +147,12 @@ pub async fn get_dependency_graph(
 }
 
 /// Recursively collect source files up to max_depth
-fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>, current_depth: usize, max_depth: usize) {
+fn collect_source_files(
+    dir: &Path,
+    files: &mut Vec<PathBuf>,
+    current_depth: usize,
+    max_depth: usize,
+) {
     if current_depth > max_depth {
         return;
     }
@@ -162,12 +170,11 @@ fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>, current_depth: usi
                 continue;
             }
             collect_source_files(&path, files, current_depth + 1, max_depth);
-        } else if path.is_file() {
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if SOURCE_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
-                    files.push(path);
-                }
-            }
+        } else if path.is_file()
+            && let Some(ext) = path.extension().and_then(|e| e.to_str())
+            && SOURCE_EXTENSIONS.contains(&ext.to_lowercase().as_str())
+        {
+            files.push(path);
         }
     }
 }
@@ -203,22 +210,21 @@ fn extract_imports(content: &str, ext: &str) -> Vec<String> {
             for line in content.lines() {
                 let trimmed = line.trim();
                 // import ... from '...' or "..."
-                if trimmed.starts_with("import ") {
-                    if let Some(path) = extract_quoted_path(trimmed) {
-                        if path.starts_with('.') {
-                            imports.push(path);
-                        }
-                    }
+                if trimmed.starts_with("import ")
+                    && let Some(path) = extract_quoted_path(trimmed)
+                    && path.starts_with('.')
+                {
+                    imports.push(path);
                 }
                 // require('...')
-                if trimmed.contains("require(") {
-                    if let Some(start) = trimmed.find("require(") {
-                        let rest = &trimmed[start + 8..];
-                        if let Some(path) = extract_first_quoted(rest) {
-                            if path.starts_with('.') {
-                                imports.push(path);
-                            }
-                        }
+                if trimmed.contains("require(")
+                    && let Some(start) = trimmed.find("require(")
+                {
+                    let rest = &trimmed[start + 8..];
+                    if let Some(path) = extract_first_quoted(rest)
+                        && path.starts_with('.')
+                    {
+                        imports.push(path);
                     }
                 }
             }
@@ -236,13 +242,13 @@ fn extract_imports(content: &str, ext: &str) -> Vec<String> {
                             imports.push(module.trim_start_matches('.').replace('.', "/"));
                         }
                     }
-                } else if trimmed.starts_with("import ") {
-                    if let Some(module) = trimmed.strip_prefix("import ") {
-                        let module = module.split(',').next().unwrap_or("").trim();
-                        let module = module.split(" as ").next().unwrap_or(module).trim();
-                        if !module.is_empty() {
-                            imports.push(module.replace('.', "/"));
-                        }
+                } else if trimmed.starts_with("import ")
+                    && let Some(module) = trimmed.strip_prefix("import ")
+                {
+                    let module = module.split(',').next().unwrap_or("").trim();
+                    let module = module.split(" as ").next().unwrap_or(module).trim();
+                    if !module.is_empty() {
+                        imports.push(module.replace('.', "/"));
                     }
                 }
             }
@@ -264,10 +270,10 @@ fn extract_imports(content: &str, ext: &str) -> Vec<String> {
                     if let Some(path) = extract_first_quoted(trimmed) {
                         imports.push(path);
                     }
-                } else if trimmed.starts_with("import ") {
-                    if let Some(path) = extract_first_quoted(trimmed) {
-                        imports.push(path);
-                    }
+                } else if trimmed.starts_with("import ")
+                    && let Some(path) = extract_first_quoted(trimmed)
+                {
+                    imports.push(path);
                 }
             }
         }
@@ -275,12 +281,12 @@ fn extract_imports(content: &str, ext: &str) -> Vec<String> {
             // Java: import xxx.yyy.zzz;
             for line in content.lines() {
                 let trimmed = line.trim();
-                if trimmed.starts_with("import ") {
-                    if let Some(path) = trimmed.strip_prefix("import ") {
-                        let path = path.trim_end_matches(';').trim();
-                        // Convert package path to file path
-                        imports.push(path.replace('.', "/"));
-                    }
+                if trimmed.starts_with("import ")
+                    && let Some(path) = trimmed.strip_prefix("import ")
+                {
+                    let path = path.trim_end_matches(';').trim();
+                    // Convert package path to file path
+                    imports.push(path.replace('.', "/"));
                 }
             }
         }
@@ -334,9 +340,11 @@ fn resolve_dependency(
 
     // For relative imports (./xxx or ../xxx)
     if dep_normalized.starts_with('.') {
-        let from_dir = from_file.rsplit('/').next().map(|_| {
-            from_file.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("")
-        }).unwrap_or("");
+        let from_dir = from_file
+            .rsplit('/')
+            .next()
+            .map(|_| from_file.rsplit_once('/').map(|(dir, _)| dir).unwrap_or(""))
+            .unwrap_or("");
 
         let resolved = normalize_relative_path(from_dir, &dep_normalized);
 
@@ -430,7 +438,9 @@ fn normalize_relative_path(from_dir: &str, relative: &str) -> String {
     for segment in relative.split('/') {
         match segment {
             "." | "" => {}
-            ".." => { parts.pop(); }
+            ".." => {
+                parts.pop();
+            }
             _ => parts.push(segment),
         }
     }
@@ -461,6 +471,12 @@ fn generate_mermaid(nodes: &[GraphNode], edges: &[GraphEdge]) -> String {
 /// Sanitize a string for use as a Mermaid node ID
 fn sanitize_mermaid_id(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }

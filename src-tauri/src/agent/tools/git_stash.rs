@@ -44,17 +44,16 @@ impl Tool for GitStash {
                 cmd.arg("clear");
             }
             _ => {
-                return format!("Unknown stash action: {}. Use: push, pop, apply, list, drop, clear", action);
+                return format!(
+                    "Unknown stash action: {}. Use: push, pop, apply, list, drop, clear",
+                    action
+                );
             }
         }
 
         cmd.current_dir(work_dir);
 
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            cmd.output(),
-        )
-        .await;
+        let output = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output()).await;
 
         match output {
             Ok(Ok(out)) => {

@@ -1,6 +1,10 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
-    use crate::rag::{tokenize, term_frequencies, cosine_similarity, is_function_start, is_class_start, find_block_end};
+    use crate::rag::{
+        cosine_similarity, find_block_end, is_class_start, is_function_start, term_frequencies,
+        tokenize,
+    };
 
     // ── Tokenize Tests ─────────────────────────────────────────────────────
 
@@ -80,7 +84,7 @@ mod tests {
     fn test_term_frequencies_basic() {
         let doc = "hello world hello";
         let tf = term_frequencies(doc);
-        
+
         // "hello" appears 2 times out of 3 total
         assert!((tf["hello"] - 2.0 / 3.0).abs() < 0.001);
         // "world" appears 1 time out of 3 total
@@ -152,8 +156,8 @@ mod tests {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![1.0, 1.0, 0.0];
         let sim = cosine_similarity(&a, &b);
-        // cos(45°) = √2/2 ≈ 0.707
-        assert!((sim - 0.7071).abs() < 0.01);
+        // cos(45°) = √2/2
+        assert!((sim - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01);
     }
 
     #[test]
@@ -255,7 +259,7 @@ mod tests {
         // Missing parentheses
         assert!(!is_function_start("fn main", "rust"));
         assert!(!is_function_start("def foo", "python"));
-        
+
         // Not a function keyword
         assert!(!is_function_start("let x = 5;", "rust"));
         assert!(!is_function_start("const foo = 1;", "javascript"));
@@ -384,11 +388,7 @@ mod tests {
     fn test_find_block_end_braces_in_strings() {
         // Simplified version doesn't handle strings, so this will fail
         // This is a known limitation of the simple approach
-        let lines = vec![
-            "fn foo() {",
-            "    let s = \"}\";",
-            "}",
-        ];
+        let lines = vec!["fn foo() {", "    let s = \"}\";", "}"];
         // The simple parser will incorrectly count the brace in the string
         // This test documents the limitation
         let result = find_block_end(&lines, 0, "rust");
@@ -402,14 +402,14 @@ mod tests {
     fn test_tokenize_and_tf_combined() {
         let doc1 = "hello world hello";
         let doc2 = "hello foo bar";
-        
+
         let tf1 = term_frequencies(doc1);
         let tf2 = term_frequencies(doc2);
-        
+
         // Both should have "hello"
         assert!(tf1.contains_key("hello"));
         assert!(tf2.contains_key("hello"));
-        
+
         // doc1 should have "world", doc2 should have "foo" and "bar"
         assert!(tf1.contains_key("world"));
         assert!(tf2.contains_key("foo"));
@@ -421,22 +421,34 @@ mod tests {
         let doc1 = "hello world";
         let doc2 = "hello world";
         let doc3 = "foo bar";
-        
+
         let tf1 = term_frequencies(doc1);
         let tf2 = term_frequencies(doc2);
         let tf3 = term_frequencies(doc3);
-        
+
         // Convert to vectors (simplified)
         let all_terms: Vec<&str> = vec!["hello", "world", "foo", "bar"];
-        
-        let vec1: Vec<f32> = all_terms.iter().map(|t| tf1.get(*t).unwrap_or(&0.0)).copied().collect();
-        let vec2: Vec<f32> = all_terms.iter().map(|t| tf2.get(*t).unwrap_or(&0.0)).copied().collect();
-        let vec3: Vec<f32> = all_terms.iter().map(|t| tf3.get(*t).unwrap_or(&0.0)).copied().collect();
-        
+
+        let vec1: Vec<f32> = all_terms
+            .iter()
+            .map(|t| tf1.get(*t).unwrap_or(&0.0))
+            .copied()
+            .collect();
+        let vec2: Vec<f32> = all_terms
+            .iter()
+            .map(|t| tf2.get(*t).unwrap_or(&0.0))
+            .copied()
+            .collect();
+        let vec3: Vec<f32> = all_terms
+            .iter()
+            .map(|t| tf3.get(*t).unwrap_or(&0.0))
+            .copied()
+            .collect();
+
         // doc1 and doc2 are identical, should have similarity 1.0
         let sim12 = cosine_similarity(&vec1, &vec2);
         assert!((sim12 - 1.0).abs() < 0.001);
-        
+
         // doc1 and doc3 share no terms, should have similarity 0.0
         let sim13 = cosine_similarity(&vec1, &vec3);
         assert!(sim13.abs() < 0.001);
@@ -456,7 +468,7 @@ mod tests {
             "    // helper function",
             "}",
         ];
-        
+
         // Find function starts
         let func_indices: Vec<usize> = code
             .iter()
@@ -464,15 +476,15 @@ mod tests {
             .filter(|(_, line)| is_function_start(line, "rust"))
             .map(|(i, _)| i)
             .collect();
-        
+
         assert_eq!(func_indices.len(), 2);
         assert_eq!(func_indices[0], 0);
         assert_eq!(func_indices[1], 7);
-        
+
         // Find block ends
         let end1 = find_block_end(&code, func_indices[0], "rust");
         let end2 = find_block_end(&code, func_indices[1], "rust");
-        
+
         assert_eq!(end1, Some(5));
         assert_eq!(end2, Some(9));
     }
@@ -497,7 +509,7 @@ mod tests {
         let tokens = tokenize(&text);
         assert_eq!(tokens.len(), 10000);
         assert!(tokens.iter().all(|t| t == "hello"));
-        
+
         let tf = term_frequencies(&text);
         assert_eq!(tf.len(), 1);
         assert!((tf["hello"] - 1.0).abs() < 0.001);

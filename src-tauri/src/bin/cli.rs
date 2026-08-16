@@ -56,10 +56,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Validate API key
-    let api_key = cli.api_key.or_else(|| std::env::var("NEOCODER_API_KEY").ok()).unwrap_or_else(|| {
-        eprintln!("Error: API key is required. Set via --api-key or NEOCODER_API_KEY env var.");
-        std::process::exit(1);
-    });
+    let api_key = cli
+        .api_key
+        .or_else(|| std::env::var("NEOCODER_API_KEY").ok())
+        .unwrap_or_else(|| {
+            eprintln!("Error: API key is required. Set via --api-key or NEOCODER_API_KEY env var.");
+            std::process::exit(1);
+        });
 
     let provider = parse_provider(&cli.provider);
     let system_prompt = cli.system.unwrap_or_else(|| {

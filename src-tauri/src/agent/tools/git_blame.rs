@@ -1,6 +1,6 @@
-use std::process::Command;
-use crate::agent::utils::resolve_path;
 use super::{Tool, ToolContext};
+use crate::agent::utils::resolve_path;
+use std::process::Command;
 
 pub struct GitBlame;
 
@@ -14,7 +14,10 @@ impl Tool for GitBlame {
         let raw_path = args["file_path"].as_str().unwrap_or("");
         let file_path = resolve_path(ctx.project_path.as_deref(), raw_path);
 
-        if let Err(e) = ctx.sandbox.check_path(&file_path, ctx.project_path.as_deref(), false) {
+        if let Err(e) = ctx
+            .sandbox
+            .check_path(&file_path, ctx.project_path.as_deref(), false)
+        {
             return format!("Error: Sandbox blocked: {}", e);
         }
         if !file_path.exists() {
@@ -36,7 +39,11 @@ impl Tool for GitBlame {
                 } else {
                     let lines: Vec<&str> = blame.lines().take(100).collect();
                     if lines.len() < blame.lines().count() {
-                        format!("Blame for {} (first 100 lines):\n{}", file_path.display(), lines.join("\n"))
+                        format!(
+                            "Blame for {} (first 100 lines):\n{}",
+                            file_path.display(),
+                            lines.join("\n")
+                        )
                     } else {
                         format!("Blame for {}:\n{}", file_path.display(), lines.join("\n"))
                     }

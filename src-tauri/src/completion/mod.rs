@@ -59,31 +59,27 @@ pub fn detect_ast_context(prefix: &str, language: &str) -> Option<String> {
     }
 
     // Walk backwards to find enclosing structure
-    let mut brace_depth = 0;
-    let mut paren_depth = 0;
     let mut context_parts: Vec<String> = Vec::new();
 
     for line in lines.iter().rev() {
         let trimmed = line.trim();
-        
-        // Count braces (rough heuristic)
-        for ch in trimmed.chars().rev() {
-            match ch {
-                '}' => brace_depth += 1,
-                '{' => brace_depth -= 1,
-                ')' => paren_depth += 1,
-                '(' => paren_depth -= 1,
-                _ => {}
-            }
-        }
 
         // Detect function/impl/module declarations
-        if trimmed.starts_with("fn ") || trimmed.starts_with("pub fn ") || trimmed.starts_with("async fn ") {
-            context_parts.push(format!("function: {}", trimmed.trim_end_matches('{').trim()));
+        if trimmed.starts_with("fn ")
+            || trimmed.starts_with("pub fn ")
+            || trimmed.starts_with("async fn ")
+        {
+            context_parts.push(format!(
+                "function: {}",
+                trimmed.trim_end_matches('{').trim()
+            ));
             break;
         }
         if trimmed.starts_with("impl ") {
-            context_parts.push(format!("impl block: {}", trimmed.trim_end_matches('{').trim()));
+            context_parts.push(format!(
+                "impl block: {}",
+                trimmed.trim_end_matches('{').trim()
+            ));
             break;
         }
         if trimmed.starts_with("mod ") || trimmed.starts_with("pub mod ") {
@@ -91,7 +87,10 @@ pub fn detect_ast_context(prefix: &str, language: &str) -> Option<String> {
             break;
         }
         if trimmed.starts_with("match ") {
-            context_parts.push(format!("match expression: {}", trimmed.trim_end_matches('{').trim()));
+            context_parts.push(format!(
+                "match expression: {}",
+                trimmed.trim_end_matches('{').trim()
+            ));
             break;
         }
         if trimmed.starts_with("struct ") || trimmed.starts_with("pub struct ") {
@@ -114,9 +113,19 @@ pub fn detect_ast_context(prefix: &str, language: &str) -> Option<String> {
                 break;
             }
         }
-        if language == "typescript" || language == "javascript" || language == "ts" || language == "js" {
-            if trimmed.starts_with("function ") || trimmed.contains("=> {") || trimmed.contains("function(") {
-                context_parts.push(format!("function: {}", trimmed.trim_end_matches('{').trim()));
+        if language == "typescript"
+            || language == "javascript"
+            || language == "ts"
+            || language == "js"
+        {
+            if trimmed.starts_with("function ")
+                || trimmed.contains("=> {")
+                || trimmed.contains("function(")
+            {
+                context_parts.push(format!(
+                    "function: {}",
+                    trimmed.trim_end_matches('{').trim()
+                ));
                 break;
             }
             if trimmed.starts_with("class ") {
@@ -136,11 +145,7 @@ pub fn detect_ast_context(prefix: &str, language: &str) -> Option<String> {
 /// Build a Fill-in-the-Middle prompt for code completion
 pub fn build_fim_prompt(ctx: &CompletionContext, _provider: &str) -> String {
     let lang = &ctx.language;
-    let _file_ext = ctx
-        .file_path
-        .rsplit('.')
-        .next()
-        .unwrap_or("rs");
+    let _file_ext = ctx.file_path.rsplit('.').next().unwrap_or("rs");
 
     let mut prompt = String::new();
 
@@ -158,17 +163,17 @@ pub fn build_fim_prompt(ctx: &CompletionContext, _provider: &str) -> String {
     }
 
     // Related file context (multi-file awareness)
-    if let Some(related) = &ctx.related_context {
-        if !related.files.is_empty() {
-            prompt.push_str("--- Related Code ---\n");
-            for file in &related.files {
-                prompt.push_str(&format!("// File: {}\n", file.path));
-                for sym in &file.symbols {
-                    prompt.push_str(&format!("{}\n", sym.signature));
-                }
+    if let Some(related) = &ctx.related_context
+        && !related.files.is_empty()
+    {
+        prompt.push_str("--- Related Code ---\n");
+        for file in &related.files {
+            prompt.push_str(&format!("// File: {}\n", file.path));
+            for sym in &file.symbols {
+                prompt.push_str(&format!("{}\n", sym.signature));
             }
-            prompt.push_str("--- End Related ---\n");
         }
+        prompt.push_str("--- End Related ---\n");
     }
 
     // Recent edits (edit-intent signal: what the user is currently working on)
@@ -234,7 +239,8 @@ pub fn post_process_completion(completion: &str, _ctx: &CompletionContext) -> St
             let mut indented = String::new();
             for (i, line) in result.lines().enumerate() {
                 if i > 0 && !line.is_empty() && !line.starts_with('\n') {
-                    let line_indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+                    let line_indent: String =
+                        line.chars().take_while(|c| c.is_whitespace()).collect();
                     if line_indent.is_empty() && !line.trim().is_empty() {
                         indented.push_str(&indent);
                     }

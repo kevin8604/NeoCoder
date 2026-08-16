@@ -1,7 +1,7 @@
-use std::path::Path;
-use std::fs;
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 
 /// Tokenize text into lowercase alphanumeric words (min 2 chars).
 fn tokenize(text: &str) -> Vec<String> {
@@ -81,9 +81,11 @@ impl MemorySearch {
         let n = documents.len() as f32;
 
         // Compute average document length (in terms)
-        let avg_dl: f32 = documents.iter()
+        let avg_dl: f32 = documents
+            .iter()
             .map(|(_, content)| tokenize(content).len() as f32)
-            .sum::<f32>() / n.max(1.0);
+            .sum::<f32>()
+            / n.max(1.0);
 
         // Compute document frequency for each query term
         let mut df_map: HashMap<String, f32> = HashMap::new();
@@ -104,7 +106,8 @@ impl MemorySearch {
             let dl = tokenize(content).len() as f32;
 
             // Compute BM25 score for the whole document
-            let doc_score: f32 = query_terms.iter()
+            let doc_score: f32 = query_terms
+                .iter()
                 .map(|qt| {
                     let tf = tf_map.get(qt).copied().unwrap_or(0.0);
                     let df = df_map.get(qt).copied().unwrap_or(0.0);
@@ -134,13 +137,18 @@ impl MemorySearch {
                     if line_lower.contains(qt.as_str()) {
                         // Line-level scoring: full match >> partial
                         let line_tokens = tokenize(line);
-                        let line_tf = line_tokens.iter().filter(|t| t.as_str() == qt.as_str()).count() as f32;
+                        let line_tf = line_tokens
+                            .iter()
+                            .filter(|t| t.as_str() == qt.as_str())
+                            .count() as f32;
                         let line_dl = line_tokens.len() as f32;
                         let df = df_map.get(qt).copied().unwrap_or(1.0);
                         let idf = ((n - df + 0.5) / (df + 0.5)).ln_1p();
                         // Shorter lines with more matches get higher scores
                         let local_score = if line_dl > 0.0 {
-                            (line_tf * (k1 + 1.0)) / (line_tf + k1 * (1.0 - b + b * line_dl / avg_dl.max(1.0))) * idf
+                            (line_tf * (k1 + 1.0))
+                                / (line_tf + k1 * (1.0 - b + b * line_dl / avg_dl.max(1.0)))
+                                * idf
                         } else {
                             idf
                         };
@@ -159,14 +167,22 @@ impl MemorySearch {
         }
 
         // Sort by relevance descending, take top N
-        results.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.relevance
+                .partial_cmp(&a.relevance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(max_results);
         Ok(results)
     }
 
     /// Recursively collect .md files (skipping messages/ subdirectories).
     /// Exposed for semantic search (embedding-based) which needs the same corpus.
-    pub(crate) fn collect_docs(&self, dir: &Path, docs: &mut Vec<(String, String)>) -> Result<(), String> {
+    pub(crate) fn collect_docs(
+        &self,
+        dir: &Path,
+        docs: &mut Vec<(String, String)>,
+    ) -> Result<(), String> {
         let entries = fs::read_dir(dir)
             .map_err(|e| format!("Failed to read dir {}: {}", dir.display(), e))?;
 
@@ -180,7 +196,8 @@ impl MemorySearch {
             } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
                 let content = fs::read_to_string(&path)
                     .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-                let relative = path.strip_prefix(&self.memory_dir)
+                let relative = path
+                    .strip_prefix(&self.memory_dir)
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|_| path.to_string_lossy().to_string());
                 docs.push((relative, content));

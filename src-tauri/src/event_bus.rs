@@ -54,8 +54,7 @@ impl JsonlAppender {
             .ok_or_else(|| format!("JSONL appender not open: {}", self.path.display()))?;
         let line = serde_json::to_string(value)
             .map_err(|e| format!("Failed to serialize event: {}", e))?;
-        writeln!(file, "{}", line)
-            .map_err(|e| format!("Failed to write event line: {}", e))?;
+        writeln!(file, "{}", line).map_err(|e| format!("Failed to write event line: {}", e))?;
         file.flush()
             .map_err(|e| format!("Failed to flush event file: {}", e))?;
         Ok(())

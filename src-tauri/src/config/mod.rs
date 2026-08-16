@@ -1,15 +1,16 @@
+use crate::a2a::A2aAgentConfig;
+use crate::sandbox::SandboxConfig;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
-use crate::sandbox::SandboxConfig;
-use crate::a2a::A2aAgentConfig;
 
 // ── API Key obfuscation (XOR + hex encoding) ──
 
 const XOR_KEY: &[u8] = b"NeeCoder-v2-xor-key-2024";
 
 fn xor_obfuscate(input: &str) -> String {
-    input.bytes()
+    input
+        .bytes()
         .enumerate()
         .map(|(i, b)| b ^ XOR_KEY[i % XOR_KEY.len()])
         .map(|b| format!("{:02x}", b))
@@ -225,16 +226,12 @@ impl Default for FineTuneConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum FineTuneTrigger {
+    #[default]
     Manual,
     Threshold,
     Scheduled,
-}
-
-impl Default for FineTuneTrigger {
-    fn default() -> Self {
-        Self::Manual
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,10 +284,12 @@ fn default_a2a_port() -> u16 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum LlmProvider {
     OpenAI,
     Anthropic,
     Ollama,
+    #[default]
     DeepSeek,
 }
 
@@ -313,9 +312,7 @@ pub fn model_context_window(model: &str) -> usize {
         128_000
     } else if m.contains("deepseek") {
         64_000
-    } else if m.contains("claude-3.5-sonnet") || m.contains("claude-3.5-haiku") {
-        200_000
-    } else if m.contains("claude-3-opus") || m.contains("claude-3-sonnet") {
+    } else if m.contains("claude") {
         200_000
     } else if m.contains("gpt-4o") || m.contains("gpt-4-turbo") {
         128_000
@@ -323,31 +320,18 @@ pub fn model_context_window(model: &str) -> usize {
         8_192
     } else if m.contains("gpt-3.5") {
         16_385
-    } else if m.contains("qwen") {
-        128_000
-    } else if m.contains("llama-3") || m.contains("llama3") {
+    } else if m.contains("qwen") || m.contains("llama-3") || m.contains("llama3") {
         128_000
     } else {
         32_000
     }
 }
 
-impl Default for LlmProvider {
-    fn default() -> Self {
-        Self::DeepSeek
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum Theme {
     Light,
+    #[default]
     Dark,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Self::Dark
-    }
 }
 
 impl Default for AppSettings {
@@ -442,10 +426,7 @@ impl AppSettings {
             },
             LlmProvider::DeepSeek => ProviderConfig {
                 name: "deepseek".into(),
-                models: vec![
-                    "deepseek-chat".into(),
-                    "deepseek-coder".into(),
-                ],
+                models: vec!["deepseek-chat".into(), "deepseek-coder".into()],
                 embedding_models: vec![],
             },
         }

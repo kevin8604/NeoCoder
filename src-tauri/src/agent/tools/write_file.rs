@@ -1,5 +1,5 @@
-use crate::fs_service::FileService;
 use super::{Tool, ToolContext};
+use crate::fs_service::FileService;
 
 pub struct WriteFile;
 
@@ -32,7 +32,13 @@ impl Tool for WriteFile {
             None
         };
 
-        match FileService::write_text(&path, contents, ctx.project_path.as_deref(), Some(&ctx.sandbox), create_only) {
+        match FileService::write_text(
+            &path,
+            contents,
+            ctx.project_path.as_deref(),
+            Some(&ctx.sandbox),
+            create_only,
+        ) {
             Ok(()) => {
                 let new_lines = contents.lines().count();
                 if let Some(old) = old_content {
@@ -47,12 +53,17 @@ impl Tool for WriteFile {
                     };
                     format!(
                         "Successfully overwrote {} ({} bytes, {} lines, {})",
-                        path.display(), contents.len(), new_lines, diff_str
+                        path.display(),
+                        contents.len(),
+                        new_lines,
+                        diff_str
                     )
                 } else {
                     format!(
                         "Successfully created {} ({} bytes, {} lines)",
-                        path.display(), contents.len(), new_lines
+                        path.display(),
+                        contents.len(),
+                        new_lines
                     )
                 }
             }
