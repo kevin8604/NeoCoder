@@ -1,0 +1,38 @@
+id: multi-turn-search
+name: Multiple read-only tool rounds
+description: >
+  Two exploration rounds (glob then grep) followed by an answer. Exercises the
+  loop across several iterations without ever touching a destructive tool.
+prompt: Find where ChatEvent is defined and report the file.
+turns:
+  - tool_calls:
+      content: Locating candidate files.
+      calls:
+        - name: glob
+          arguments:
+            pattern: "src-tauri/src/**/*.rs"
+  - tool_calls:
+      content: Grepping for the type.
+      calls:
+        - name: grep
+          arguments:
+            pattern: "pub enum ChatEvent"
+  - text:
+      content: "ChatEvent is defined in src-tauri/src/chat/mod.rs"
+agent:
+  max_iterations: 8
+  tool_names:
+    - glob
+    - grep
+    - read_file
+expect:
+  must_finish: true
+  min_iterations: 2
+  tools_called:
+    - glob
+    - grep
+  forbidden_tools:
+    - edit
+    - write_file
+  final_text_contains:
+    - "chat/mod.rs"

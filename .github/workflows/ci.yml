@@ -33,6 +33,11 @@ jobs:
         run: cargo check --workspace --all-targets
 
       - name: cargo test (workspace)
+        # Includes the `eval::` unit tests: scoring logic + a headless CI guard
+        # (`all_fixtures_on_disk_parse_and_are_unique`) that validates every
+        # fixtures/eval/*.yaml parses with unique ids. The runner that drives real
+        # agent executions needs the Wry GUI runtime and is exercised manually via
+        # the in-app Evals panel, not here.
         run: cargo test --workspace
 
       - name: clippy (deny warnings)

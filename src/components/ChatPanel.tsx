@@ -436,19 +436,38 @@ function PlanCard({
   disabled,
 }: {
   payload: PlanCardPayload;
-  onApprove: () => void;
+  onApprove: (editedSteps?: PlanStep[]) => void;
   onReject: (reason: string) => void;
   onSkip: () => void;
   disabled: boolean;
 }) {
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectInput, setShowRejectInput] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftSteps, setDraftSteps] = useState<PlanStep[]>(payload.plan.plan_steps);
 
   const plan = payload.plan;
   const sessionId = plan.session_id;
 
+  const dirty =
+    draftSteps.length !== plan.plan_steps.length ||
+    draftSteps.some((s, i) => {
+      const orig = plan.plan_steps[i];
+      return (
+        !orig ||
+        s.description !== orig.description ||
+        s.file_path !== orig.file_path ||
+        s.tool_hint !== orig.tool_hint
+      );
+    });
+
   function handleApprove() {
-    onApprove();
+    if (editing && dirty) {
+      const reordered = draftSteps.map((s, i) => ({ ...s, order: i + 1 }));
+      onApprove(reordered);
+    } else {
+      onApprove();
+    }
   }
 
   function handleReject() {
@@ -465,42 +484,128 @@ function PlanCard({
     onSkip();
   }
 
+  function updateStep(idx: number, patch: Partial<PlanStep>) {
+    setDraftSteps((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  }
+
+  function removeStep(idx: number) {
+    setDraftSteps((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function addStep() {
+    setDraftSteps((prev) => [
+      ...prev,
+      { order: prev.length + 1, description: "", file_path: "", tool_hint: "" },
+    ]);
+  }
+
+  function moveStep(idx: number, delta: number) {
+    setDraftSteps((prev) => {
+      const next = [...prev];
+      const target = idx + delta;
+      if (target < 0 || target >= next.length) return prev;
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next.map((s, i) => ({ ...s, order: i + 1 }));
+    });
+  }
+
   return (
     <div className="plan-card">
       <div className="plan-card-header">
         <span className="plan-card-icon"><ClipboardList size={15} /></span>
         <span className="plan-card-title">Execution Plan</span>
         <span className="plan-card-session">#{sessionId.substring(0, 8)}</span>
+        <button
+          className={`plan-edit-toggle ${editing ? "active" : ""}`}
+          onClick={() => setEditing((v) => !v)}
+          title={editing ? "Finish editing" : "Edit plan steps"}
+        >
+          {editing ? "✓ Done" : "✎ Edit"}
+        </button>
       </div>
 
       <div className="plan-card-body">
-        {plan.plan_summary && (
+        {plan.plan_summary && !editing && (
           <div className="plan-card-summary">
             <div className="plan-card-section-title">Summary</div>
             <p>{plan.plan_summary}</p>
           </div>
         )}
 
-        {plan.plan_steps.length > 0 && (
-          <div className="plan-card-steps">
+        {editing ? (
+          <div className="plan-edit-list">
             <div className="plan-card-section-title">
-              Steps ({plan.plan_steps.length})
+              Steps ({draftSteps.length})
+              <button className="plan-step-add" onClick={addStep} title="Add step">+ Add</button>
             </div>
-            <ol className="plan-step-list">
-              {plan.plan_steps.map((step, i) => (
-                <li key={i} className="plan-step-item">
-                  <span className="plan-step-order">{step.order}</span>
-                  <span className="plan-step-desc">{step.description}</span>
-                  {step.file_path && (
-                    <span className="plan-step-file"><FileText size={12} /> {step.file_path}</span>
-                  )}
-                </li>
-              ))}
-            </ol>
+            {draftSteps.map((step, i) => (
+              <div key={i} className="plan-step-edit-row">
+                <div className="plan-step-edit-order">{i + 1}.</div>
+                <div className="plan-step-edit-fields">
+                  <textarea
+                    className="plan-step-edit-desc"
+                    rows={2}
+                    value={step.description}
+                    placeholder="Step description"
+                    onChange={(e) => updateStep(i, { description: e.target.value })}
+                  />
+                  <div className="plan-step-edit-meta">
+                    <input
+                      className="plan-step-edit-file"
+                      placeholder="file path (optional)"
+                      value={step.file_path ?? ""}
+                      onChange={(e) => updateStep(i, { file_path: e.target.value })}
+                    />
+                    <input
+                      className="plan-step-edit-tool"
+                      placeholder="tool hint (optional)"
+                      value={step.tool_hint ?? ""}
+                      onChange={(e) => updateStep(i, { tool_hint: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="plan-step-edit-actions">
+                  <button onClick={() => moveStep(i, -1)} disabled={i === 0} title="Move up">↑</button>
+                  <button
+                    onClick={() => moveStep(i, 1)}
+                    disabled={i === draftSteps.length - 1}
+                    title="Move down"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    className="plan-step-remove"
+                    onClick={() => removeStep(i)}
+                    title="Remove step"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
+        ) : (
+          plan.plan_steps.length > 0 && (
+            <div className="plan-card-steps">
+              <div className="plan-card-section-title">
+                Steps ({plan.plan_steps.length})
+              </div>
+              <ol className="plan-step-list">
+                {plan.plan_steps.map((step, i) => (
+                  <li key={i} className="plan-step-item">
+                    <span className="plan-step-order">{step.order}</span>
+                    <span className="plan-step-desc">{step.description}</span>
+                    {step.file_path && (
+                      <span className="plan-step-file"><FileText size={12} /> {step.file_path}</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )
         )}
 
-        {plan.affected_files.length > 0 && (
+        {plan.affected_files.length > 0 && !editing && (
           <div className="plan-card-files">
             <div className="plan-card-section-title">
               Affected Files ({plan.affected_files.length})
@@ -539,9 +644,9 @@ function PlanCard({
           <button
             className="plan-btn plan-btn-approve"
             onClick={handleApprove}
-            disabled={disabled}
+            disabled={disabled || (editing && draftSteps.length === 0)}
           >
-            <Check size={14} /> Approve
+            <Check size={14} /> {editing && dirty ? "Approve (edited)" : "Approve"}
           </button>
           <button
             className="plan-btn plan-btn-reject"
@@ -2050,9 +2155,9 @@ export default function ChatPanel({ projectPath }: { projectPath?: string | null
     setQuestionDialog(null);
   }
 
-  async function handleApprovePlan() {
+  async function handleApprovePlan(editedSteps?: PlanStep[]) {
     if (!planDialog) return;
-    await approvePlan(planDialog.plan.session_id);
+    await approvePlan(planDialog.plan.session_id, editedSteps);
     setPlanDialog(null);
   }
 

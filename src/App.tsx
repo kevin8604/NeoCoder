@@ -9,6 +9,7 @@ import FileExplorer from "./components/FileExplorer";
 import CloudAgentPanel from "./components/CloudAgentPanel";
 import CheckpointPanel from "./components/CheckpointPanel";
 import AgentTimelinePanel from "./components/AgentTimelinePanel";
+import EvalPanel from "./components/EvalPanel";
 import TerminalPanel from "./components/TerminalPanel";
 import DependencyGraph from "./components/DependencyGraph";
 import MemoryPanel from "./components/MemoryPanel";
@@ -17,8 +18,27 @@ import WorkspacePicker from "./components/WorkspacePicker";
 import { PanelLeft, Search, ListTree, Square, MessageSquare, Sparkles, BookOpen, Wrench, Landmark, Shapes, Box, Layers, MapPin, Folder, Tag, Zap, Target, Circle, Braces, FileCode, FileCode2, FileJson, FileText, File, Globe, Database, Coffee, Palette, FileCog, FileType } from "lucide-react";
 import { openProject, getLspSymbols, requestCompletion, cycleCompletion, triggerAutoReview, checkLocalModel, activateWorkspace, removeWorkspace, renameWorkspace, type LSPSymbol, type Workspace } from "./hooks/useTauri";
 
-type View = "editor" | "chat" | "settings" | "search" | "cloud" | "graph" | "memory" | "insights" | "checkpoints" | "timeline";
-type Theme = "dark" | "light";
+type View = "editor" | "chat" | "settings" | "search" | "cloud" | "graph" | "memory" | "insights" | "checkpoints" | "timeline" | "eval";
+/** Wire names of the backend `Theme` enum mapped to `data-theme` slugs. */
+type ThemeSlug = "dark" | "light" | "github-light" | "one-dark" | "solarized-light" | "solarized-dark";
+type SplitMode = "none" | "horizontal" | "vertical";
+
+const BACKEND_TO_SLUG: Record<string, ThemeSlug> = {
+  Dark: "dark",
+  Light: "light",
+  GithubLight: "github-light",
+  OneDark: "one-dark",
+  SolarizedLight: "solarized-light",
+  SolarizedDark: "solarized-dark",
+};
+const SLUG_TO_BACKEND: Record<ThemeSlug, string> = {
+  dark: "Dark",
+  light: "Light",
+  "github-light": "GithubLight",
+  "one-dark": "OneDark",
+  "solarized-light": "SolarizedLight",
+  "solarized-dark": "SolarizedDark",
+};
 
 interface OpenFile {
   path: string;
@@ -56,8 +76,13 @@ function App() {
   const [outlineSymbols, setOutlineSymbols] = useState<LSPSymbol[]>([]);
   const [outlineLoading, setOutlineLoading] = useState(false);
 
-  // Theme state
-  const [theme, setTheme] = useState<Theme>("dark");
+  // Theme state (multi-theme: 6 backends; default = dark)
+  const [theme, setTheme] = useState<ThemeSlug>("dark");
+  // Keybindings scheme, mirrored from backend AppSettings.keybindings
+  const [keybindings, setKeybindings] = useState<"default" | "vim">("default");
+  // Editor split: none / horizontal (side-by-side) / vertical (stacked)
+  const [splitMode, setSplitMode] = useState<SplitMode>("none");
+  const [splitFile, setSplitFile] = useState<string | null>(null);
 
   // Side panel width (persisted across sessions)
   const [panelWidth, setPanelWidth] = useState(() => {
@@ -83,9 +108,10 @@ function App() {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
         const s = await invoke<any>("get_settings");
-        const t = (s.theme === "Light" ? "light" : "dark") as Theme;
+        const t: ThemeSlug = (s?.theme && BACKEND_TO_SLUG[s.theme]) || "dark";
         setTheme(t);
         document.documentElement.setAttribute("data-theme", t);
+        setKeybindings(s?.keybindings === "Vim" ? "vim" : "default");
         // Load workspace list + activate the most recent one (if any)
         if (Array.isArray(s.workspaces) && s.workspaces.length > 0) {
           setWorkspaces(s.workspaces);
@@ -99,13 +125,15 @@ function App() {
       } catch {
         // Browser mode: use stored preference or system preference
         const stored = localStorage.getItem("neocoder-theme");
-        if (stored === "light" || stored === "dark") {
-          setTheme(stored);
-          document.documentElement.setAttribute("data-theme", stored);
+        if (stored && Object.values(SLUG_TO_BACKEND).length > 0) {
+          const t = stored as ThemeSlug;
+          setTheme(t);
+          document.documentElement.setAttribute("data-theme", t);
         } else if (window.matchMedia?.("(prefers-color-scheme: light)").matches) {
           setTheme("light");
           document.documentElement.setAttribute("data-theme", "light");
         }
+        if (localStorage.getItem("neocoder-keybindings") === "vim") setKeybindings("vim");
       }
     }
     loadTheme();
@@ -145,20 +173,23 @@ function App() {
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => {
-      const next = prev === "dark" ? "light" : "dark";
+      const next: ThemeSlug = prev === "dark" ? "light" : "dark";
       document.documentElement.setAttribute("data-theme", next);
       localStorage.setItem("neocoder-theme", next);
       // Also save to backend
       try {
         import("@tauri-apps/api/core").then(({ invoke }) => {
           invoke("get_settings").then((s: any) => {
-            invoke("update_settings", { settings: { ...s, theme: next === "light" ? "Light" : "Dark" } });
+            invoke("update_settings", { settings: { ...s, theme: SLUG_TO_BACKEND[next] } });
           });
         });
       } catch {}
       return next;
     });
   }, []);
+
+  /** Apply a full theme (used by future command palette / status bar actions). */
+  void 0;
 
   // ── Side panel drag-to-resize ───────────────────────────────────
   const startPanelResize = useCallback((e: React.MouseEvent) => {
@@ -764,9 +795,26 @@ function App() {
                 </div>
               </div>
             ) : currentFile ? (
-              <div className="code-view">
+              <div className={`code-view ${splitMode === "horizontal" && splitFile ? "code-view-split" : ""}`}>
                 <div className="code-view-header">
                   <span className="code-view-path">{currentFile.path}</span>
+                  <button
+                    className={`editor-toolbar-btn code-view-split-btn ${splitMode === "horizontal" ? "active" : ""}`}
+                    onClick={() => {
+                      if (splitMode === "horizontal") {
+                        setSplitMode("none");
+                        setSplitFile(null);
+                      } else {
+                        // Split with the next-open file, or the same file for a two-pane view
+                        const nextFile = openFiles.find((f) => f.path !== currentFile.path);
+                        setSplitFile(nextFile?.path ?? currentFile.path);
+                        setSplitMode("horizontal");
+                      }
+                    }}
+                    title={splitMode === "horizontal" ? "Close split" : "Split right"}
+                  >
+                    ▥
+                  </button>
                 </div>
                 <div className="code-view-body">
                   <div className="code-view-editor">
@@ -782,8 +830,39 @@ function App() {
                       onDismissCompletion={handleDismissCompletion}
                       onCycleCompletion={handleCycleCompletion}
                       candidateInfo={candidatesCount > 1 ? { index: candidateIndex, total: candidatesCount } : null}
+                      keybindings={keybindings}
                     />
                   </div>
+                  {splitMode === "horizontal" && splitFile && (() => {
+                    const splitCurrent = openFiles.find((f) => f.path === splitFile);
+                    if (!splitCurrent) return null;
+                    return (
+                      <div className="code-view-split-pane">
+                        <div className="code-view-header">
+                          <span className="code-view-path">{splitCurrent.path}</span>
+                          <select
+                            className="code-view-split-picker"
+                            value={splitCurrent.path}
+                            onChange={(e) => setSplitFile(e.target.value)}
+                            title="Pick file in right pane"
+                          >
+                            {openFiles.map((f) => (
+                              <option key={f.path} value={f.path}>{f.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="code-view-editor">
+                          <CodeEditor
+                            content={splitCurrent.content}
+                            filePath={splitCurrent.path}
+                            projectPath={projectPath}
+                            onContentChange={(content) => handleContentChange(splitCurrent.path, content)}
+                            keybindings={keybindings}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {showOutline && (
                     <div className="outline-panel">
                       <div className="outline-header">
@@ -892,6 +971,9 @@ function App() {
           <div className="side-panel-view" style={{ display: activeView === "insights" ? "flex" : "none" }}>
             <InsightsPanel />
           </div>
+          <div className="side-panel-view" style={{ display: activeView === "eval" ? "flex" : "none" }}>
+            <EvalPanel />
+          </div>
         </div>
       </div>
 
@@ -942,6 +1024,9 @@ function App() {
         }
         onTimelineClick={() =>
           setActiveView(activeView === "timeline" ? "editor" : "timeline")
+        }
+        onEvalClick={() =>
+          setActiveView(activeView === "eval" ? "editor" : "eval")
         }
         onExplorerClick={() => setShowExplorer(!showExplorer)}
       />

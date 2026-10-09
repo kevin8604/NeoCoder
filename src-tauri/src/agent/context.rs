@@ -366,4 +366,60 @@ mod tests {
         let result = result.unwrap();
         assert_eq!(result.len(), 5, "Should not compact with too few messages");
     }
+
+    #[test]
+    fn test_compact_no_user_message_returns_unchanged() {
+        // Enough messages AND over the token threshold, but no role=="user"
+        // message. `first_user_idx` is None → returns before any LLM call,
+        // so this is deterministic and network-free.
+        let messages: Vec<llm::ChatMessage> = (0..10)
+            .map(|i| {
+                make_msg(
+                    if i % 2 == 0 { "assistant" } else { "tool" },
+                    "padding padding padding",
+                )
+            })
+            .collect();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(compact_if_needed(
+            &messages,
+            "system",
+            50, // tiny budget → over threshold, passes the len gate
+            &LlmProvider::OpenAI,
+            "fake-key",
+            Some("http://localhost:9999"),
+            "gpt-4o",
+        ));
+
+        let result = result.unwrap();
+        assert_eq!(result.len(), 10, "No user message → compaction skipped");
+    }
+
+    #[test]
+    fn test_compact_no_middle_section_returns_unchanged() {
+        // First user message sits after the preserve-recent boundary, so
+        // middle_start >= middle_end → "nothing to compact", returns before LLM.
+        let mut messages: Vec<llm::ChatMessage> = (0..7)
+            .map(|i| make_msg(if i % 2 == 0 { "assistant" } else { "tool" }, "pad pad pad"))
+            .collect();
+        messages.push(make_msg("user", "the only user turn, near the tail")); // index 7
+        messages.push(make_msg("assistant", "reply")); // index 8
+        // len = 9 (> PRESERVE_RECENT=6) → boundary = 3, but first_user_idx = 7,
+        // so middle_start = 8 > middle_end = 3 → early return.
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(compact_if_needed(
+            &messages,
+            "system",
+            50,
+            &LlmProvider::OpenAI,
+            "fake-key",
+            Some("http://localhost:9999"),
+            "gpt-4o",
+        ));
+
+        let result = result.unwrap();
+        assert_eq!(result.len(), 9, "No middle section → compaction skipped");
+    }
 }

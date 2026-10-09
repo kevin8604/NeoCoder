@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod edit_intent;
 pub mod multi_file;
+pub mod predict;
 pub use multi_file::RelatedContext;
 
 #[cfg(test)]

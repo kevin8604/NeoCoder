@@ -1,6 +1,8 @@
 use crate::completion::{
     COMPLETION_SYSTEM_PROMPT, CompletionContext, CompletionEvent, build_fim_prompt,
-    edit_intent::EditIntentTracker, multi_file,
+    edit_intent::EditIntentTracker,
+    multi_file,
+    predict::{self, NextEdit},
 };
 use crate::config::AppSettings;
 use crate::llm::{self, FimRequest};
@@ -393,4 +395,80 @@ pub async fn cancel_completion(
         );
     }
     Ok(())
+}
+
+/// Response shape for the frontend: the located line/column (0-based, ready
+/// for CodeMirror) alongside the raw find/replace text and a short reason.
+#[derive(serde::Serialize)]
+pub struct NextEditResponse {
+    pub file: String,
+    pub line: usize,
+    pub column: usize,
+    pub find: String,
+    pub replace: String,
+    pub reason: String,
+}
+
+/// Ask the fast model to predict where the user's NEXT edit will land. Returns
+/// `Ok(None)` when the model has no useful suggestion or the request fails;
+/// the frontend then simply does not show a ghost hint.
+#[tauri::command]
+pub async fn predict_next_edit(
+    active_file: String,
+    cursor_line: u32,
+    document: String,
+    settings: State<'_, Arc<RwLock<AppSettings>>>,
+    edit_intent: State<'_, Arc<EditIntentTracker>>,
+) -> Result<Option<NextEditResponse>, String> {
+    if document.trim().is_empty() {
+        return Ok(None);
+    }
+    let (provider, api_key, model) = {
+        let s = settings.read().await;
+        let model = if s.model_routing_enabled && !s.fast_model.is_empty() {
+            s.fast_model.clone()
+        } else {
+            s.chat_model.clone()
+        };
+        (s.llm_provider.clone(), s.api_key.clone(), model)
+    };
+    let recent_edits = edit_intent.inner().recent(6);
+    let prompt = predict::build_predict_prompt(&active_file, cursor_line, &document, &recent_edits);
+    let request = llm::ChatRequestParams {
+        model: model.clone(),
+        messages: vec![llm::ChatMessage {
+            role: "user".into(),
+            content: prompt,
+            images: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }],
+        system: predict::PREDICT_SYSTEM_PROMPT.to_string(),
+        max_tokens: 320,
+        temperature: 0.1,
+        thinking_enabled: false,
+        thinking_budget: 0,
+    };
+    let empty_tools: Vec<serde_json::Value> = vec![];
+    let llm_text =
+        match llm::chat_with_tools(&provider, &api_key, None, request, &empty_tools, None).await {
+            Ok((llm::LlmResponse::Text(t), _)) => t,
+            Ok(_) => return Ok(None),
+            Err(e) => {
+                log::debug!("[predict_next_edit] LLM failed: {}", e);
+                return Ok(None);
+            }
+        };
+    let Some(edit): Option<NextEdit> = predict::parse_predict_response(&llm_text) else {
+        return Ok(None);
+    };
+    let (line, column) = predict::locate_edit(&edit, &document);
+    Ok(Some(NextEditResponse {
+        file: edit.file,
+        line,
+        column,
+        find: edit.find,
+        replace: edit.replace,
+        reason: edit.reason,
+    }))
 }

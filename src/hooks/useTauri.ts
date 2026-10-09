@@ -37,6 +37,7 @@ export interface AppSettings {
   custom_instructions: string;
   project_paths?: string[];
   theme: string;
+  keybindings?: "Default" | "Vim";
   auto_review_on_save?: boolean;
   auto_review_on_commit?: boolean;
   // ── A2A (Agent-to-Agent) ──
@@ -391,10 +392,28 @@ export async function answerConfirm(confirmId: string, allowed: boolean): Promis
   await tryInvoke(() => invoke<void>("answer_confirm", { confirmId, allowed }));
 }
 
-export async function approvePlan(sessionId: string): Promise<void> {
+/** One plan step shape used on the wire — mirrors `chat::PlanStep` in Rust. */
+export interface WirePlanStep {
+  order: number;
+  description: string;
+  file_path?: string | null;
+  tool_hint?: string | null;
+}
+
+/**
+ * Approve a plan. When `steps` is provided (non-empty), the backend treats the
+ * approval as an "edit + approve": the Agent swaps in these steps and injects
+ * the revised plan text into the LLM context.
+ */
+export async function approvePlan(sessionId: string, steps?: WirePlanStep[]): Promise<void> {
   if (!isTauri()) return;
   const { invoke } = await import("@tauri-apps/api/core");
-  await tryInvoke(() => invoke<void>("approve_plan", { sessionId }));
+  await tryInvoke(() =>
+    invoke<void>("approve_plan", {
+      sessionId,
+      steps: steps && steps.length > 0 ? steps : null,
+    })
+  );
 }
 
 export async function rejectPlan(sessionId: string, reason?: string): Promise<void> {
@@ -1055,4 +1074,306 @@ export async function replaySession(sessionId: string): Promise<AgentLogEntry[] 
   if (!isTauri()) return null;
   const { invoke } = await import("@tauri-apps/api/core");
   return tryInvoke(() => invoke<AgentLogEntry[]>("replay_session", { sessionId }));
+}
+
+// ── 项目文本搜索/替换（P0-5）───────────────────────────────────────────────
+
+export interface SearchHit {
+  file_path: string;
+  line: number;
+  column: number;
+  preview: string;
+}
+
+export interface SearchInFilesResult {
+  hits: SearchHit[];
+  files_with_matches: number;
+  total_matches: number;
+  truncated: boolean;
+}
+
+export interface FileReplaceSummary {
+  file_path: string;
+  replacements: number;
+  samples: string[];
+}
+
+export interface ReplaceInFilesResult {
+  files_changed: number;
+  total_replacements: number;
+  file_details: FileReplaceSummary[];
+  applied: boolean;
+}
+
+export async function searchInFiles(params: {
+  projectPath: string;
+  query: string;
+  filePattern?: string;
+  isRegex?: boolean;
+  caseSensitive?: boolean;
+  maxHits?: number;
+}): Promise<SearchInFilesResult | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() =>
+    invoke<SearchInFilesResult>("search_in_files", {
+      projectPath: params.projectPath,
+      query: params.query,
+      filePattern: params.filePattern ?? null,
+      isRegex: params.isRegex ?? false,
+      caseSensitive: params.caseSensitive ?? true,
+      maxHits: params.maxHits ?? 500,
+    })
+  );
+}
+
+export async function replaceInFiles(params: {
+  projectPath: string;
+  query: string;
+  replacement: string;
+  filePattern?: string;
+  isRegex?: boolean;
+  caseSensitive?: boolean;
+  dryRun?: boolean;
+}): Promise<ReplaceInFilesResult | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() =>
+    invoke<ReplaceInFilesResult>("replace_in_files", {
+      projectPath: params.projectPath,
+      query: params.query,
+      replacement: params.replacement,
+      filePattern: params.filePattern ?? null,
+      isRegex: params.isRegex ?? false,
+      caseSensitive: params.caseSensitive ?? true,
+      dryRun: params.dryRun ?? true,
+    })
+  );
+}
+
+// ── Edit Prediction（P0-3）──────────────────────────────────────────────────
+
+/** A predicted next edit location returned by `predict_next_edit`. */
+export interface NextEdit {
+  file: string;
+  /** 0-based line index (CodeMirror-friendly) */
+  line: number;
+  /** 0-based column index */
+  column: number;
+  find: string;
+  replace: string;
+  reason: string;
+}
+
+export async function predictNextEdit(params: {
+  activeFile: string;
+  cursorLine: number;
+  document: string;
+}): Promise<NextEdit | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  const result = await tryInvoke(() =>
+    invoke<NextEdit | null>("predict_next_edit", {
+      activeFile: params.activeFile,
+      cursorLine: params.cursorLine,
+      document: params.document,
+    })
+  );
+  return result ?? null;
+}
+
+// ── DAP 调试会话（P0-1）────────────────────────────────────────────────────
+
+export interface DapBreakpoint {
+  id: number;
+  verified: boolean;
+  line: number;
+  path: string;
+}
+
+export interface DapStackFrame {
+  id: number;
+  name: string;
+  path: string;
+  line: number;
+  column: number;
+}
+
+export interface DapVariable {
+  name: string;
+  value: string;
+  type: string;
+  variables_reference: number;
+  named_variables: number;
+}
+
+export interface RuntimeSnapshot {
+  stopped: boolean;
+  reason: string;
+  description: string | null;
+  thread_id: number;
+  top_frame: DapStackFrame | null;
+  frames: DapStackFrame[];
+  locals: DapVariable[];
+  output: string[];
+}
+
+export interface DebugSessionInfo {
+  session_id: string;
+  running: boolean;
+  adapter: string;
+  program: string;
+  stopped: boolean;
+  stop_reason: string | null;
+  breakpoints: DapBreakpoint[];
+}
+
+/** Payload pushed on the `dap-event` channel from the backend. */
+export type DapEventPayload =
+  | { type: "started"; sessionId: string; info: DebugSessionInfo }
+  | { type: "breakpoints"; sessionId: string; breakpoints: DapBreakpoint[] }
+  | { type: "stopped"; sessionId: string; snapshot: RuntimeSnapshot }
+  | { type: "terminated"; sessionId: string }
+  | { type: "output"; sessionId: string; text: string }
+  | { type: string; [key: string]: unknown };
+
+export async function startDebugSession(params: {
+  sessionId: string;
+  language: string;
+  program: string;
+  args?: string[];
+  cwd?: string;
+  adapter?: string;
+  extraLaunch?: Record<string, unknown>;
+}): Promise<DebugSessionInfo | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() =>
+    invoke<DebugSessionInfo>("start_debug_session", {
+      sessionId: params.sessionId,
+      language: params.language,
+      program: params.program,
+      args: params.args ?? null,
+      cwd: params.cwd ?? null,
+      adapter: params.adapter ?? null,
+      extraLaunch: params.extraLaunch ?? null,
+    })
+  );
+}
+
+export async function setDebugBreakpoints(
+  sessionId: string,
+  path: string,
+  lines: number[],
+): Promise<DapBreakpoint[] | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() =>
+    invoke<DapBreakpoint[]>("set_debug_breakpoints", { sessionId, path, lines })
+  );
+}
+
+export async function configurationDone(sessionId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return (await tryInvoke(() => invoke<void>("configuration_done", { sessionId }))) !== null;
+}
+
+export async function resumeDebug(
+  sessionId: string,
+  kind: "wait" | "continue" | "next" | "stepIn" | "stepOut",
+  timeoutSecs?: number,
+): Promise<RuntimeSnapshot | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() =>
+    invoke<RuntimeSnapshot>("resume_debug", {
+      sessionId,
+      kind,
+      timeoutSecs: timeoutSecs ?? 15,
+    })
+  );
+}
+
+export async function getStackTrace(sessionId: string): Promise<DapStackFrame[]> {
+  if (!isTauri()) return [];
+  const { invoke } = await import("@tauri-apps/api/core");
+  const result = await tryInvoke(() => invoke<DapStackFrame[]>("get_stack_trace", { sessionId }));
+  return result ?? [];
+}
+
+export async function getLocals(sessionId: string): Promise<DapVariable[]> {
+  if (!isTauri()) return [];
+  const { invoke } = await import("@tauri-apps/api/core");
+  const result = await tryInvoke(() => invoke<DapVariable[]>("get_locals", { sessionId }));
+  return result ?? [];
+}
+
+export async function evaluateExpression(
+  sessionId: string,
+  expression: string,
+): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() => invoke<string>("evaluate_expression", { sessionId, expression }));
+}
+
+export async function getDebugSessionInfo(sessionId: string): Promise<DebugSessionInfo | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return tryInvoke(() => invoke<DebugSessionInfo>("get_debug_session_info", { sessionId }));
+}
+
+export async function stopDebugSession(sessionId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return (await tryInvoke(() => invoke<void>("stop_debug_session", { sessionId }))) !== null;
+}
+
+export async function listenDapEvent(handler: (payload: DapEventPayload) => void): Promise<UnlistenFn | null> {
+  return listenToEvent<DapEventPayload>("dap-event", handler);
+}
+
+// ── Agent evaluation harness ────────────────────────────────────────────────
+
+export interface EvalMetrics {
+  iterations: number;
+  api_calls: number;
+  finished: boolean;
+  errored: boolean;
+  budget_exhausted: boolean;
+  tools_called: string[];
+  final_text: string;
+  events: string[];
+  logs: string[];
+}
+
+export interface EvalResult {
+  fixture_id: string;
+  name: string;
+  passed: boolean;
+  failures: string[];
+  metrics: EvalMetrics;
+}
+
+export interface EvalFixtureMeta {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export async function listEvalFixtures(): Promise<EvalFixtureMeta[]> {
+  if (!isTauri()) return [];
+  const result = await tryInvoke(() => invoke<EvalFixtureMeta[]>("list_eval_fixtures"));
+  return result ?? [];
+}
+
+export async function runEvalSuite(): Promise<EvalResult[] | null> {
+  if (!isTauri()) return null;
+  return tryInvoke(() => invoke<EvalResult[]>("run_eval_suite"));
+}
+
+export async function runEvalFixture(fixtureId: string): Promise<EvalResult | null> {
+  if (!isTauri()) return null;
+  return tryInvoke(() => invoke<EvalResult>("run_eval_fixture", { fixtureId }));
 }

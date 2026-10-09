@@ -71,3 +71,96 @@ pub fn estimate_total_tokens(messages: &[ChatMessage], system_prompt: &str, mode
         .sum();
     system_tokens + message_tokens + 3 // +3 for assistant reply primer
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(content: &str) -> ChatMessage {
+        ChatMessage {
+            role: "user".into(),
+            content: content.into(),
+            images: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    #[test]
+    fn count_tokens_empty_is_zero() {
+        assert_eq!(count_tokens("", "gpt-4o"), 0);
+    }
+
+    #[test]
+    fn count_tokens_grows_with_content() {
+        let short = count_tokens("hello", "gpt-4o");
+        let long = count_tokens("hello hello hello hello hello hello", "gpt-4o");
+        assert!(short > 0, "non-empty ASCII must count something");
+        assert!(long > short, "more content must yield more tokens");
+    }
+
+    #[test]
+    fn count_tokens_is_cjk_safe() {
+        // Must not panic on multibyte input and should return a positive count.
+        let n = count_tokens("你好世界，这是中文内容", "gpt-4o");
+        assert!(n > 0);
+    }
+
+    #[test]
+    fn message_overhead_is_four_tokens() {
+        // An empty message still carries the fixed +4 role/separator overhead.
+        assert_eq!(estimate_message_tokens(&msg(""), "gpt-4o"), 4);
+    }
+
+    #[test]
+    fn tool_call_id_adds_to_message_estimate() {
+        let base = estimate_message_tokens(&msg("hi"), "gpt-4o");
+        let mut with_id = msg("hi");
+        with_id.tool_call_id = Some("call_1234567890".into());
+        assert!(
+            estimate_message_tokens(&with_id, "gpt-4o") > base,
+            "a tool_call_id must increase the message estimate"
+        );
+    }
+
+    #[test]
+    fn tool_calls_add_to_message_estimate() {
+        let base = estimate_message_tokens(&msg("hi"), "gpt-4o");
+        let mut with_tc = msg("hi");
+        with_tc.tool_calls = Some(serde_json::json!([
+            { "id": "call_0", "type": "function",
+              "function": { "name": "read_file", "arguments": "{\"path\":\"a.rs\"}" } }
+        ]));
+        assert!(estimate_message_tokens(&with_tc, "gpt-4o") > base);
+    }
+
+    #[test]
+    fn total_includes_system_prompt_and_primer() {
+        let messages = vec![msg("alpha"), msg("beta")];
+        let small_system = estimate_total_tokens(&messages, "sys", "gpt-4o");
+        let big_system = estimate_total_tokens(
+            &messages,
+            "a much longer system prompt with many words here",
+            "gpt-4o",
+        );
+        assert!(
+            big_system > small_system,
+            "larger system prompt → larger total"
+        );
+
+        // Total must be at least the sum of the individual message estimates
+        // (system + primer add on top).
+        let msg_sum: usize = messages
+            .iter()
+            .map(|m| estimate_message_tokens(m, "gpt-4o"))
+            .sum();
+        assert!(small_system >= msg_sum);
+    }
+
+    #[test]
+    fn empty_history_still_has_system_and_primer() {
+        let total = estimate_total_tokens(&[], "hello system", "gpt-4o");
+        // count_tokens("hello system") + 4 + 0 messages + 3
+        assert!(total > 0);
+    }
+}

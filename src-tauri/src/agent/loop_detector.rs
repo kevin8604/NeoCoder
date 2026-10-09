@@ -746,4 +746,43 @@ mod tests {
         }
         assert_eq!(detector.check(), LoopVerdict::Continue);
     }
+
+    #[test]
+    fn test_state_accessors() {
+        let mut detector = LoopDetector::new(LoopDetectionConfig::default());
+
+        for _ in 0..3 {
+            detector.record_call("read_file", &make_args("a.rs"), "content", true);
+        }
+
+        assert_eq!(detector.history_len(), 3);
+        assert_eq!(detector.get_read_only_streak(), 3);
+        assert_eq!(detector.get_tail_repeat_count(), 3);
+        assert_eq!(detector.get_unique_keys_count(), 1, "one unique target");
+
+        // A different target adds a unique key and resets the tail repeat count.
+        detector.record_call("read_file", &make_args("b.rs"), "content", true);
+        assert_eq!(detector.get_unique_keys_count(), 2);
+        assert_eq!(detector.get_tail_repeat_count(), 1);
+    }
+
+    #[test]
+    fn test_ping_pong_different_args_no_trigger() {
+        let mut detector = LoopDetector::new(LoopDetectionConfig::default());
+
+        // Alternating tools (default 3 cycles) but every call has distinct args,
+        // so the strict identical-args ping-pong rule must NOT fire.
+        for i in 0..6 {
+            if i % 2 == 0 {
+                detector.record_call("read_file", &make_args(&format!("f{i}.rs")), "c", true);
+            } else {
+                detector.record_call("get_symbols", &make_args(&format!("f{i}.rs")), "c", true);
+            }
+        }
+        assert_eq!(
+            detector.check(),
+            LoopVerdict::Continue,
+            "alternating with varying args is not a ping-pong loop"
+        );
+    }
 }

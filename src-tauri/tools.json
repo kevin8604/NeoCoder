@@ -577,5 +577,34 @@
       },
       "required": ["command", "error"]
     }
+  },
+  {
+    "name": "debug_run",
+    "description": "Run a program under a DAP debug adapter (codelldb for Rust, lldb-dap for C/C++/Swift, python -m debugpy.adapter for Python) to inspect live runtime state. Launch the compiled binary, set breakpoints at 1-based lines, resume, capture the call stack and local variables, and optionally evaluate expressions at the stop frame, all in one call. Requires a previously built binary (see run_build). Prefer this over adding println! debug scaffolding when you need real runtime values (variable state, branch reached, struct contents). Example: debug_run { program: 'target/debug/mybin', language: 'rust', breakpoints: [{ path: 'src/main.rs', lines: [42, 55] }], evaluate: ['sum', 'items.len()'], stop_timeout_secs: 10 }",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "program": { "type": "string", "description": "path to the executable to debug (relative to project root or absolute)" },
+        "language": { "type": "string", "description": "language key: 'rust' | 'python' | 'cpp' | 'c' | 'swift'. Default: 'rust'." },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Optional: CLI arguments to pass to the debugged program" },
+        "cwd": { "type": "string", "description": "Optional: working directory for the debuggee (defaults to project root)" },
+        "breakpoints": {
+          "type": "array",
+          "description": "Breakpoints to set before resuming. One entry per source file.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "description": "path to the source file" },
+              "lines": { "type": "array", "items": { "type": "integer" }, "description": "1-based line numbers" }
+            },
+            "required": ["path", "lines"]
+          }
+        },
+        "evaluate": { "type": "array", "items": { "type": "string" }, "description": "Optional: expressions to evaluate at the top frame after stopping (locals, method calls, watch expressions)" },
+        "stop_timeout_secs": { "type": "integer", "description": "Seconds to wait for a 'stopped' event after continue. Default: 10." },
+        "adapter": { "type": "string", "description": "Optional: explicit debug adapter executable to spawn (overrides the language default)" }
+      },
+      "required": ["program"]
+    }
   }
 ]

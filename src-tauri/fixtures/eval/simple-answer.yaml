@@ -1,0 +1,21 @@
+id: simple-answer
+name: Plain text answer finishes cleanly
+description: >
+  The agent responds with a single text turn and no tool use. The harness
+  checks that it reaches Finished, stays within a tiny iteration budget, and
+  that the final answer contains the expected wording.
+prompt: Reply with a one-line greeting.
+turns:
+  - text:
+      content: "Hello! Ready when you are."
+agent:
+  max_iterations: 4
+  tool_names:
+    - read_file
+    - glob
+expect:
+  must_finish: true
+  must_not_error: true
+  max_iterations: 4
+  final_text_contains:
+    - "Hello"

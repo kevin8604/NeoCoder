@@ -75,6 +75,8 @@ interface CodeEditorProps {
   onDismissCompletion?: () => void;
   onCycleCompletion?: () => void;
   candidateInfo?: { index: number; total: number } | null;
+  /** Keybinding scheme. "vim" overlays @replit/codemirror-vim on the default keymap. */
+  keybindings?: "default" | "vim";
 }
 
 // ── Ghost Text Widget ──────────────────────────────────────────────────────
@@ -195,12 +197,18 @@ export default function CodeEditor({
   onDismissCompletion,
   onCycleCompletion,
   candidateInfo,
+  keybindings = "default",
 }: CodeEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [editorKey, setEditorKey] = useState(0);
   // Compartment so the editor theme can be reconfigured live on theme switch
   const themeCompartmentRef = useRef(new Compartment());
+  // Compartment so Vim overlay can be toggled without recreating the view
+  const vimCompartmentRef = useRef(new Compartment());
+  // Whether Vim is currently active — used to reconcile the DOM keydown
+  // handler below (Tab/Escape must fall through to Vim in normal mode).
+  const vimActiveRef = useRef(false);
 
   // ── Inline Edit state ──
   const {
@@ -217,7 +225,9 @@ export default function CodeEditor({
     if (!editorRef.current) return;
 
     const langExt = getLanguageExtension(filePath);
-    const isLight = document.documentElement.getAttribute("data-theme") === "light";
+    const slug = document.documentElement.getAttribute("data-theme") || "dark";
+    const isLight = slug === "light" || slug === "github-light" || slug === "solarized-light";
+    const cmTheme = isLight ? lightEditorTheme : oneDark;
 
     const state = EditorState.create({
       doc: content,
@@ -230,7 +240,8 @@ export default function CodeEditor({
         indentOnInput(),
         highlightSelectionMatches(),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        themeCompartmentRef.current.of(isLight ? lightEditorTheme : oneDark),
+        themeCompartmentRef.current.of(cmTheme),
+        vimCompartmentRef.current.of([]),
         ghostTextTheme,
 
         // Language
@@ -256,6 +267,11 @@ export default function CodeEditor({
 
             // Escape: dismiss diff view or completion
             if (event.key === "Escape") {
+              // In Vim mode let the Vim keymap own Escape (enters normal mode)
+              // unless the user has a ghost completion or inline diff to dismiss.
+              if (vimActiveRef.current && !inlineEditState.edited && !completionText) {
+                return false;
+              }
               if (inlineEditState.edited) {
                 event.preventDefault();
                 rejectEdit();
@@ -271,6 +287,11 @@ export default function CodeEditor({
 
             // Tab: accept diff or completion
             if (event.key === "Tab") {
+              // When Vim is active and there is nothing to accept, let Vim
+              // handle Tab (inserts 4 spaces in insert mode by default).
+              if (vimActiveRef.current && !inlineEditState.edited && !completionText) {
+                return false;
+              }
               if (inlineEditState.edited) {
                 event.preventDefault();
                 const result = acceptEdit();
@@ -340,20 +361,49 @@ export default function CodeEditor({
 
   // Keep the editor theme in sync with runtime theme switches (data-theme attribute)
   useEffect(() => {
-    const observer = new MutationObserver(() => {
+    const applyCmTheme = () => {
       const view = viewRef.current;
       if (!view) return;
-      const light = document.documentElement.getAttribute("data-theme") === "light";
+      const slug = document.documentElement.getAttribute("data-theme") || "dark";
+      const light = slug === "light" || slug === "github-light" || slug === "solarized-light";
       view.dispatch({
         effects: themeCompartmentRef.current.reconfigure(light ? lightEditorTheme : oneDark),
       });
-    });
+    };
+    applyCmTheme();
+    const observer = new MutationObserver(applyCmTheme);
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
     return () => observer.disconnect();
-  }, []);
+  }, [editorKey]);
+
+  // Load / unload Vim overlay whenever the keybinding scheme changes.
+  // Uses dynamic import so a missing @replit/codemirror-vim package never
+  // breaks the editor — we simply keep the default keymap.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    let cancelled = false;
+    if (keybindings === "vim") {
+      import("@replit/codemirror-vim")
+        .then(({ vim }) => {
+          if (cancelled || !viewRef.current) return;
+          vimActiveRef.current = true;
+          viewRef.current.dispatch({
+            effects: vimCompartmentRef.current.reconfigure(vim()),
+          });
+        })
+        .catch(() => {
+          vimActiveRef.current = false;
+        });
+    } else {
+      vimActiveRef.current = false;
+      view.dispatch({ effects: vimCompartmentRef.current.reconfigure([]) });
+    }
+    return () => { cancelled = true; };
+  }, [keybindings, editorKey]);
 
   // Update ghost text decoration when completionText changes
   useEffect(() => {

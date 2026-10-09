@@ -1494,14 +1494,21 @@ pub async fn answer_confirm(
 
 /// ── Plan Mode Approval Commands ──
 /// Send approval (session_id from PlanCreated event) to the waiting Agent.
+/// When `steps` is present the frontend has edited the plan; forward those
+/// steps as `PlanAction::Edit` so the Agent injects the revised version.
 #[tauri::command]
 pub async fn approve_plan(
     session_id: String,
+    steps: Option<Vec<crate::chat::PlanStep>>,
     awaiters: State<'_, PlanApprovalAwaiters>,
 ) -> Result<(), String> {
     let mut map = awaiters.lock().map_err(|e| format!("Lock error: {}", e))?;
     if let Some(sender) = map.remove(&session_id) {
-        let _ = sender.send(PlanAction::Approve);
+        let action = match steps {
+            Some(s) if !s.is_empty() => PlanAction::Edit(s),
+            _ => PlanAction::Approve,
+        };
+        let _ = sender.send(action);
     }
     Ok(())
 }

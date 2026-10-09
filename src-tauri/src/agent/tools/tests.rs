@@ -32,6 +32,7 @@ mod tests {
                 None,
             )),
             lsp_manager: None,
+            dap_manager: None,
             app_handle: None,
             session_id: None,
             tavily_api_key: String::new(),

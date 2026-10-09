@@ -57,6 +57,14 @@ strsim = "0.11"
 portable-pty = "0.8"
 clap = { version = "4", features = ["derive"] }
 
+# Optional AST-accurate chunker (Rust / TypeScript / Python grammars).
+# Enable with `cargo build --features treesitter` — the default build keeps
+# these crates out so downstream toolchains don't need a C compiler.
+tree-sitter = { version = "0.22", optional = true }
+tree-sitter-rust = { version = "0.21", optional = true }
+tree-sitter-typescript = { version = "0.21", optional = true }
+tree-sitter-python = { version = "0.21", optional = true }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -66,3 +74,9 @@ tauri = { version = "2", features = ["test"] }
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+treesitter = [
+  "dep:tree-sitter",
+  "dep:tree-sitter-rust",
+  "dep:tree-sitter-typescript",
+  "dep:tree-sitter-python",
+]

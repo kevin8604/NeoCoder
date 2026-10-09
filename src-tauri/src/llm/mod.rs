@@ -800,6 +800,7 @@ async fn embed_ollama(
     Ok(embeddings)
 }
 
+#[derive(Debug)]
 pub struct ToolCallRequest {
     pub id: String,
     pub name: String,
@@ -814,6 +815,7 @@ pub struct TokenUsage {
     pub total_tokens: usize,
 }
 
+#[derive(Debug)]
 pub enum LlmResponse {
     Text(String),
     ToolCalls {

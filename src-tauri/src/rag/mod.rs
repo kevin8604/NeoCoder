@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[cfg(feature = "treesitter")]
+pub mod treesitter;
+
 // ── Public Data Types ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -604,8 +607,10 @@ impl CodeIndexer {
                     };
 
                     let embedding: Vec<f32> = embedding_blob
-                        .chunks_exact(4)
-                        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|b| f32::from_le_bytes(*b))
                         .collect();
 
                     Ok((
@@ -723,6 +728,16 @@ pub(super) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
 /// Chunk source code into meaningful pieces (file-level, function, class).
 fn chunk_code(file_path: &str, content: &str) -> Vec<CodeChunk> {
+    // Preferred path: AST-accurate chunking when the `treesitter` cargo
+    // feature is enabled and a grammar is available for this language.
+    // Falls through to the line-based heuristic below on any miss.
+    #[cfg(feature = "treesitter")]
+    {
+        if let Some(ts_chunks) = treesitter::chunk_with_tree_sitter(file_path, content) {
+            return ts_chunks;
+        }
+    }
+
     let mut chunks = Vec::new();
     let language = lsp::detect_language(file_path);
     let id_prefix = uuid::Uuid::new_v4().to_string();

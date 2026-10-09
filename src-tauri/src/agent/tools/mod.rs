@@ -1,4 +1,5 @@
 use crate::chat::{QuestionItem, TodoItem};
+use crate::dap::DapManager;
 use crate::lsp::LspManager;
 use crate::rag::CodeIndexer;
 use crate::sandbox::SandboxChecker;
@@ -13,6 +14,7 @@ pub mod ask_user_question;
 pub mod auto_fix;
 pub mod coverage;
 pub mod create_directory;
+pub mod debug_run;
 pub mod delete_directory;
 pub mod delete_file;
 pub mod edit;
@@ -60,6 +62,8 @@ pub struct ToolContext {
     pub sandbox: Arc<SandboxChecker>,
     /// LSP manager for precise symbol resolution (optional; tools fall back to heuristics)
     pub lsp_manager: Option<Arc<LspManager>>,
+    /// DAP debug-session manager for the `debug_run` tool (optional)
+    pub dap_manager: Option<Arc<DapManager>>,
     /// Optional app handle for tools that need to emit events
     pub app_handle: Option<tauri::AppHandle>,
     /// Optional session ID for audit and event correlation
@@ -239,5 +243,6 @@ pub fn build_executor() -> ToolExecutor {
     executor.register(tdd::TddTool);
     executor.register(coverage::CoverageTool);
     executor.register(a2a_invoke::A2aInvoke);
+    executor.register(debug_run::DebugRun);
     executor
 }

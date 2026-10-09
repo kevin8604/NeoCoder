@@ -53,7 +53,11 @@ pub struct AppSettings {
     pub ignore_patterns: Vec<String>,
     pub custom_instructions: String,
     pub project_paths: Vec<String>,
+    #[serde(default)]
     pub theme: Theme,
+    /// Editor keybinding scheme (Default vs Vim overlay).
+    #[serde(default)]
+    pub keybindings: Keybindings,
     /// Sandbox security configuration
     #[serde(default)]
     pub sandbox: SandboxConfig,
@@ -327,11 +331,50 @@ pub fn model_context_window(model: &str) -> usize {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum Theme {
     Light,
     #[default]
     Dark,
+    /// GitHub-flavoured light theme
+    GithubLight,
+    /// Atom One Dark variant
+    OneDark,
+    /// Solarized Light
+    SolarizedLight,
+    /// Solarized Dark
+    SolarizedDark,
+}
+
+impl Theme {
+    /// Wire name written to `data-theme` on `<html>`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Theme::Light => "light",
+            Theme::Dark => "dark",
+            Theme::GithubLight => "github-light",
+            Theme::OneDark => "one-dark",
+            Theme::SolarizedLight => "solarized-light",
+            Theme::SolarizedDark => "solarized-dark",
+        }
+    }
+
+    /// Whether this theme is a light variant (drives CodeMirror theme pick).
+    pub fn is_light(&self) -> bool {
+        matches!(
+            self,
+            Theme::Light | Theme::GithubLight | Theme::SolarizedLight
+        )
+    }
+}
+
+/// Editor keybinding scheme. `Vim` overlays CodeMirror's vim mode on top of
+/// the default keymap; `Default` is the current behaviour.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum Keybindings {
+    #[default]
+    Default,
+    Vim,
 }
 
 impl Default for AppSettings {
@@ -360,6 +403,7 @@ impl Default for AppSettings {
             custom_instructions: String::new(),
             project_paths: vec![],
             theme: Theme::Dark,
+            keybindings: Keybindings::Default,
             sandbox: SandboxConfig::default(),
             max_api_calls_per_session: default_max_api_calls(),
             loop_no_progress_threshold: default_loop_no_progress(),

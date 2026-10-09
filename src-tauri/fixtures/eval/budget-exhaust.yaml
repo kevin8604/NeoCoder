@@ -1,0 +1,39 @@
+id: budget-exhaust
+name: Iteration budget exhaustion emits BudgetExhausted
+description: >
+  Three distinct read-only tool rounds and NO final text turn. With a tiny
+  max_iterations the loop runs out, the final "wrap up" summary call finds an
+  empty mock queue and errors, and the agent must emit a BudgetExhausted event
+  so the UI can offer a Continue button. Verifies the budget-exhaustion path.
+prompt: Explore the repo across three rounds.
+turns:
+  - tool_calls:
+      content: round one
+      calls:
+        - name: glob
+          arguments:
+            pattern: "**/a.rs"
+  - tool_calls:
+      content: round two
+      calls:
+        - name: glob
+          arguments:
+            pattern: "**/b.rs"
+  - tool_calls:
+      content: round three
+      calls:
+        - name: glob
+          arguments:
+            pattern: "**/c.rs"
+agent:
+  max_iterations: 3
+  tool_names:
+    - glob
+    - grep
+    - read_file
+expect:
+  must_finish: false
+  expect_budget_exhausted: true
+  expect_events_contains:
+    - BudgetExhausted
+  max_api_calls: 4

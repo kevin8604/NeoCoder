@@ -259,7 +259,7 @@ impl ConfirmHook {
     fn needs_confirmation(tool_name: &str) -> bool {
         matches!(
             tool_name,
-            "delete_file" | "delete_directory" | "run_terminal_command"
+            "delete_file" | "delete_directory" | "run_terminal_command" | "debug_run"
         )
     }
 
@@ -276,6 +276,10 @@ impl ConfirmHook {
             "run_terminal_command" => {
                 let cmd = args["command"].as_str().unwrap_or("(unknown)");
                 format!("Execute command: {}", cmd)
+            }
+            "debug_run" => {
+                let program = args["program"].as_str().unwrap_or("(unknown)");
+                format!("Run under debugger: {}", program)
             }
             _ => format!("Execute: {}", tool_name),
         }

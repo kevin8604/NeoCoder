@@ -4,6 +4,7 @@ pub mod chat;
 pub mod commands;
 pub mod completion;
 pub mod config;
+pub mod dap;
 pub mod event_bus;
 pub mod fs_service;
 pub mod fs_watcher;
@@ -124,6 +125,9 @@ pub fn run() {
 
             // Initialize LSP manager
             app.manage::<Arc<LspManager>>(Arc::new(LspManager::new()));
+
+            // Initialize DAP debug session manager
+            app.manage::<Arc<dap::DapManager>>(Arc::new(dap::DapManager::new()));
 
             // Initialize Code Indexer (with default settings; actual model/key configured on reindex)
             {
@@ -401,6 +405,7 @@ pub fn run() {
             commands::completion::request_completion,
             commands::completion::cancel_completion,
             commands::completion::cycle_completion,
+            commands::completion::predict_next_edit,
             commands::edit_inline::edit_inline,
             commands::chat::send_message,
             commands::chat::new_session,
@@ -439,6 +444,20 @@ pub fn run() {
             commands::search::index_file,
             commands::search::remove_from_index,
             commands::search::get_index_stats,
+            commands::search_replace::search_in_files,
+            commands::search_replace::replace_in_files,
+            commands::eval::list_eval_fixtures,
+            commands::eval::run_eval_suite,
+            commands::eval::run_eval_fixture,
+            commands::dap::start_debug_session,
+            commands::dap::set_debug_breakpoints,
+            commands::dap::configuration_done,
+            commands::dap::resume_debug,
+            commands::dap::get_stack_trace,
+            commands::dap::get_locals,
+            commands::dap::evaluate_expression,
+            commands::dap::get_debug_session_info,
+            commands::dap::stop_debug_session,
             commands::chat::answer_agent_question,
             commands::chat::answer_confirm,
             commands::chat::cancel_agent,

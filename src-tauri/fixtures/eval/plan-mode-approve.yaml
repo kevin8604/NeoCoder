@@ -1,0 +1,41 @@
+id: plan-mode-approve
+name: Plan mode emits PlanCreated and approves into execution
+description: >
+  A plan-mode fixture: the agent starts in the Planning phase, produces a
+  structured plan as a ```json block, which the harness parses into a
+  `PlanCreated` event. The eval runner answers the approval awaiter with Approve
+  (mirroring the real UI's Approve button), so the agent flips to the Executing
+  phase and finishes. Asserts the full PlanCreated -> PlanApproved round-trip
+  without the run hanging on the 600s approval timeout.
+prompt: Show me a short plan for saying hello to the user, then do it.
+turns:
+  - text:
+      content: |
+        Here is my plan:
+        ```json
+        {
+          "summary": "Greet the user with a one-line hello",
+          "steps": [
+            { "order": 1, "description": "Compose a friendly greeting" }
+          ],
+          "affected_files": []
+        }
+        ```
+  - text:
+      content: "Hello! I followed the approved plan."
+agent:
+  plan_mode: true
+  max_iterations: 8
+  tool_names:
+    - read_file
+    - glob
+    - grep
+plan_response: approve
+expect:
+  must_finish: true
+  must_not_error: true
+  expect_events_contains:
+    - PlanCreated
+    - PlanApproved
+  final_text_contains:
+    - "Hello"

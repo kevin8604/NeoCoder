@@ -2,6 +2,7 @@ pub mod checkpoint;
 pub mod cloud;
 pub mod context;
 pub mod definition;
+pub mod eval;
 pub mod failure_lessons;
 pub mod hooks;
 pub mod loop_detector;
@@ -44,6 +45,10 @@ pub struct Plan {
 #[derive(Debug, Clone)]
 pub enum PlanAction {
     Approve,
+    /// User edited the step list before approving. The Agent replaces its
+    /// stored steps with these, regenerates the rendered plan text, then
+    /// proceeds down the same path as Approve.
+    Edit(Vec<PlanStep>),
     Reject(String),
     Skip,
 }
@@ -280,6 +285,13 @@ const VERIFICATION_PHASE_TOOLS: &[&str] = &[
 /// 保证复杂任务有足够的只读调研空间，且不挤占执行预算。
 fn default_planning_budget(max_iterations: usize) -> usize {
     ((max_iterations as f64 * 0.3).ceil() as usize).max(2)
+}
+
+/// Pure predicate behind the runtime API-call quota. `max == 0` means unlimited.
+/// Extracted so the budget-exhaustion decision can be unit-tested headless
+/// (the AgentInstance loop that consumes it needs the Wry runtime).
+fn is_api_budget_exhausted(current: usize, max: usize) -> bool {
+    max > 0 && current >= max
 }
 
 /// Tools that are safe to execute in parallel (read-only, no side effects).
@@ -592,6 +604,9 @@ impl AgentInstance {
                 lsp_manager: app
                     .try_state::<Arc<LspManager>>()
                     .map(|s| s.inner().clone()),
+                dap_manager: app
+                    .try_state::<Arc<crate::dap::DapManager>>()
+                    .map(|s| s.inner().clone()),
                 app_handle: Some(app),
                 session_id: Some(session_id),
                 tavily_api_key,
@@ -691,6 +706,12 @@ impl AgentInstance {
     pub fn set_thinking(&mut self, enabled: bool, budget: u32) {
         self.thinking_enabled = enabled;
         self.thinking_budget = budget;
+    }
+
+    /// Number of LLM round-trips performed so far. Read by the eval runner to
+    /// populate [`crate::agent::eval::EvalMetrics`].
+    pub fn api_call_count(&self) -> usize {
+        self.api_call_count
     }
 
     /// Extend the iteration budget at runtime.
@@ -1354,7 +1375,7 @@ impl AgentInstance {
             self.compact_context_if_needed().await;
 
             // Resource quota: check API call limit
-            if self.max_api_calls > 0 && self.api_call_count >= self.max_api_calls {
+            if is_api_budget_exhausted(self.api_call_count, self.max_api_calls) {
                 let msg = format!(
                     "[RESOURCE_LIMIT] API call limit reached ({}/{}). Session quota exhausted.",
                     self.api_call_count, self.max_api_calls
@@ -1543,6 +1564,10 @@ impl AgentInstance {
 
                             match action {
                                 PlanAction::Approve => {
+                                    self.approve_plan();
+                                }
+                                PlanAction::Edit(steps) => {
+                                    self.apply_edited_steps(steps);
                                     self.approve_plan();
                                 }
                                 PlanAction::Reject(reason) => {
@@ -2471,7 +2496,7 @@ impl AgentInstance {
             self.compact_context_if_needed().await;
 
             // Resource quota: check API call limit
-            if self.max_api_calls > 0 && self.api_call_count >= self.max_api_calls {
+            if is_api_budget_exhausted(self.api_call_count, self.max_api_calls) {
                 let msg = format!(
                     "[RESOURCE_LIMIT] API call limit reached ({}/{}). Session quota exhausted.",
                     self.api_call_count, self.max_api_calls
@@ -3587,6 +3612,31 @@ impl AgentInstance {
         }
     }
 
+    /// Replace stored plan steps with the user's edited version and rebuild the
+    /// rendered plan text so the injected "[Plan Approved]" message reflects the
+    /// edits. Called before `approve_plan` when the frontend sends
+    /// `PlanAction::Edit`.
+    fn apply_edited_steps(&mut self, steps: Vec<PlanStep>) {
+        self.plan_steps = steps.clone();
+        let mut rendered = String::new();
+        rendered.push_str("[Edited Plan]\n\n");
+        if let Some(head) = self.plan_text.as_ref().and_then(|s| s.lines().next()) {
+            rendered.push_str(&format!("{}\n\n", head));
+        }
+        rendered.push_str("Steps:\n");
+        for s in &steps {
+            rendered.push_str(&format!("{}. {}", s.order, s.description));
+            if let Some(f) = &s.file_path {
+                rendered.push_str(&format!("  [file: {}]", f));
+            }
+            if let Some(t) = &s.tool_hint {
+                rendered.push_str(&format!("  [tool: {}]", t));
+            }
+            rendered.push('\n');
+        }
+        self.plan_text = Some(rendered);
+    }
+
     fn approve_plan(&mut self) {
         self.execution_phase = ExecutionPhase::Executing;
         //step 2
@@ -3860,6 +3910,18 @@ mod tests {
         assert_eq!(default_planning_budget(5), 2); // ceil(1.5)
         assert_eq!(default_planning_budget(2), 2); // min clamp
         assert_eq!(default_planning_budget(1), 2);
+    }
+
+    #[test]
+    fn test_is_api_budget_exhausted() {
+        // max == 0 means unlimited → never exhausted
+        assert!(!is_api_budget_exhausted(0, 0));
+        assert!(!is_api_budget_exhausted(999, 0));
+        // strictly below limit → continue
+        assert!(!is_api_budget_exhausted(2, 5));
+        // exactly at and above the limit → exhausted
+        assert!(is_api_budget_exhausted(5, 5));
+        assert!(is_api_budget_exhausted(6, 5));
     }
 
     #[test]

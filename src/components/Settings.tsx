@@ -60,6 +60,7 @@ interface SettingsData {
   max_context_tokens: number;
   custom_instructions: string;
   theme: string;
+  keybindings?: "Default" | "Vim";
   auto_review_on_save: boolean;
   auto_review_on_commit: boolean;
   // ── Local model (Ollama) routing ──
@@ -111,6 +112,7 @@ export default function Settings() {
     max_context_tokens: 8192,
     custom_instructions: "",
     theme: "Dark",
+    keybindings: "Default",
     auto_review_on_save: false,
     auto_review_on_commit: false,
     local_model: {
@@ -573,13 +575,41 @@ export default function Settings() {
           value={settings.theme}
           onChange={(e) => {
             update("theme", e.target.value);
-            const t = e.target.value === "Light" ? "light" : "dark";
+            const map: Record<string, string> = {
+              Dark: "dark",
+              Light: "light",
+              GithubLight: "github-light",
+              OneDark: "one-dark",
+              SolarizedLight: "solarized-light",
+              SolarizedDark: "solarized-dark",
+            };
+            const t = map[e.target.value] ?? "dark";
             document.documentElement.setAttribute("data-theme", t);
             localStorage.setItem("neocoder-theme", t);
           }}
         >
-          <option value="Dark">Dark</option>
-          <option value="Light">Light</option>
+          <option value="Dark">Dark · Catppuccin Mocha</option>
+          <option value="Light">Light · NeoCoder</option>
+          <option value="GithubLight">Light · GitHub</option>
+          <option value="OneDark">Dark · Atom One Dark</option>
+          <option value="SolarizedLight">Light · Solarized</option>
+          <option value="SolarizedDark">Dark · Solarized</option>
+        </select>
+      </div>
+
+      <div className="settings-group">
+        <label>Keybindings</label>
+        <select
+          className="settings-select"
+          value={settings.keybindings ?? "Default"}
+          onChange={(e) => {
+            update("keybindings", e.target.value);
+            const scheme = e.target.value === "Vim" ? "vim" : "default";
+            localStorage.setItem("neocoder-keybindings", scheme);
+          }}
+        >
+          <option value="Default">Default</option>
+          <option value="Vim">Vim</option>
         </select>
       </div>
 
