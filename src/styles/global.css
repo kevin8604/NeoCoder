@@ -5606,3 +5606,97 @@ textarea:focus-visible {
   word-break: break-word;
   color: var(--text);
 }
+
+/* ── Control-knob auto-tuning leaderboard ─────────────────────────────── */
+.eval-btn-tune {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.tune-board {
+  margin: 8px 12px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.tune-board-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.tune-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.tune-row:nth-child(odd) {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+}
+
+.tune-baseline {
+  opacity: 0.8;
+}
+
+.tune-recommended {
+  outline: 1px solid var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.tune-name {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tune-star {
+  color: var(--warning, #d4a72c);
+}
+
+.tune-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--border);
+  color: var(--text-muted);
+}
+
+.tune-pass.ok {
+  color: var(--success);
+}
+
+.tune-pass.bad {
+  color: var(--error);
+}
+
+.tune-cost {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tune-reg.bad {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.tune-reg:not(.bad) {
+  color: var(--text-muted);
+}
+
+.tune-foot {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+}

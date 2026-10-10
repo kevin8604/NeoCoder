@@ -449,6 +449,7 @@ pub fn run() {
             commands::eval::list_eval_fixtures,
             commands::eval::run_eval_suite,
             commands::eval::run_eval_fixture,
+            commands::eval::run_agent_tuning,
             commands::dap::start_debug_session,
             commands::dap::set_debug_breakpoints,
             commands::dap::configuration_done,

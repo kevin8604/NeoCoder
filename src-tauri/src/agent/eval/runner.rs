@@ -13,7 +13,10 @@
 //! because `tools_called` is captured from the `ToolCall` event that fires
 //! *before* execution.
 
-use super::{EvalFixture, EvalMetrics, EvalResult, PlanResponse, build_queue, score};
+use super::{
+    AgentOverrides, EvalFixture, EvalMetrics, EvalResult, PlanResponse, build_queue, score,
+};
+use crate::agent::loop_detector::{LoopDetectionConfig, LoopDetector};
 use crate::agent::{
     AgentDefinition, AgentInstance, ExecutionPhase, PlanAction, PlanApprovalAwaiters,
 };
@@ -120,6 +123,12 @@ pub async fn run_fixture(app: &tauri::AppHandle, fixture: &EvalFixture) -> EvalR
     // the compaction path (emits `ContextTrimmed`) regardless of the live model.
     if let Some(tokens) = fixture.agent.max_context_tokens {
         agent.max_context_tokens = tokens;
+    }
+    // Auto-tuner knob: override loop-detection thresholds when the candidate
+    // configures any. `loop_detector` is private to `crate::agent`, reachable
+    // from this descendant module (same mechanism as `mock_llm_responses`).
+    if let Some(cfg) = loop_config_from(&fixture.agent) {
+        agent.loop_detector = LoopDetector::new(cfg);
     }
 
     let run_result = agent.run().await;
@@ -240,6 +249,38 @@ fn plan_action_from(response: Option<&PlanResponse>) -> PlanAction {
         Some(PlanResponse::Skip) => PlanAction::Skip,
         Some(PlanResponse::Reject { reason }) => PlanAction::Reject(reason.clone()),
     }
+}
+
+/// Build a `LoopDetectionConfig` from a fixture's overrides, starting from the
+/// built-in defaults and replacing only the thresholds the fixture (or the
+/// auto-tuner candidate) pins. Returns `None` when nothing is overridden so the
+/// agent keeps its default detector.
+fn loop_config_from(o: &AgentOverrides) -> Option<LoopDetectionConfig> {
+    if o.loop_no_progress.is_none()
+        && o.loop_ping_pong_cycles.is_none()
+        && o.loop_failure_streak.is_none()
+        && o.loop_read_only_streak.is_none()
+        && o.loop_repeated_read.is_none()
+    {
+        return None;
+    }
+    let mut cfg = LoopDetectionConfig::default();
+    if let Some(v) = o.loop_no_progress {
+        cfg.no_progress_threshold = v;
+    }
+    if let Some(v) = o.loop_ping_pong_cycles {
+        cfg.ping_pong_cycles = v;
+    }
+    if let Some(v) = o.loop_failure_streak {
+        cfg.failure_streak_threshold = v;
+    }
+    if let Some(v) = o.loop_read_only_streak {
+        cfg.read_only_streak_threshold = v;
+    }
+    if let Some(v) = o.loop_repeated_read {
+        cfg.repeated_read_threshold = v;
+    }
+    Some(cfg)
 }
 
 fn build_definition(fixture: &EvalFixture) -> Option<AgentDefinition> {

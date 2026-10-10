@@ -3,8 +3,11 @@ import {
   listEvalFixtures,
   runEvalSuite,
   runEvalFixture,
+  runAgentTuning,
   type EvalFixtureMeta,
   type EvalResult,
+  type TuningReport,
+  type CandidateReport,
 } from "../hooks/useTauri";
 import {
   FlaskConical,
@@ -14,6 +17,8 @@ import {
   XCircle,
   ChevronDown,
   ChevronRight,
+  Wand2,
+  Star,
 } from "lucide-react";
 
 /**
@@ -27,6 +32,8 @@ export default function EvalPanel() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [tuning, setTuning] = useState(false);
+  const [tuningReport, setTuningReport] = useState<TuningReport | null>(null);
 
   const loadFixtures = useCallback(async () => {
     const list = await listEvalFixtures();
@@ -61,6 +68,18 @@ export default function EvalPanel() {
       else setError("评测仅在桌面应用中可用（非浏览器预览）。");
     } finally {
       setRunning(false);
+    }
+  }, []);
+
+  const runTune = useCallback(async () => {
+    setTuning(true);
+    setError(null);
+    try {
+      const report = await runAgentTuning();
+      if (report) setTuningReport(report);
+      else setError("自动调优仅在桌面应用中可用（非浏览器预览）。");
+    } finally {
+      setTuning(false);
     }
   }, []);
 
@@ -102,6 +121,15 @@ export default function EvalPanel() {
             {running ? <RefreshCw size={13} className="spinning" /> : <Play size={13} />}
             <span>{running ? "运行中…" : "运行全部"}</span>
           </button>
+          <button
+            className="eval-btn eval-btn-tune"
+            onClick={runTune}
+            disabled={running || tuning || fixtures.length === 0}
+            title="自动搜索 agent 控制旋钮（循环阈值/预算）并按回归与效率排名"
+          >
+            {tuning ? <RefreshCw size={13} className="spinning" /> : <Wand2 size={13} />}
+            <span>{tuning ? "调优中…" : "自动调优"}</span>
+          </button>
         </div>
       </div>
 
@@ -114,6 +142,10 @@ export default function EvalPanel() {
       )}
 
       {error && <div className="eval-error">{error}</div>}
+
+      {tuningReport && (
+        <TuningBoard report={tuningReport} />
+      )}
 
       <div className="eval-list">
         {fixtures.length === 0 && !running && (
@@ -223,6 +255,39 @@ function Metric({ label, value }: { label: string; value: string | number }) {
     <div className="eval-metric">
       <span className="eval-metric-label">{label}</span>
       <span className="eval-metric-value">{value}</span>
+    </div>
+  );
+}
+
+function TuningBoard({ report }: { report: TuningReport }) {
+  const row = (c: CandidateReport, isRec: boolean) => (
+    <div key={c.candidate_id} className={`tune-row ${c.is_baseline ? "tune-baseline" : ""} ${isRec ? "tune-recommended" : ""}`}>
+      <span className="tune-name">
+        {isRec && <Star size={12} className="tune-star" />}
+        {c.label || c.candidate_id}
+        {c.is_baseline && <span className="tune-tag">baseline</span>}
+      </span>
+      <span className={`tune-pass ${c.metrics.passed_all ? "ok" : "bad"}`}>
+        {c.metrics.passed}/{c.metrics.total}
+      </span>
+      <span className="tune-cost">api {c.metrics.total_api_calls}</span>
+      <span className="tune-cost">iter {c.metrics.total_iterations}</span>
+      <span className={`tune-reg ${c.regressions.length ? "bad" : ""}`}>
+        {c.regressions.length ? `回归 ${c.regressions.length}` : "无回归"}
+      </span>
+    </div>
+  );
+
+  return (
+    <div className="tune-board">
+      <div className="tune-board-title">控制旋钮调优排名</div>
+      {row(report.baseline, false)}
+      {report.ranked.map((c) => row(c, c.candidate_id === report.recommended_id))}
+      <div className="tune-foot">
+        {report.recommended_id
+          ? `推荐：${report.recommended_id}（无回归且更省 API）`
+          : "无配置优于 baseline（保持 baseline）"}
+      </div>
     </div>
   );
 }

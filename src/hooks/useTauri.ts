@@ -1377,3 +1377,34 @@ export async function runEvalFixture(fixtureId: string): Promise<EvalResult | nu
   if (!isTauri()) return null;
   return tryInvoke(() => invoke<EvalResult>("run_eval_fixture", { fixtureId }));
 }
+
+// ── Agent control-knob auto-tuning ──────────────────────────────────────────
+
+export interface CandidateMetrics {
+  total: number;
+  passed: number;
+  passed_all: boolean;
+  total_api_calls: number;
+  total_iterations: number;
+  passed_ids: string[];
+  failed_ids: string[];
+}
+
+export interface CandidateReport {
+  candidate_id: string;
+  label: string;
+  is_baseline: boolean;
+  metrics: CandidateMetrics;
+  regressions: string[];
+}
+
+export interface TuningReport {
+  baseline: CandidateReport;
+  ranked: CandidateReport[];
+  recommended_id: string | null;
+}
+
+export async function runAgentTuning(): Promise<TuningReport | null> {
+  if (!isTauri()) return null;
+  return tryInvoke(() => invoke<TuningReport>("run_agent_tuning"));
+}

@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 pub mod runner;
+pub mod tuner;
 
 // ── Scripted LLM turns ─────────────────────────────────────────────────────
 
@@ -137,6 +138,14 @@ pub struct AgentOverrides {
     /// deterministically trigger context compaction (`ContextTrimmed`) without
     /// depending on the live settings' model context window.
     pub max_context_tokens: Option<usize>,
+    /// Loop-detection thresholds, overridable so the auto-tuner can search the
+    /// agentic-control surface. Each maps to a `LoopDetectionConfig` field;
+    /// `None` keeps the built-in default. `0` disables that strategy.
+    pub loop_no_progress: Option<usize>,
+    pub loop_ping_pong_cycles: Option<usize>,
+    pub loop_failure_streak: Option<usize>,
+    pub loop_read_only_streak: Option<usize>,
+    pub loop_repeated_read: Option<usize>,
 }
 
 impl AgentOverrides {
@@ -148,6 +157,11 @@ impl AgentOverrides {
             && self.max_tokens.is_none()
             && self.plan_mode.is_none()
             && self.max_context_tokens.is_none()
+            && self.loop_no_progress.is_none()
+            && self.loop_ping_pong_cycles.is_none()
+            && self.loop_failure_streak.is_none()
+            && self.loop_read_only_streak.is_none()
+            && self.loop_repeated_read.is_none()
     }
 }
 
