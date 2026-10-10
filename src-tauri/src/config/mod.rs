@@ -100,6 +100,9 @@ pub struct AppSettings {
     /// Memory garbage collection config
     #[serde(default)]
     pub memory_gc: MemoryGCConfig,
+    /// Persisted agent control-knob tuning (loop thresholds, etc.)
+    #[serde(default)]
+    pub tuning: TuningConfig,
     /// A2A server: whether the local A2A HTTP server is enabled
     #[serde(default)]
     pub a2a_server_enabled: bool,
@@ -262,6 +265,35 @@ impl Default for MemoryGCConfig {
     }
 }
 
+/// Persisted agent control-knob tuning — the store the auto-tuner writes its
+/// winning knobs back to, and the agent reads as its runtime defaults.
+///
+/// The default values intentionally mirror `LoopDetectionConfig::default()`
+/// (see `agent/loop_detector.rs`) so that, with no user or tuner changes, the
+/// runtime behaves exactly as it did before this config existed. Keep the two
+/// in sync; the unit test `tuning_defaults_match_loop_detector_defaults` guards it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TuningConfig {
+    pub loop_no_progress: usize,
+    pub loop_ping_pong: usize,
+    pub loop_failure_streak: usize,
+    pub loop_read_only_streak: usize,
+    pub loop_repeated_read: usize,
+}
+
+impl Default for TuningConfig {
+    fn default() -> Self {
+        Self {
+            loop_no_progress: 5,
+            loop_ping_pong: 3,
+            loop_failure_streak: 5,
+            loop_read_only_streak: 15,
+            loop_repeated_read: 3,
+        }
+    }
+}
+
 fn default_thinking_budget() -> u32 {
     1024
 }
@@ -418,6 +450,7 @@ impl Default for AppSettings {
             local_model: LocalModelConfig::default(),
             fine_tune: FineTuneConfig::default(),
             memory_gc: MemoryGCConfig::default(),
+            tuning: TuningConfig::default(),
             a2a_server_enabled: false,
             a2a_server_port: default_a2a_port(),
             a2a_server_token: String::new(),

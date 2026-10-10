@@ -89,6 +89,14 @@ interface SettingsData {
     learning_rate: number;
     use_gpu: boolean;
   };
+  // ── Agent control-knob tuning (loop detection thresholds) ──
+  tuning: {
+    loop_no_progress: number;
+    loop_ping_pong: number;
+    loop_failure_streak: number;
+    loop_read_only_streak: number;
+    loop_repeated_read: number;
+  };
   // ── A2A (Agent-to-Agent) ──
   a2a_server_enabled?: boolean;
   a2a_server_port?: number;
@@ -137,6 +145,13 @@ export default function Settings() {
       epochs: 3,
       learning_rate: 0.0002,
       use_gpu: true,
+    },
+    tuning: {
+      loop_no_progress: 5,
+      loop_ping_pong: 3,
+      loop_failure_streak: 5,
+      loop_read_only_streak: 15,
+      loop_repeated_read: 3,
     },
     a2a_server_enabled: false,
     a2a_server_port: 41234,
@@ -746,6 +761,41 @@ export default function Settings() {
             />
           </div>
         )}
+      </div>
+
+      {/* ── Agent Tuning (loop detection knobs) ── */}
+      <div className="settings-group" style={{ borderTop: "1px solid var(--border, #30363d)", paddingTop: 12, marginTop: 8 }}>
+        <label>Agent 调优 · 循环检测阈值</label>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>无进展重复 (次)</span>
+            <input className="settings-input" type="number" value={settings.tuning.loop_no_progress}
+              onChange={(e) => update("tuning", { ...settings.tuning, loop_no_progress: Number(e.target.value) })} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>乒乓循环 (周期)</span>
+            <input className="settings-input" type="number" value={settings.tuning.loop_ping_pong}
+              onChange={(e) => update("tuning", { ...settings.tuning, loop_ping_pong: Number(e.target.value) })} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>连续失败 (次)</span>
+            <input className="settings-input" type="number" value={settings.tuning.loop_failure_streak}
+              onChange={(e) => update("tuning", { ...settings.tuning, loop_failure_streak: Number(e.target.value) })} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>只读连击上限</span>
+            <input className="settings-input" type="number" value={settings.tuning.loop_read_only_streak}
+              onChange={(e) => update("tuning", { ...settings.tuning, loop_read_only_streak: Number(e.target.value) })} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>重复读取 (次)</span>
+            <input className="settings-input" type="number" value={settings.tuning.loop_repeated_read}
+              onChange={(e) => update("tuning", { ...settings.tuning, loop_repeated_read: Number(e.target.value) })} />
+          </div>
+        </div>
+        <div style={{ fontSize: 11, color: "#8b949e", marginTop: 6 }}>
+          <span className="settings-hint">这些值即自动调优器搜索的旋钮；改动后新会话生效。默认 (5/3/5/15/3) 与内置一致。</span>
+        </div>
       </div>
 
       {/* ── Memory Management ── */}

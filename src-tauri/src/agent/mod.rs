@@ -517,6 +517,22 @@ impl AgentInstance {
                 tokio::task::block_in_place(|| s.blocking_read().max_api_calls_per_session as usize)
             })
             .unwrap_or(200);
+        // Build the loop detector from persisted tuning config. `TuningConfig`'s
+        // defaults mirror `LoopDetectionConfig::default()`, so with no user/tuner
+        // changes this yields identical behavior to the previous hardcoded default.
+        let loop_config = app
+            .try_state::<Arc<RwLock<crate::config::AppSettings>>>()
+            .map(|s| {
+                let t = tokio::task::block_in_place(|| s.blocking_read().tuning);
+                crate::agent::loop_detector::LoopDetectionConfig {
+                    no_progress_threshold: t.loop_no_progress,
+                    ping_pong_cycles: t.loop_ping_pong,
+                    failure_streak_threshold: t.loop_failure_streak,
+                    read_only_streak_threshold: t.loop_read_only_streak,
+                    repeated_read_threshold: t.loop_repeated_read,
+                }
+            })
+            .unwrap_or_default();
         let tavily_api_key = app
             .try_state::<Arc<RwLock<crate::config::AppSettings>>>()
             .map(|s| tokio::task::block_in_place(|| s.blocking_read().tavily_api_key.clone()))
@@ -647,7 +663,7 @@ impl AgentInstance {
             consecutive_failures: HashMap::new(),
             reflection_history: Vec::new(),
             reflection_count: 0,
-            loop_detector: LoopDetector::new(Default::default()),
+            loop_detector: LoopDetector::new(loop_config),
             hook_manager,
             hook_context,
             agent_log: None,
@@ -3922,6 +3938,19 @@ mod tests {
         // exactly at and above the limit → exhausted
         assert!(is_api_budget_exhausted(5, 5));
         assert!(is_api_budget_exhausted(6, 5));
+    }
+
+    #[test]
+    fn tuning_config_defaults_match_loop_detector_defaults() {
+        // Invariant: the persisted tuning store's defaults equal the runtime
+        // detector's defaults, so introducing the config changed no behavior.
+        let t = crate::config::TuningConfig::default();
+        let cfg = crate::agent::loop_detector::LoopDetectionConfig::default();
+        assert_eq!(t.loop_no_progress, cfg.no_progress_threshold);
+        assert_eq!(t.loop_ping_pong, cfg.ping_pong_cycles);
+        assert_eq!(t.loop_failure_streak, cfg.failure_streak_threshold);
+        assert_eq!(t.loop_read_only_streak, cfg.read_only_streak_threshold);
+        assert_eq!(t.loop_repeated_read, cfg.repeated_read_threshold);
     }
 
     #[test]
