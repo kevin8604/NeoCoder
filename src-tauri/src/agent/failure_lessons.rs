@@ -226,6 +226,65 @@ impl FailureLessonsStore {
         }
         out
     }
+
+    /// All lessons across every project (for the management dashboard).
+    pub fn all(&self) -> &[FailureLesson] {
+        &self.inner.lessons
+    }
+
+    /// Remove the lesson matching (project, signature). Returns whether one was
+    /// removed. Used to dismiss a false-positive or now-obsolete lesson.
+    pub fn remove(&mut self, project: &str, signature: &str) -> bool {
+        let before = self.inner.lessons.len();
+        self.inner
+            .lessons
+            .retain(|l| !(l.project == project && l.signature == signature));
+        let removed = self.inner.lessons.len() < before;
+        if removed {
+            self.save();
+        }
+        removed
+    }
+
+    /// Remove every lesson for a project. Returns how many were removed.
+    pub fn remove_project(&mut self, project: &str) -> usize {
+        let before = self.inner.lessons.len();
+        self.inner.lessons.retain(|l| l.project != project);
+        let removed = before - self.inner.lessons.len();
+        if removed > 0 {
+            self.save();
+        }
+        removed
+    }
+
+    /// Wipe all lessons (all projects). Returns how many were removed.
+    pub fn clear(&mut self) -> usize {
+        let n = self.inner.lessons.len();
+        self.inner.lessons.clear();
+        if n > 0 {
+            self.save();
+        }
+        n
+    }
+
+    /// Drop lessons whose `last_seen` is older than `days`. A lesson that has not
+    /// resurfaced recently is likely fixed or irrelevant; removing it keeps the
+    /// injected prompt focused on live failure patterns. Returns removed count.
+    pub fn prune_older_than(&mut self, days: i64) -> usize {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(days);
+        let before = self.inner.lessons.len();
+        self.inner.lessons.retain(|l| {
+            chrono::DateTime::parse_from_rfc3339(&l.last_seen)
+                .map(|ts| ts.with_timezone(&chrono::Utc) >= cutoff)
+                // Keep lessons with unparseable timestamps (fail open, don't lose data).
+                .unwrap_or(true)
+        });
+        let removed = before - self.inner.lessons.len();
+        if removed > 0 {
+            self.save();
+        }
+        removed
+    }
 }
 
 #[cfg(test)]
@@ -284,6 +343,67 @@ mod tests {
         let prompt = store.format_for_prompt("/proj");
         assert!(prompt.contains("E0308"));
         assert!(store.format_for_prompt("/nonexistent").is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_and_remove_project_and_clear() {
+        let dir = std::env::temp_dir().join(format!("nee-lessons-rm-{}", uuid::Uuid::new_v4()));
+        let mut store = FailureLessonsStore::load(dir.join("lessons.json"));
+        store.record("/p", "run_build", "error[E0308]: mismatched types");
+        store.record("/p", "run_build", "error[E0433]: failed to resolve");
+        store.record("/q", "run_tests", "error[E0308]: mismatched types");
+        assert_eq!(store.all().len(), 3);
+
+        assert!(store.remove("/p", "E0308"));
+        assert!(!store.remove("/p", "E0308"), "already gone → false");
+        assert_eq!(store.all().len(), 2);
+
+        assert_eq!(store.remove_project("/p"), 1, "only /p's E0433 remains");
+        assert_eq!(store.all().len(), 1);
+
+        assert_eq!(store.clear(), 1);
+        assert!(store.all().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_older_than_drops_stale() {
+        let dir = std::env::temp_dir().join(format!("nee-lessons-prune-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("lessons.json");
+        // Seed one recent and one very old lesson directly on disk.
+        let old_ts = (chrono::Utc::now() - chrono::Duration::days(120)).to_rfc3339();
+        let recent_ts = chrono::Utc::now().to_rfc3339();
+        let file = FailureLessonsFile {
+            lessons: vec![
+                FailureLesson {
+                    project: "/p".into(),
+                    signature: "STALE".into(),
+                    tool: "run_build".into(),
+                    snippet: String::new(),
+                    count: 1,
+                    first_seen: old_ts.clone(),
+                    last_seen: old_ts,
+                },
+                FailureLesson {
+                    project: "/p".into(),
+                    signature: "FRESH".into(),
+                    tool: "run_build".into(),
+                    snippet: String::new(),
+                    count: 1,
+                    first_seen: recent_ts.clone(),
+                    last_seen: recent_ts,
+                },
+            ],
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
+
+        let mut store = FailureLessonsStore::load(path);
+        let removed = store.prune_older_than(90);
+        assert_eq!(removed, 1);
+        assert_eq!(store.all().len(), 1);
+        assert_eq!(store.all()[0].signature, "FRESH");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

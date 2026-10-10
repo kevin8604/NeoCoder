@@ -1408,3 +1408,41 @@ export async function runAgentTuning(): Promise<TuningReport | null> {
   if (!isTauri()) return null;
   return tryInvoke(() => invoke<TuningReport>("run_agent_tuning"));
 }
+
+// ── Cross-session failure lessons management ────────────────────────────────
+
+export interface FailureLesson {
+  project: string;
+  signature: string;
+  tool: string;
+  snippet: string;
+  count: number;
+  first_seen: string;
+  last_seen: string;
+}
+
+export async function getFailureLessons(): Promise<FailureLesson[]> {
+  if (!isTauri()) return [];
+  const result = await tryInvoke(() => invoke<FailureLesson[]>("get_failure_lessons"));
+  return result ?? [];
+}
+
+export async function deleteFailureLesson(
+  project: string,
+  signature: string,
+): Promise<boolean | null> {
+  if (!isTauri()) return null;
+  return tryInvoke(() => invoke<boolean>("delete_failure_lesson", { project, signature }));
+}
+
+export async function clearFailureLessons(project?: string): Promise<number | null> {
+  if (!isTauri()) return null;
+  return tryInvoke(() =>
+    invoke<number>("clear_failure_lessons", project ? { project } : {}),
+  );
+}
+
+export async function pruneFailureLessons(days?: number): Promise<number | null> {
+  if (!isTauri()) return null;
+  return tryInvoke(() => invoke<number>("prune_failure_lessons", days ? { days } : {}));
+}

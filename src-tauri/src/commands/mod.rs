@@ -8,6 +8,7 @@ pub mod dap;
 pub mod dependency_graph;
 pub mod edit_inline;
 pub mod eval;
+pub mod lessons;
 pub mod lsp;
 pub mod mcp;
 pub mod memory;

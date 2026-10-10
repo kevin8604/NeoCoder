@@ -10,6 +10,7 @@ import CloudAgentPanel from "./components/CloudAgentPanel";
 import CheckpointPanel from "./components/CheckpointPanel";
 import AgentTimelinePanel from "./components/AgentTimelinePanel";
 import EvalPanel from "./components/EvalPanel";
+import FailureLessonsPanel from "./components/FailureLessonsPanel";
 import TerminalPanel from "./components/TerminalPanel";
 import DependencyGraph from "./components/DependencyGraph";
 import MemoryPanel from "./components/MemoryPanel";
@@ -18,7 +19,7 @@ import WorkspacePicker from "./components/WorkspacePicker";
 import { PanelLeft, Search, ListTree, Square, MessageSquare, Sparkles, BookOpen, Wrench, Landmark, Shapes, Box, Layers, MapPin, Folder, Tag, Zap, Target, Circle, Braces, FileCode, FileCode2, FileJson, FileText, File, Globe, Database, Coffee, Palette, FileCog, FileType } from "lucide-react";
 import { openProject, getLspSymbols, requestCompletion, cycleCompletion, triggerAutoReview, checkLocalModel, activateWorkspace, removeWorkspace, renameWorkspace, type LSPSymbol, type Workspace } from "./hooks/useTauri";
 
-type View = "editor" | "chat" | "settings" | "search" | "cloud" | "graph" | "memory" | "insights" | "checkpoints" | "timeline" | "eval";
+type View = "editor" | "chat" | "settings" | "search" | "cloud" | "graph" | "memory" | "insights" | "checkpoints" | "timeline" | "eval" | "lessons";
 /** Wire names of the backend `Theme` enum mapped to `data-theme` slugs. */
 type ThemeSlug = "dark" | "light" | "github-light" | "one-dark" | "solarized-light" | "solarized-dark";
 type SplitMode = "none" | "horizontal" | "vertical";
@@ -974,6 +975,9 @@ function App() {
           <div className="side-panel-view" style={{ display: activeView === "eval" ? "flex" : "none" }}>
             <EvalPanel />
           </div>
+          <div className="side-panel-view" style={{ display: activeView === "lessons" ? "flex" : "none" }}>
+            <FailureLessonsPanel />
+          </div>
         </div>
       </div>
 
@@ -1027,6 +1031,9 @@ function App() {
         }
         onEvalClick={() =>
           setActiveView(activeView === "eval" ? "editor" : "eval")
+        }
+        onLessonsClick={() =>
+          setActiveView(activeView === "lessons" ? "editor" : "lessons")
         }
         onExplorerClick={() => setShowExplorer(!showExplorer)}
       />

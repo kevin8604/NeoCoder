@@ -1,4 +1,4 @@
-import { Folder, FileText, FolderOpen, Search, Cloud, BarChart3, Brain, TrendingUp, MessageSquare, Settings, Sun, Moon, History, Activity, FlaskConical } from "lucide-react";
+import { Folder, FileText, FolderOpen, Search, Cloud, BarChart3, Brain, TrendingUp, MessageSquare, Settings, Sun, Moon, History, Activity, FlaskConical, Bug } from "lucide-react";
 
 interface StatusBarProps {
   llmConnected: boolean;
@@ -18,6 +18,7 @@ interface StatusBarProps {
   onCheckpointsClick?: () => void;
   onTimelineClick?: () => void;
   onEvalClick?: () => void;
+  onLessonsClick?: () => void;
   /** Open the workspace picker dropdown (clicking the project name) */
   onWorkspaceClick?: () => void;
   /** null = local models disabled; true/false = Ollama health probe result */
@@ -42,6 +43,7 @@ export default function StatusBar({
   onCheckpointsClick,
   onTimelineClick,
   onEvalClick,
+  onLessonsClick,
   onWorkspaceClick,
   localModelRunning,
 }: StatusBarProps) {
@@ -117,6 +119,11 @@ export default function StatusBar({
         <div className="status-item" onClick={onEvalClick} title="Evals (agent regression suite)">
           <FlaskConical size={13} />
           <span>Evals</span>
+        </div>
+
+        <div className="status-item" onClick={onLessonsClick} title="Failure lessons (cross-session)">
+          <Bug size={13} />
+          <span>Lessons</span>
         </div>
 
         <div className="status-item" onClick={onChatClick} title="Toggle Chat (Ctrl+\\)">
