@@ -5850,6 +5850,63 @@ textarea:focus-visible {
   word-break: break-all;
 }
 
+/* ── Sandbox permission list editor ───────────────────────────────────── */
+.settings-strlist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-strlist-label {
+  font-size: 11px;
+  color: #8b949e;
+}
+
+.settings-strlist-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-chip-x {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.settings-chip-x:hover {
+  color: var(--error);
+}
+
+.settings-strlist-add {
+  display: flex;
+  gap: 6px;
+}
+
+.settings-strlist-add .settings-input {
+  flex: 1;
+}
+
 .lessons-age {
   color: var(--text-muted);
   font-size: 11px;

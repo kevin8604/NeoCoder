@@ -45,6 +45,86 @@ function modelContextWindow(model: string): string {
   return "32K";
 }
 
+interface SandboxPermissions {
+  confirm_write_paths: string[];
+  auto_allow_paths: string[];
+  confirm_commands: string[];
+  auto_allow_commands: string[];
+}
+
+interface SandboxConfig {
+  mode: "strict" | "permissive" | "disabled";
+  allowed_paths: string[];
+  blocked_paths: string[];
+  blocked_commands: string[];
+  max_file_size_mb: number;
+  allowed_domains: string[];
+  permissions: SandboxPermissions;
+}
+
+/** Compact editor for a list of strings (path / domain / command): chips + an
+ *  add input. Reused across every sandbox allow/deny list. */
+function StringListField({
+  label,
+  hint,
+  values,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  values: string[];
+  onChange: (v: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const add = () => {
+    const t = draft.trim();
+    if (!t) return;
+    if (!values.includes(t)) onChange([...values, t]);
+    setDraft("");
+  };
+  return (
+    <div className="settings-strlist">
+      <div className="settings-strlist-label">
+        {label}
+        {hint && <span className="settings-hint"> {hint}</span>}
+      </div>
+      {values.length > 0 && (
+        <div className="settings-strlist-chips">
+          {values.map((v, i) => (
+            <span key={i} className="settings-chip" title={v}>
+              {v}
+              <button
+                className="settings-chip-x"
+                onClick={() => onChange(values.filter((_x, j) => j !== i))}
+                aria-label="remove"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="settings-strlist-add">
+        <input
+          className="settings-input"
+          value={draft}
+          placeholder="添加…"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <button className="eval-btn" onClick={add}>
+          +
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface SettingsData {
   llm_provider: string;
   completion_model: string;
@@ -104,6 +184,8 @@ interface SettingsData {
   a2a_server_port?: number;
   a2a_server_token?: string;
   a2a_agents?: A2aAgentConfig[];
+  // ── Sandbox / permissions ──
+  sandbox: SandboxConfig;
 }
 
 export default function Settings() {
@@ -161,6 +243,20 @@ export default function Settings() {
     a2a_server_port: 41234,
     a2a_server_token: "",
     a2a_agents: [],
+    sandbox: {
+      mode: "strict",
+      allowed_paths: [],
+      blocked_paths: [],
+      blocked_commands: [],
+      max_file_size_mb: 50,
+      allowed_domains: [],
+      permissions: {
+        confirm_write_paths: [],
+        auto_allow_paths: [],
+        confirm_commands: [],
+        auto_allow_commands: [],
+      },
+    },
   });
 
   const [saved, setSaved] = useState(false);
@@ -824,6 +920,114 @@ export default function Settings() {
         </div>
         <div style={{ fontSize: 11, color: "#8b949e", marginTop: 6 }}>
           <span className="settings-hint">这些值即自动调优器搜索的旋钮；改动后新会话生效。默认 (5/3/5/15/3) 与内置一致。</span>
+        </div>
+      </div>
+
+      {/* ── Sandbox / Permissions ── */}
+      <div className="settings-group" style={{ borderTop: "1px solid var(--border, #30363d)", paddingTop: 12, marginTop: 8 }}>
+        <label>Sandbox / 权限策略</label>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>沙箱模式</span>
+            <select
+              className="settings-input"
+              value={settings.sandbox?.mode ?? "strict"}
+              onChange={(e) =>
+                update("sandbox", { ...settings.sandbox, mode: e.target.value as SandboxConfig["mode"] })
+              }
+            >
+              <option value="strict">Strict（仅项目路径+允许路径可写）</option>
+              <option value="permissive">Permissive（随处可读，写限项目）</option>
+              <option value="disabled">Disabled（关闭沙箱）</option>
+            </select>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>文件最大 (MB, 0=不限)</span>
+            <input
+              className="settings-input"
+              type="number"
+              min={0}
+              value={settings.sandbox?.max_file_size_mb ?? 50}
+              onChange={(e) =>
+                update("sandbox", { ...settings.sandbox, max_file_size_mb: Math.max(0, Number(e.target.value)) })
+              }
+            />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+          <StringListField
+            label="额外允许路径"
+            hint="项目之外可写的目录"
+            values={settings.sandbox?.allowed_paths ?? []}
+            onChange={(v) => update("sandbox", { ...settings.sandbox, allowed_paths: v })}
+          />
+          <StringListField
+            label="禁止路径"
+            hint="最高优先，永远拒绝"
+            values={settings.sandbox?.blocked_paths ?? []}
+            onChange={(v) => update("sandbox", { ...settings.sandbox, blocked_paths: v })}
+          />
+          <StringListField
+            label="禁止命令"
+            hint="叠加到内置危险命令黑名单"
+            values={settings.sandbox?.blocked_commands ?? []}
+            onChange={(v) => update("sandbox", { ...settings.sandbox, blocked_commands: v })}
+          />
+          <StringListField
+            label="允许域名"
+            hint="web 工具白名单；留空=全部"
+            values={settings.sandbox?.allowed_domains ?? []}
+            onChange={(v) => update("sandbox", { ...settings.sandbox, allowed_domains: v })}
+          />
+          <StringListField
+            label="自动放行路径"
+            hint="跳过沙箱检查"
+            values={settings.sandbox?.permissions.auto_allow_paths ?? []}
+            onChange={(v) =>
+              update("sandbox", {
+                ...settings.sandbox,
+                permissions: { ...settings.sandbox.permissions, auto_allow_paths: v },
+              })
+            }
+          />
+          <StringListField
+            label="自动放行命令"
+            hint="跳过危险检查"
+            values={settings.sandbox?.permissions.auto_allow_commands ?? []}
+            onChange={(v) =>
+              update("sandbox", {
+                ...settings.sandbox,
+                permissions: { ...settings.sandbox.permissions, auto_allow_commands: v },
+              })
+            }
+          />
+          <StringListField
+            label="写前确认路径"
+            hint="这些路径写入需用户确认"
+            values={settings.sandbox?.permissions.confirm_write_paths ?? []}
+            onChange={(v) =>
+              update("sandbox", {
+                ...settings.sandbox,
+                permissions: { ...settings.sandbox.permissions, confirm_write_paths: v },
+              })
+            }
+          />
+          <StringListField
+            label="需确认命令"
+            hint="执行前需用户确认"
+            values={settings.sandbox?.permissions.confirm_commands ?? []}
+            onChange={(v) =>
+              update("sandbox", {
+                ...settings.sandbox,
+                permissions: { ...settings.sandbox.permissions, confirm_commands: v },
+              })
+            }
+          />
+        </div>
+        <div style={{ fontSize: 11, color: "#8b949e", marginTop: 6 }}>
+          <span className="settings-hint">该策略由沙箱引擎强制执行；此处仅编辑/查看，保存后新会话生效。</span>
         </div>
       </div>
 
