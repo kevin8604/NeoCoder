@@ -276,6 +276,17 @@ impl FailureLessonsStore {
         self.inner.lessons.truncate(MAX_LESSONS);
     }
 
+    /// Merge an incoming set of lessons (e.g. from an imported knowledge pack)
+    /// into the store. Union by (project, signature); returns how many were
+    /// newly added. Delegates to the pack module's pure merge, then prunes and
+    /// persists so the next session's hook picks the lessons up.
+    pub fn merge_lessons(&mut self, incoming: &[FailureLesson]) -> usize {
+        let added = crate::agent::eval::pack::merge_lessons(&mut self.inner.lessons, incoming);
+        self.prune();
+        self.save();
+        added
+    }
+
     /// Persist to disk (best-effort).
     pub fn save(&self) {
         if let Some(parent) = self.path.parent() {

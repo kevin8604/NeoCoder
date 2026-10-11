@@ -1493,3 +1493,22 @@ export async function pruneFailureLessons(days?: number): Promise<number | null>
   if (!isTauri()) return null;
   return tryInvoke(() => invoke<number>("prune_failure_lessons", days ? { days } : {}));
 }
+
+// ── Portable knowledge pack (tuning + failure lessons) ──────────────────────
+
+export interface ImportResult {
+  lessons_added: number;
+  lessons_in_pack: number;
+  tuning_applied: boolean;
+  exported_at: string;
+}
+
+export async function exportKnowledgePack(): Promise<string | null> {
+  if (!isTauri()) return null;
+  return tryInvoke(() => invoke<string>("export_knowledge_pack"));
+}
+
+export async function importKnowledgePack(): Promise<ImportResult | null> {
+  if (!isTauri()) return null;
+  return tryInvoke(() => invoke<ImportResult>("import_knowledge_pack"));
+}

@@ -455,6 +455,8 @@ pub fn run() {
             commands::eval::run_agent_tuning,
             commands::eval::apply_agent_tuning,
             commands::eval::get_tuning_reports,
+            commands::eval::export_knowledge_pack,
+            commands::eval::import_knowledge_pack,
             commands::lessons::get_failure_lessons,
             commands::lessons::delete_failure_lesson,
             commands::lessons::clear_failure_lessons,

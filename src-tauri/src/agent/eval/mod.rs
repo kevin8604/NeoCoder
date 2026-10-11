@@ -22,6 +22,7 @@ use crate::llm::{LlmResponse, ToolCallRequest};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
+pub mod pack;
 pub mod runner;
 pub mod tuner;
 

@@ -5,7 +5,9 @@
 //! Evals panel. The LLM is never contacted during a run — the agent's
 //! `mock_llm_responses` queue short-circuits it.
 
+use crate::agent::eval::pack;
 use crate::agent::eval::{EvalResult, FixtureMeta, load_fixtures, runner, tuner};
+use crate::agent::failure_lessons::FailureLessonsStore;
 use crate::commands::config::ConfigState;
 use tauri::Manager;
 
@@ -291,4 +293,79 @@ pub fn spawn_auto_tuner(app: tauri::AppHandle) {
             }
         }
     });
+}
+
+// ── Knowledge pack (portable tuning + lessons) ──────────────────────────────
+
+fn pack_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("knowledge_pack.json"))
+}
+
+/// Build a knowledge pack from the current tuning config + all failure lessons
+/// and write it to `app_config_dir/knowledge_pack.json`. Returns the file path
+/// so the user can share that file. Fixtures are NOT embedded (they live in the
+/// repo and are shared via git); only their count is recorded as metadata.
+#[tauri::command]
+pub async fn export_knowledge_pack(app: tauri::AppHandle) -> Result<String, String> {
+    let state = app
+        .try_state::<ConfigState>()
+        .ok_or("ConfigState not available")?;
+    let tuning = state.manager.read().await.get_settings().await.tuning;
+
+    let lessons_path = {
+        let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+        dir.join("failure_lessons.json")
+    };
+    let store = FailureLessonsStore::load(lessons_path);
+    let fixtures = load_fixtures(&fixtures_dir());
+
+    let pack_obj = pack::KnowledgePack::new(tuning, store.all().to_vec(), fixtures.len());
+    let json = pack::to_json(&pack_obj)?;
+    let out = pack_path(&app)?;
+    std::fs::write(&out, json).map_err(|e| e.to_string())?;
+    log::info!("[pack] exported knowledge pack to {}", out.display());
+    Ok(out.to_string_lossy().to_string())
+}
+
+/// Import a previously exported `knowledge_pack.json`: merge its lessons into the
+/// local store (union, no clobbering) and apply its tuning config. Additive on
+/// lessons; the pack's knobs are adopted wholesale.
+#[tauri::command]
+pub async fn import_knowledge_pack(app: tauri::AppHandle) -> Result<pack::ImportResult, String> {
+    let path = pack_path(&app)?;
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("no knowledge pack at {}: {e}", path.display()))?;
+    let pack_obj = pack::parse_pack(&text)?;
+
+    let lessons_path = {
+        let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+        dir.join("failure_lessons.json")
+    };
+    let mut store = FailureLessonsStore::load(lessons_path);
+    let lessons_added = store.merge_lessons(&pack_obj.lessons);
+
+    let state = app
+        .try_state::<ConfigState>()
+        .ok_or("ConfigState not available")?;
+    let current = state.manager.read().await.get_settings().await;
+    let mut new_settings = current.clone();
+    new_settings.tuning = pack_obj.tuning;
+    state
+        .manager
+        .write()
+        .await
+        .update_settings(new_settings)
+        .await?;
+
+    log::info!(
+        "[pack] imported: +{lessons_added} lessons ({} in pack), tuning adopted",
+        pack_obj.lessons.len()
+    );
+    Ok(pack::ImportResult {
+        lessons_added,
+        lessons_in_pack: pack_obj.lessons.len(),
+        tuning_applied: true,
+        exported_at: pack_obj.exported_at,
+    })
 }

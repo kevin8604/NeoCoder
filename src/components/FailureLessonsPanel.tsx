@@ -4,7 +4,10 @@ import {
   deleteFailureLesson,
   clearFailureLessons,
   pruneFailureLessons,
+  exportKnowledgePack,
+  importKnowledgePack,
   type FailureLesson,
+  type ImportResult,
 } from "../hooks/useTauri";
 import {
   Bug,
@@ -14,6 +17,8 @@ import {
   Wand2,
   ChevronDown,
   ChevronRight,
+  Download,
+  Upload,
 } from "lucide-react";
 
 /**
@@ -27,6 +32,8 @@ export default function FailureLessonsPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [packBusy, setPackBusy] = useState(false);
+  const [packMsg, setPackMsg] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -62,6 +69,28 @@ export default function FailureLessonsPanel() {
     const removed = await clearFailureLessons();
     if (removed !== null) setLessons([]);
   }, []);
+
+  const doExport = useCallback(async () => {
+    setError(null);
+    setPackMsg(null);
+    const path = await exportKnowledgePack();
+    if (path) setPackMsg(`已导出知识包：${path}`);
+    else setError("知识包仅在桌面应用中可用（非浏览器预览）。");
+  }, []);
+
+  const doImport = useCallback(async () => {
+    setError(null);
+    setPackMsg(null);
+    const r: ImportResult | null = await importKnowledgePack();
+    if (r) {
+      setPackMsg(
+        `已导入：新增 ${r.lessons_added}/${r.lessons_in_pack} 条教训，采用其调优配置（导出于 ${r.exported_at.slice(0, 10)}）`,
+      );
+      await refresh();
+    } else {
+      setError("请先在 app_config_dir 放置 knowledge_pack.json（或不在桌面应用中）。");
+    }
+  }, [refresh]);
 
   const toggleProject = (p: string) =>
     setCollapsed((prev) => {
@@ -111,15 +140,35 @@ export default function FailureLessonsPanel() {
             <Eraser size={13} />
             <span>清空</span>
           </button>
+          <button
+            className="eval-btn"
+            onClick={doExport}
+            disabled={loading || packBusy}
+            title="导出知识包（调优配置 + 全部教训）到 app_config_dir/knowledge_pack.json"
+          >
+            <Download size={13} />
+            <span>导出包</span>
+          </button>
+          <button
+            className="eval-btn"
+            onClick={doImport}
+            disabled={loading || packBusy}
+            title="从 app_config_dir/knowledge_pack.json 导入并合并"
+          >
+            <Upload size={13} />
+            <span>导入包</span>
+          </button>
         </div>
       </div>
 
       <p className="lessons-hint">
         Agent 会在 build/test/终端/诊断失败时记录错误签名，并在后续会话把这些教训注入
-        system prompt。此处可审阅、逐条忽略误报，或清理过时/全部。
+        system prompt。此处可审阅、逐条忽略误报，或清理过时/全部；也可导出/导入"知识包"，
+        把调优配置 + 教训随团队共享（fixtures 走 git，不进包）。
       </p>
 
       {error && <div className="eval-error">{error}</div>}
+      {packMsg && <div className="pack-msg">{packMsg}</div>}
 
       <div className="lessons-list">
         {lessons.length === 0 && !loading && !error && (
