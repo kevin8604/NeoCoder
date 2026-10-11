@@ -1462,6 +1462,7 @@ export interface FailureLesson {
   snippet: string;
   file?: string | null;
   line?: number | null;
+  symbol?: string | null;
   count: number;
   first_seen: string;
   last_seen: string;

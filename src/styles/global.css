@@ -5828,6 +5828,17 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.lessons-sym {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.85;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .lessons-age {
   color: var(--text-muted);
   font-size: 11px;

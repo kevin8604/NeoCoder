@@ -27,6 +27,11 @@ pub struct FailureLesson {
     pub file: Option<String>,
     #[serde(default)]
     pub line: Option<u32>,
+    /// Enclosing symbol (function/class declaration line) resolved from the
+    /// file's tree-sitter chunks, when the file is parseable and the location
+    /// falls inside a symbol. Turns "where" into "which function".
+    #[serde(default)]
+    pub symbol: Option<String>,
     /// How many times this signature has been observed.
     pub count: u32,
     pub first_seen: String,
@@ -147,6 +152,43 @@ fn extract_location(result: &str) -> (Option<String>, Option<u32>) {
     (None, None)
 }
 
+/// Pick the innermost chunk that spans `line` and return its declaration
+/// summary (≈ the enclosing function/class). Pure: works on any chunk list, so
+/// the selection logic is testable without disk or a parser.
+#[cfg_attr(not(feature = "treesitter"), allow(dead_code))]
+fn symbol_from_chunks(chunks: &[crate::rag::CodeChunk], line: usize) -> Option<String> {
+    chunks
+        .iter()
+        .filter(|c| c.start_line <= line && line <= c.end_line)
+        .min_by_key(|c| c.end_line - c.start_line)
+        .map(|c| c.summary.trim().chars().take(80).collect::<String>())
+        .filter(|s| !s.is_empty())
+}
+
+/// Resolve the enclosing symbol for `file:line` by reading the file and running
+/// tree-sitter chunking. Best-effort: returns `None` on any miss (file gone,
+/// unsupported language, line outside every symbol) so lesson recording never
+/// depends on it. Gated behind the optional `treesitter` feature — with it off,
+/// symbol resolution is a no-op (no disk read) and lessons still carry file:line.
+fn resolve_symbol(project: &str, file: &str, line: u32) -> Option<String> {
+    #[cfg(not(feature = "treesitter"))]
+    {
+        let _ = (project, file, line);
+        None
+    }
+    #[cfg(feature = "treesitter")]
+    {
+        let path = if std::path::Path::new(file).is_absolute() {
+            std::path::PathBuf::from(file)
+        } else {
+            std::path::Path::new(project).join(file)
+        };
+        let content = std::fs::read_to_string(&path).ok()?;
+        let chunks = crate::rag::treesitter::chunk_with_tree_sitter(file, &content)?;
+        symbol_from_chunks(&chunks, line as usize)
+    }
+}
+
 /// JSON-backed store of failure lessons.
 pub struct FailureLessonsStore {
     path: PathBuf,
@@ -181,6 +223,10 @@ impl FailureLessonsStore {
         let now = chrono::Utc::now().to_rfc3339();
         let snippet = pick_snippet(analyzed);
         let (file, line) = extract_location(analyzed);
+        let symbol = match (&file, line) {
+            (Some(f), Some(n)) => resolve_symbol(project, f, n),
+            _ => None,
+        };
 
         for lesson in &mut self.inner.lessons {
             if lesson.project == project && lesson.signature == signature {
@@ -195,6 +241,9 @@ impl FailureLessonsStore {
                     lesson.file = file.clone();
                     lesson.line = line;
                 }
+                if lesson.symbol.is_none() {
+                    lesson.symbol = symbol.clone();
+                }
                 self.save();
                 return;
             }
@@ -207,6 +256,7 @@ impl FailureLessonsStore {
             snippet,
             file,
             line,
+            symbol,
             count: 1,
             first_seen: now.clone(),
             last_seen: now,
@@ -266,12 +316,18 @@ impl FailureLessonsStore {
                 (Some(f), None) => format!(" in {f}"),
                 _ => String::new(),
             };
+            let sym = l
+                .symbol
+                .as_ref()
+                .map(|s| format!(" [{s}]"))
+                .unwrap_or_default();
             out.push_str(&format!(
-                "{}. [{}×] {}{} (surfaced by {}) — {}\n",
+                "{}. [{}×] {}{}{} (surfaced by {}) — {}\n",
                 i + 1,
                 l.count,
                 l.signature,
                 at,
+                sym,
                 l.tool,
                 if l.snippet.is_empty() {
                     "(no snippet)"
@@ -439,6 +495,7 @@ mod tests {
                     snippet: String::new(),
                     file: None,
                     line: None,
+                    symbol: None,
                     count: 1,
                     first_seen: old_ts.clone(),
                     last_seen: old_ts,
@@ -450,6 +507,7 @@ mod tests {
                     snippet: String::new(),
                     file: None,
                     line: None,
+                    symbol: None,
                     count: 1,
                     first_seen: recent_ts.clone(),
                     last_seen: recent_ts,
@@ -506,5 +564,37 @@ mod tests {
             "injected lesson should name the file:line, got: {prompt}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn symbol_from_chunks_picks_innermost_containing() {
+        use crate::rag::{ChunkType, CodeChunk};
+        let mk = |s: usize, e: usize, sum: &str| CodeChunk {
+            id: format!("{s}-{e}"),
+            file_path: "f.rs".into(),
+            start_line: s,
+            end_line: e,
+            language: "rust".into(),
+            chunk_type: ChunkType::Function,
+            content: String::new(),
+            summary: sum.into(),
+        };
+        let chunks = vec![
+            mk(1, 100, "mod x"),
+            mk(10, 30, "fn outer"),
+            mk(18, 24, "fn inner"),
+        ];
+        // 20 sits inside both outer(10-30) and inner(18-24) → innermost wins.
+        assert_eq!(symbol_from_chunks(&chunks, 20).as_deref(), Some("fn inner"));
+        assert_eq!(symbol_from_chunks(&chunks, 12).as_deref(), Some("fn outer"));
+        assert_eq!(symbol_from_chunks(&chunks, 5).as_deref(), Some("mod x"));
+        // Outside every chunk → no symbol.
+        assert_eq!(symbol_from_chunks(&chunks, 200), None);
+    }
+
+    #[test]
+    fn resolve_symbol_missing_file_is_none() {
+        // Best-effort: a gone/unparseable file must yield None, never panic.
+        assert_eq!(resolve_symbol("/nonexistent-proj-xyz", "nope.rs", 5), None);
     }
 }

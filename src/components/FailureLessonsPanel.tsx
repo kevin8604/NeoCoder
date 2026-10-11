@@ -156,6 +156,11 @@ export default function FailureLessonsPanel() {
                         {l.line != null ? `:${l.line}` : ""}
                       </span>
                     )}
+                    {l.symbol && (
+                      <span className="lessons-sym" title={l.symbol}>
+                        {l.symbol}
+                      </span>
+                    )}
                     <span className="lessons-age">{relativeAge(l.last_seen)}</span>
                     <button
                       className="eval-btn eval-btn-sm"
