@@ -280,6 +280,13 @@ pub struct TuningConfig {
     pub loop_failure_streak: usize,
     pub loop_read_only_streak: usize,
     pub loop_repeated_read: usize,
+    /// Opt-in background self-tuning. Default OFF — nothing runs until the user
+    /// enables it. When on, a periodic task runs the gated apply (regression
+    /// guard) and appends a dated report; the gate prevents any config that
+    /// could make a fixture worse.
+    pub auto_tune_enabled: bool,
+    /// How often (hours) the background tuner runs when enabled.
+    pub auto_tune_interval_hours: u32,
 }
 
 impl Default for TuningConfig {
@@ -290,6 +297,8 @@ impl Default for TuningConfig {
             loop_failure_streak: 5,
             loop_read_only_streak: 15,
             loop_repeated_read: 3,
+            auto_tune_enabled: false,
+            auto_tune_interval_hours: 24,
         }
     }
 }

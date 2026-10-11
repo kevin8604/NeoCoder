@@ -273,11 +273,14 @@ pub fn run() {
                 }
             });
 
+            // Background self-tuning loop — inert unless tuning.auto_tune_enabled
+            // is turned on in Settings; re-reads the flag each tick (no restart).
+            commands::eval::spawn_auto_tuner(app.handle().clone());
+
             // Initialize file watcher
             app.manage::<Arc<std::sync::Mutex<FileWatcher>>>(Arc::new(std::sync::Mutex::new(
                 FileWatcher::new(),
             )));
-
             // Auto-start watching the active workspace (or most recent project)
             {
                 let watch_target = {
@@ -450,6 +453,8 @@ pub fn run() {
             commands::eval::run_eval_suite,
             commands::eval::run_eval_fixture,
             commands::eval::run_agent_tuning,
+            commands::eval::apply_agent_tuning,
+            commands::eval::get_tuning_reports,
             commands::lessons::get_failure_lessons,
             commands::lessons::delete_failure_lesson,
             commands::lessons::clear_failure_lessons,

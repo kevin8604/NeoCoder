@@ -231,12 +231,54 @@ pub fn assemble(reports: Vec<CandidateReport>) -> Option<TuningReport> {
     })
 }
 
+/// Fold a winning candidate's loop-knob overrides onto the current persisted
+/// [`TuningConfig`]. Only the knobs the candidate actually sets are changed;
+/// everything else is preserved. Used by the apply step after the regression
+/// gate has already accepted the candidate.
+pub fn tuning_from_candidate(
+    cand: &TuneCandidate,
+    current: crate::config::TuningConfig,
+) -> crate::config::TuningConfig {
+    let mut t = current;
+    let o = &cand.overrides;
+    if let Some(v) = o.loop_no_progress {
+        t.loop_no_progress = v;
+    }
+    if let Some(v) = o.loop_ping_pong_cycles {
+        t.loop_ping_pong = v;
+    }
+    if let Some(v) = o.loop_failure_streak {
+        t.loop_failure_streak = v;
+    }
+    if let Some(v) = o.loop_read_only_streak {
+        t.loop_read_only_streak = v;
+    }
+    if let Some(v) = o.loop_repeated_read {
+        t.loop_repeated_read = v;
+    }
+    t
+}
+
+/// Outcome of an apply-tuning attempt: whether the winning config was written
+/// back, and the before/after knob snapshot plus the full report for the UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TuningOutcome {
+    pub applied: bool,
+    pub candidate_id: Option<String>,
+    pub label: Option<String>,
+    pub report: TuningReport,
+    pub previous: crate::config::TuningConfig,
+    pub applied_to: Option<crate::config::TuningConfig>,
+    pub reason: String,
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agent::eval::EvalMetrics;
+    use crate::config::TuningConfig;
 
     fn fx_with(agent: AgentOverrides) -> EvalFixture {
         EvalFixture {
@@ -450,5 +492,42 @@ mod tests {
         assert_eq!(report.recommended_id.as_deref(), Some("loop-aggressive"));
         // assemble with no baseline returns None.
         assert!(assemble(vec![good, bad]).is_none());
+    }
+
+    #[test]
+    fn tuning_from_candidate_only_changes_set_knobs() {
+        let current = TuningConfig::default(); // 5/3/5/15/3
+        let cand = TuneCandidate {
+            id: "loop-aggressive".into(),
+            label: String::new(),
+            overrides: AgentOverrides {
+                loop_no_progress: Some(3),
+                loop_read_only_streak: Some(8),
+                ..Default::default()
+            },
+        };
+        let next = tuning_from_candidate(&cand, current);
+        assert_eq!(next.loop_no_progress, 3, "set knob applied");
+        assert_eq!(next.loop_read_only_streak, 8, "set knob applied");
+        assert_eq!(
+            next.loop_ping_pong, current.loop_ping_pong,
+            "unset knob preserved"
+        );
+        assert_eq!(next.loop_failure_streak, current.loop_failure_streak);
+        assert_eq!(next.loop_repeated_read, current.loop_repeated_read);
+    }
+
+    #[test]
+    fn tuning_from_baseline_candidate_is_identity() {
+        // The baseline candidate has no overrides → current config unchanged.
+        let current = TuningConfig::default();
+        let cand = TuneCandidate {
+            id: "baseline".into(),
+            label: String::new(),
+            overrides: AgentOverrides::default(),
+        };
+        let next = tuning_from_candidate(&cand, current);
+        assert_eq!(next.loop_no_progress, current.loop_no_progress);
+        assert_eq!(next.loop_read_only_streak, current.loop_read_only_streak);
     }
 }

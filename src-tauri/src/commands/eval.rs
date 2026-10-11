@@ -6,6 +6,8 @@
 //! `mock_llm_responses` queue short-circuits it.
 
 use crate::agent::eval::{EvalResult, FixtureMeta, load_fixtures, runner, tuner};
+use crate::commands::config::ConfigState;
+use tauri::Manager;
 
 /// Resolve the fixtures directory from a set of candidates, first hit wins.
 fn fixtures_dir() -> std::path::PathBuf {
@@ -85,6 +87,12 @@ pub async fn run_eval_fixture(
 /// (not model answer quality) — which is exactly what these knobs affect.
 #[tauri::command]
 pub async fn run_agent_tuning(app: tauri::AppHandle) -> Result<tuner::TuningReport, String> {
+    run_tuning_report(&app).await
+}
+
+/// Run every tuning candidate over the fixture suite and return the ranked
+/// report. Shared by the report-only command and the apply (write-back) one.
+async fn run_tuning_report(app: &tauri::AppHandle) -> Result<tuner::TuningReport, String> {
     let dir = fixtures_dir();
     let fixtures = load_fixtures(&dir);
     if fixtures.is_empty() {
@@ -105,7 +113,7 @@ pub async fn run_agent_tuning(app: tauri::AppHandle) -> Result<tuner::TuningRepo
         let mut results = Vec::with_capacity(fixtures.len());
         for fx in &fixtures {
             let merged = tuner::merge_overrides(fx, &cand.overrides);
-            results.push(runner::run_fixture(&app, &merged).await);
+            results.push(runner::run_fixture(app, &merged).await);
         }
         let metrics = tuner::summarize(&results);
         if cand.id == "baseline" {
@@ -128,4 +136,159 @@ pub async fn run_agent_tuning(app: tauri::AppHandle) -> Result<tuner::TuningRepo
     }
 
     tuner::assemble(reports).ok_or("tuner produced no baseline report".to_string())
+}
+
+/// Run the tuning suite and, **only if a candidate passes the regression gate
+/// (all fixtures pass, no regression vs baseline, strictly fewer API calls)**,
+/// write its loop knobs back into the persisted `AppSettings.tuning`. The gate
+/// IS the rollback guard: a config that could make anything worse is never
+/// applied, and the previous knobs are returned so the caller can see/restore
+/// them. The mocked-LLM suite uses no API calls, so this is safe and free.
+#[tauri::command]
+pub async fn apply_agent_tuning(app: tauri::AppHandle) -> Result<tuner::TuningOutcome, String> {
+    run_apply_tuning(&app).await
+}
+
+/// Shared apply logic for the manual command and the background tuner. Runs the
+/// gated write-back and appends a dated line to `tuning_reports.jsonl`.
+pub(crate) async fn run_apply_tuning(
+    app: &tauri::AppHandle,
+) -> Result<tuner::TuningOutcome, String> {
+    let report = run_tuning_report(app).await?;
+
+    let state = app
+        .try_state::<ConfigState>()
+        .ok_or("ConfigState not available")?;
+    let current = state.manager.read().await.get_settings().await;
+    let previous = current.tuning;
+
+    let outcome = match report.recommended_id.clone() {
+        Some(id) => {
+            let cands = tuner::default_candidates();
+            let cand = cands
+                .iter()
+                .find(|c| c.id == id)
+                .ok_or_else(|| format!("recommended candidate {id} not found"))?;
+            let next = tuner::tuning_from_candidate(cand, previous);
+            let mut new_settings = current.clone();
+            new_settings.tuning = next;
+            state
+                .manager
+                .write()
+                .await
+                .update_settings(new_settings)
+                .await?;
+            log::info!("[tuning] applied winning config: {id}");
+            tuner::TuningOutcome {
+                applied: true,
+                candidate_id: Some(id),
+                label: Some(cand.label.clone()),
+                report,
+                previous,
+                applied_to: Some(next),
+                reason: "regression-free and cheaper than baseline".to_string(),
+            }
+        }
+        None => tuner::TuningOutcome {
+            applied: false,
+            candidate_id: None,
+            label: None,
+            report,
+            previous,
+            applied_to: None,
+            reason: "baseline already best — no regression-free cheaper config found".to_string(),
+        },
+    };
+
+    append_tuning_report(app, &outcome);
+    Ok(outcome)
+}
+
+/// Append a compact one-line record of a tuning run to `tuning_reports.jsonl`
+/// (the "report" side of the nightly job). Best-effort; never fails the run.
+fn append_tuning_report(app: &tauri::AppHandle, out: &tuner::TuningOutcome) {
+    let dir = match app.path().app_config_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    let record = serde_json::json!({
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "applied": out.applied,
+        "candidate_id": out.candidate_id,
+        "label": out.label,
+        "reason": out.reason,
+        "baseline_pass": out.report.baseline.metrics.passed_all,
+        "recommended_id": out.report.recommended_id,
+        "total_api_calls": out.report.baseline.metrics.total_api_calls,
+    });
+    let line = match serde_json::to_string(&record) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("tuning_reports.jsonl"))
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// Read the most recent tuning reports (newest first), for the Evals panel.
+#[tauri::command]
+pub async fn get_tuning_reports(
+    app: tauri::AppHandle,
+    limit: Option<usize>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let path = dir.join("tuning_reports.jsonl");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut lines: Vec<serde_json::Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    lines.reverse();
+    lines.truncate(limit.unwrap_or(20));
+    Ok(lines)
+}
+
+/// Background self-tuning loop. Inert unless `tuning.auto_tune_enabled` is set;
+/// each tick re-reads the flag and interval, so toggling it in Settings takes
+/// effect without a restart. Runs the same gated apply (mock LLM, no API cost).
+pub fn spawn_auto_tuner(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        // Poll cheaply; the heavy suite only runs when enabled and due.
+        let mut last_run = std::time::Instant::now();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            let state = match app.try_state::<ConfigState>() {
+                Some(s) => s,
+                None => continue,
+            };
+            let tuning = state.manager.read().await.get_settings().await.tuning;
+            if !tuning.auto_tune_enabled {
+                continue;
+            }
+            let interval = std::time::Duration::from_secs(
+                (tuning.auto_tune_interval_hours.max(1) as u64) * 3600,
+            );
+            if last_run.elapsed() < interval {
+                continue;
+            }
+            last_run = std::time::Instant::now();
+            log::info!("[tuning] background auto-tune tick");
+            match run_apply_tuning(&app).await {
+                Ok(o) if o.applied => {
+                    log::info!("[tuning] background applied {:?}", o.candidate_id)
+                }
+                Ok(_) => log::info!("[tuning] background kept baseline"),
+                Err(e) => log::warn!("[tuning] background run failed: {e}"),
+            }
+        }
+    });
 }

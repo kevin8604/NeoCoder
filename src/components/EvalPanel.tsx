@@ -4,9 +4,13 @@ import {
   runEvalSuite,
   runEvalFixture,
   runAgentTuning,
+  applyAgentTuning,
+  getTuningReports,
   type EvalFixtureMeta,
   type EvalResult,
   type TuningReport,
+  type TuningOutcome,
+  type TuningReportEntry,
   type CandidateReport,
 } from "../hooks/useTauri";
 import {
@@ -34,15 +38,23 @@ export default function EvalPanel() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [tuning, setTuning] = useState(false);
   const [tuningReport, setTuningReport] = useState<TuningReport | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyResult, setApplyResult] = useState<TuningOutcome | null>(null);
+  const [reports, setReports] = useState<TuningReportEntry[]>([]);
 
   const loadFixtures = useCallback(async () => {
     const list = await listEvalFixtures();
     setFixtures(list);
   }, []);
 
+  const loadReports = useCallback(async () => {
+    setReports(await getTuningReports(20));
+  }, []);
+
   useEffect(() => {
     loadFixtures();
-  }, [loadFixtures]);
+    loadReports();
+  }, [loadFixtures, loadReports]);
 
   const runAll = useCallback(async () => {
     setRunning(true);
@@ -80,6 +92,23 @@ export default function EvalPanel() {
       else setError("自动调优仅在桌面应用中可用（非浏览器预览）。");
     } finally {
       setTuning(false);
+    }
+  }, []);
+
+  const runApply = useCallback(async () => {
+    setApplying(true);
+    setError(null);
+    try {
+      const out = await applyAgentTuning();
+      if (out) {
+        setApplyResult(out);
+        setTuningReport(out.report);
+        await loadReports();
+      } else {
+        setError("自动调优仅在桌面应用中可用（非浏览器预览）。");
+      }
+    } finally {
+      setApplying(false);
     }
   }, []);
 
@@ -130,6 +159,15 @@ export default function EvalPanel() {
             {tuning ? <RefreshCw size={13} className="spinning" /> : <Wand2 size={13} />}
             <span>{tuning ? "调优中…" : "自动调优"}</span>
           </button>
+          <button
+            className="eval-btn eval-btn-tune"
+            onClick={runApply}
+            disabled={running || tuning || applying || fixtures.length === 0}
+            title="运行调优并仅在有回归防护且更省时把胜出旋钮写回配置（否则不动）"
+          >
+            {applying ? <RefreshCw size={13} className="spinning" /> : <CheckCircle2 size={13} />}
+            <span>{applying ? "应用中…" : "应用最优"}</span>
+          </button>
         </div>
       </div>
 
@@ -145,6 +183,24 @@ export default function EvalPanel() {
 
       {tuningReport && (
         <TuningBoard report={tuningReport} />
+      )}
+
+      {applyResult && <ApplyResultView out={applyResult} />}
+
+      {reports.length > 0 && (
+        <div className="tune-board">
+          <div className="tune-board-title">历史调优报告（含后台）</div>
+          {reports.map((r, i) => (
+            <div key={i} className="tune-row">
+              <span className="tune-name">
+                <span className={`eval-dot ${r.applied ? "ok" : "idle"}`} />
+                {r.applied ? `写回 ${r.candidate_id ?? "?"}` : "保持 baseline"}
+              </span>
+              <span className="tune-cost">{r.ts?.slice(0, 10) ?? ""}</span>
+              <span className="tune-reg">{r.reason ?? ""}</span>
+            </div>
+          ))}
+        </div>
       )}
 
       <div className="eval-list">
@@ -288,6 +344,39 @@ function TuningBoard({ report }: { report: TuningReport }) {
           ? `推荐：${report.recommended_id}（无回归且更省 API）`
           : "无配置优于 baseline（保持 baseline）"}
       </div>
+    </div>
+  );
+}
+
+function ApplyResultView({ out }: { out: TuningOutcome }) {
+  const knobs: [string, number, number | undefined][] = out.applied_to
+    ? [
+        ["no_progress", out.previous.loop_no_progress, out.applied_to.loop_no_progress],
+        ["ping_pong", out.previous.loop_ping_pong, out.applied_to.loop_ping_pong],
+        ["failure_streak", out.previous.loop_failure_streak, out.applied_to.loop_failure_streak],
+        ["read_only_streak", out.previous.loop_read_only_streak, out.applied_to.loop_read_only_streak],
+        ["repeated_read", out.previous.loop_repeated_read, out.applied_to.loop_repeated_read],
+      ]
+    : [];
+
+  return (
+    <div className={`apply-result ${out.applied ? "applied" : "kept"}`}>
+      <div className="apply-result-head">
+        {out.applied ? "✓ 已写回最优配置" : "○ 保持 baseline（未改动）"}
+        {out.candidate_id && <span className="apply-result-cand">{out.candidate_id}</span>}
+      </div>
+      <div className="apply-result-reason">{out.reason}</div>
+      {out.applied && (
+        <div className="apply-result-knobs">
+          {knobs.map(([name, before, after]) =>
+            before !== after ? (
+              <span key={name} className="apply-knob">
+                {name}: {before} → <b>{after}</b>
+              </span>
+            ) : null,
+          )}
+        </div>
+      )}
     </div>
   );
 }

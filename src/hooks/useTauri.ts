@@ -1409,6 +1409,50 @@ export async function runAgentTuning(): Promise<TuningReport | null> {
   return tryInvoke(() => invoke<TuningReport>("run_agent_tuning"));
 }
 
+export interface TuningConfig {
+  loop_no_progress: number;
+  loop_ping_pong: number;
+  loop_failure_streak: number;
+  loop_read_only_streak: number;
+  loop_repeated_read: number;
+  auto_tune_enabled: boolean;
+  auto_tune_interval_hours: number;
+}
+
+export interface TuningOutcome {
+  applied: boolean;
+  candidate_id: string | null;
+  label: string | null;
+  report: TuningReport;
+  previous: TuningConfig;
+  applied_to: TuningConfig | null;
+  reason: string;
+}
+
+export async function applyAgentTuning(): Promise<TuningOutcome | null> {
+  if (!isTauri()) return null;
+  return tryInvoke(() => invoke<TuningOutcome>("apply_agent_tuning"));
+}
+
+export interface TuningReportEntry {
+  ts: string;
+  applied: boolean;
+  candidate_id?: string | null;
+  label?: string | null;
+  reason?: string;
+  baseline_pass?: boolean;
+  recommended_id?: string | null;
+  total_api_calls?: number;
+}
+
+export async function getTuningReports(limit?: number): Promise<TuningReportEntry[]> {
+  if (!isTauri()) return [];
+  const r = await tryInvoke(() =>
+    invoke<TuningReportEntry[]>("get_tuning_reports", { limit: limit ?? 20 }),
+  );
+  return r ?? [];
+}
+
 // ── Cross-session failure lessons management ────────────────────────────────
 
 export interface FailureLesson {

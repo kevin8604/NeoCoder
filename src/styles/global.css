@@ -5842,3 +5842,56 @@ textarea:focus-visible {
 .eval-btn-danger:hover {
   background: color-mix(in srgb, var(--error) 14%, transparent);
 }
+
+/* ── Auto-tune apply result ───────────────────────────────────────────── */
+.apply-result {
+  margin: 8px 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.apply-result.applied {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.apply-result.kept {
+  color: var(--text-muted);
+}
+
+.apply-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.apply-result-cand {
+  font-weight: 400;
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--border);
+  color: var(--text);
+}
+
+.apply-result-reason {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.apply-result-knobs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+}
+
+.apply-knob b {
+  color: var(--success);
+}

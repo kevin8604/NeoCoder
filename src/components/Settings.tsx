@@ -96,6 +96,8 @@ interface SettingsData {
     loop_failure_streak: number;
     loop_read_only_streak: number;
     loop_repeated_read: number;
+    auto_tune_enabled: boolean;
+    auto_tune_interval_hours: number;
   };
   // ── A2A (Agent-to-Agent) ──
   a2a_server_enabled?: boolean;
@@ -152,6 +154,8 @@ export default function Settings() {
       loop_failure_streak: 5,
       loop_read_only_streak: 15,
       loop_repeated_read: 3,
+      auto_tune_enabled: false,
+      auto_tune_interval_hours: 24,
     },
     a2a_server_enabled: false,
     a2a_server_port: 41234,
@@ -791,6 +795,31 @@ export default function Settings() {
             <span style={{ fontSize: 11, color: "#8b949e" }}>重复读取 (次)</span>
             <input className="settings-input" type="number" value={settings.tuning.loop_repeated_read}
               onChange={(e) => update("tuning", { ...settings.tuning, loop_repeated_read: Number(e.target.value) })} />
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+          <label className="settings-checkbox">
+            <input
+              type="checkbox"
+              checked={settings.tuning.auto_tune_enabled}
+              onChange={(e) =>
+                update("tuning", { ...settings.tuning, auto_tune_enabled: e.target.checked })
+              }
+            />
+            后台自动调优 <span className="settings-hint">(定时跑 eval→仅在无回归且更省时写回；默认关闭)</span>
+          </label>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 120 }}>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>间隔(小时)</span>
+            <input
+              className="settings-input"
+              type="number"
+              min={1}
+              disabled={!settings.tuning.auto_tune_enabled}
+              value={settings.tuning.auto_tune_interval_hours}
+              onChange={(e) =>
+                update("tuning", { ...settings.tuning, auto_tune_interval_hours: Math.max(1, Number(e.target.value)) })
+              }
+            />
           </div>
         </div>
         <div style={{ fontSize: 11, color: "#8b949e", marginTop: 6 }}>
