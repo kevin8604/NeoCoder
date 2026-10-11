@@ -6,10 +6,12 @@
 //! `mock_llm_responses` queue short-circuits it.
 
 use crate::agent::eval::pack;
-use crate::agent::eval::{EvalResult, FixtureMeta, load_fixtures, runner, tuner};
+use crate::agent::eval::{EvalFixture, EvalResult, FixtureMeta, load_fixtures, runner, tuner};
 use crate::agent::failure_lessons::FailureLessonsStore;
 use crate::commands::config::ConfigState;
+use std::sync::Arc;
 use tauri::Manager;
+use tokio::sync::Semaphore;
 
 /// Resolve the fixtures directory from a set of candidates, first hit wins.
 fn fixtures_dir() -> std::path::PathBuf {
@@ -36,6 +38,55 @@ pub async fn list_eval_fixtures() -> Result<Vec<FixtureMeta>, String> {
     Ok(load_fixtures(&dir).iter().map(|f| f.meta()).collect())
 }
 
+/// Max fixtures run concurrently. Fixtures are independent and mocked (no API
+/// calls, no side effects, per-`session_id` event filtering), so running them in
+/// parallel is safe; the cap bounds simultaneous AgentInstances / memory use.
+const EVAL_CONCURRENCY: usize = 4;
+
+/// Run a set of fixtures concurrently and return results in input order.
+/// Each fixture gets its own `AgentInstance` + `chat-event` listener (filtered by
+/// its own session id), so there is no cross-fixture interference. A panicking
+/// task is dropped rather than aborting the batch.
+async fn run_fixtures_parallel(
+    app: &tauri::AppHandle,
+    fixtures: &[EvalFixture],
+) -> Vec<EvalResult> {
+    use tokio::task::JoinSet;
+
+    let sem = Arc::new(Semaphore::new(EVAL_CONCURRENCY));
+    let mut js: JoinSet<(usize, EvalResult)> = JoinSet::new();
+
+    for (idx, fx) in fixtures.iter().enumerate() {
+        let app = app.clone();
+        let fx = fx.clone();
+        let sem = sem.clone();
+        js.spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore never closed");
+            let r = runner::run_fixture(&app, &fx).await;
+            (idx, r)
+        });
+    }
+
+    let mut ordered: Vec<(usize, EvalResult)> = Vec::with_capacity(fixtures.len());
+    while let Some(joined) = js.join_next().await {
+        match joined {
+            Ok(pair) => {
+                let r = &pair.1;
+                log::info!(
+                    "[eval] {} → {} ({} failures)",
+                    r.fixture_id,
+                    if r.passed { "PASS" } else { "FAIL" },
+                    r.failures.len()
+                );
+                ordered.push(pair);
+            }
+            Err(e) => log::warn!("[eval] a fixture task failed to complete: {e}"),
+        }
+    }
+    ordered.sort_by_key(|(i, _)| *i);
+    ordered.into_iter().map(|(_, r)| r).collect()
+}
+
 /// Run every fixture and return scored results.
 #[tauri::command]
 pub async fn run_eval_suite(app: tauri::AppHandle) -> Result<Vec<EvalResult>, String> {
@@ -45,23 +96,12 @@ pub async fn run_eval_suite(app: tauri::AppHandle) -> Result<Vec<EvalResult>, St
         return Err(format!("No eval fixtures found in {}", dir.display()));
     }
     log::info!(
-        "[eval] running {} fixtures from {}",
+        "[eval] running {} fixtures (concurrency {}) from {}",
         fixtures.len(),
+        EVAL_CONCURRENCY,
         dir.display()
     );
-
-    let mut results = Vec::with_capacity(fixtures.len());
-    for fx in &fixtures {
-        let r = runner::run_fixture(&app, fx).await;
-        log::info!(
-            "[eval] {} → {} ({} failures)",
-            r.fixture_id,
-            if r.passed { "PASS" } else { "FAIL" },
-            r.failures.len()
-        );
-        results.push(r);
-    }
-    Ok(results)
+    Ok(run_fixtures_parallel(&app, &fixtures).await)
 }
 
 /// Run a single fixture by id.
@@ -112,11 +152,13 @@ async fn run_tuning_report(app: &tauri::AppHandle) -> Result<tuner::TuningReport
     let mut baseline_metrics: Option<tuner::CandidateMetrics> = None;
 
     for cand in &candidates {
-        let mut results = Vec::with_capacity(fixtures.len());
-        for fx in &fixtures {
-            let merged = tuner::merge_overrides(fx, &cand.overrides);
-            results.push(runner::run_fixture(app, &merged).await);
-        }
+        // Candidate configs stay sequential (so the leaderboard order is stable);
+        // the independent, mocked fixtures within each candidate run in parallel.
+        let merged: Vec<EvalFixture> = fixtures
+            .iter()
+            .map(|fx| tuner::merge_overrides(fx, &cand.overrides))
+            .collect();
+        let results = run_fixtures_parallel(app, &merged).await;
         let metrics = tuner::summarize(&results);
         if cand.id == "baseline" {
             baseline_metrics = Some(metrics.clone());
