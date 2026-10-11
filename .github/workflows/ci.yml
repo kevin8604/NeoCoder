@@ -29,6 +29,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # tauri::generate_context! needs frontendDist (`../dist`) to exist when the
+      # lib compiles. The real `frontend` job builds it for the app; the Rust jobs
+      # only need a placeholder so the macro expands. One index.html is enough.
+      - name: Create frontend placeholder for tauri build
+        run: |
+          mkdir -p dist
+          printf '<!doctype html><meta charset=utf-8><title>ci</title>' > dist/index.html
+
       - name: cargo check (workspace, all targets)
         run: cargo check --workspace --all-targets
 
@@ -78,6 +86,13 @@ jobs:
           components: miri
 
       - uses: Swatinem/rust-cache@v2
+
+      # Same frontendDist placeholder as check-test: compiling the lib (miri
+      # builds it) expands tauri::generate_context!.
+      - name: Create frontend placeholder for tauri build
+        run: |
+          mkdir -p dist
+          printf '<!doctype html><meta charset=utf-8><title>ci</title>' > dist/index.html
 
       - name: Miri setup
         run: cargo miri setup
