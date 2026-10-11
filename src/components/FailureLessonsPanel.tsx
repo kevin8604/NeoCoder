@@ -150,6 +150,12 @@ export default function FailureLessonsPanel() {
                     </span>
                     <span className="lessons-badge">×{l.count}</span>
                     <span className="lessons-tool">{l.tool}</span>
+                    {l.file && (
+                      <span className="lessons-loc" title={`${l.file}${l.line != null ? `:${l.line}` : ""}`}>
+                        {l.file}
+                        {l.line != null ? `:${l.line}` : ""}
+                      </span>
+                    )}
                     <span className="lessons-age">{relativeAge(l.last_seen)}</span>
                     <button
                       className="eval-btn eval-btn-sm"

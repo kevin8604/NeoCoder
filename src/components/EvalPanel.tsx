@@ -288,6 +288,12 @@ export default function EvalPanel() {
                           <pre>{r.metrics.final_text}</pre>
                         </details>
                       )}
+                      {r.metrics.events && r.metrics.events.length > 0 && (
+                        <details className="eval-final">
+                          <summary>事件轨迹 ({r.metrics.events.length})</summary>
+                          <pre>{r.metrics.events.join(" → ")}</pre>
+                        </details>
+                      )}
                       {r.metrics.logs && r.metrics.logs.length > 0 && (
                         <details className="eval-final">
                           <summary>logs ({r.metrics.logs.length})</summary>

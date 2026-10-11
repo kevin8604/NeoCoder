@@ -20,6 +20,13 @@ pub struct FailureLesson {
     pub tool: String,
     /// Short representative error line (≤120 chars).
     pub snippet: String,
+    /// File the error pointed at, when the output carried a `path:line` /
+    /// `path(line,col)` / `--> path:line:col` location. Makes the injected
+    /// lesson code-aware (where it broke), not just what broke.
+    #[serde(default)]
+    pub file: Option<String>,
+    #[serde(default)]
+    pub line: Option<u32>,
     /// How many times this signature has been observed.
     pub count: u32,
     pub first_seen: String,
@@ -106,6 +113,40 @@ fn pick_snippet(result: &str) -> String {
         .collect()
 }
 
+/// Extract a source location (`file`, `line`) from tool output, so an injected
+/// lesson can name *where* the failure happened, not just its signature.
+/// Recognizes the shapes compilers emit:
+///   - Rust:        `--> src/main.rs:10:5`  /  `src/main.rs:10:5: error ...`
+///   - TS/JS:       `src/app.tsx(12,5): error TS2345 ...`
+///   - Generic:     `path/to/file.py:42: ...`
+///
+/// Returns the first match; `(None, None)` when no location is present.
+fn extract_location(result: &str) -> (Option<String>, Option<u32>) {
+    use std::sync::LazyLock;
+    // Capture group 1 = path, group 2 = line number. `path:line` and `path(line,`
+    // both reduce to a shared extension-anchored pattern.
+    static RX: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+            r"([\w./\\-]+\.(?:rs|tsx|jsx|ts|js|py|go|c|cc|cpp|h|hpp|java|kt|kts|rb|php|cs|swift))(?::|\()(\d+)",
+        )
+        .expect("location regex")
+    });
+
+    for line in result.lines().take(400) {
+        // Prefer the canonical `--> path:line:col` marker when present.
+        if let Some(cap) = RX.captures(line) {
+            let path = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+            let clean = path.trim_start_matches("./").trim_start_matches('/');
+            if !clean.is_empty() {
+                let file = clean.chars().take(200).collect::<String>();
+                let num = cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok());
+                return (Some(file), num);
+            }
+        }
+    }
+    (None, None)
+}
+
 /// JSON-backed store of failure lessons.
 pub struct FailureLessonsStore {
     path: PathBuf,
@@ -139,6 +180,7 @@ impl FailureLessonsStore {
 
         let now = chrono::Utc::now().to_rfc3339();
         let snippet = pick_snippet(analyzed);
+        let (file, line) = extract_location(analyzed);
 
         for lesson in &mut self.inner.lessons {
             if lesson.project == project && lesson.signature == signature {
@@ -146,6 +188,12 @@ impl FailureLessonsStore {
                 lesson.last_seen = now.clone();
                 if !snippet.is_empty() {
                     lesson.snippet = snippet.clone();
+                }
+                // Fill in a location on later observations if the first one
+                // didn't carry it (e.g. a bare signature line came first).
+                if lesson.file.is_none() {
+                    lesson.file = file.clone();
+                    lesson.line = line;
                 }
                 self.save();
                 return;
@@ -157,6 +205,8 @@ impl FailureLessonsStore {
             signature,
             tool: tool.to_string(),
             snippet,
+            file,
+            line,
             count: 1,
             first_seen: now.clone(),
             last_seen: now,
@@ -211,11 +261,17 @@ impl FailureLessonsStore {
              apply the known fix directly instead of debugging from scratch):\n",
         );
         for (i, l) in lessons.iter().enumerate() {
+            let at = match (&l.file, l.line) {
+                (Some(f), Some(n)) => format!(" at {f}:{n}"),
+                (Some(f), None) => format!(" in {f}"),
+                _ => String::new(),
+            };
             out.push_str(&format!(
-                "{}. [{}×] {} (surfaced by {}) — {}\n",
+                "{}. [{}×] {}{} (surfaced by {}) — {}\n",
                 i + 1,
                 l.count,
                 l.signature,
+                at,
                 l.tool,
                 if l.snippet.is_empty() {
                     "(no snippet)"
@@ -381,6 +437,8 @@ mod tests {
                     signature: "STALE".into(),
                     tool: "run_build".into(),
                     snippet: String::new(),
+                    file: None,
+                    line: None,
                     count: 1,
                     first_seen: old_ts.clone(),
                     last_seen: old_ts,
@@ -390,6 +448,8 @@ mod tests {
                     signature: "FRESH".into(),
                     tool: "run_build".into(),
                     snippet: String::new(),
+                    file: None,
+                    line: None,
                     count: 1,
                     first_seen: recent_ts.clone(),
                     last_seen: recent_ts,
@@ -404,6 +464,47 @@ mod tests {
         assert_eq!(removed, 1);
         assert_eq!(store.all().len(), 1);
         assert_eq!(store.all()[0].signature, "FRESH");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extracts_rust_location() {
+        let (f, l) = extract_location("error[E0308]: mismatched types\n --> src/main.rs:10:5\n  |");
+        assert_eq!(f.as_deref(), Some("src/main.rs"));
+        assert_eq!(l, Some(10));
+    }
+
+    #[test]
+    fn extracts_ts_location() {
+        let (f, l) = extract_location("src/app.tsx(12,5): error TS2345: not assignable");
+        assert_eq!(f.as_deref(), Some("src/app.tsx"));
+        assert_eq!(l, Some(12));
+    }
+
+    #[test]
+    fn no_location_when_absent() {
+        let (f, l) = extract_location("error: something failed with no file path at all");
+        assert_eq!(f, None);
+        assert_eq!(l, None);
+    }
+
+    #[test]
+    fn record_captures_location_and_prompt_shows_it() {
+        let dir = std::env::temp_dir().join(format!("nee-lessons-loc-{}", uuid::Uuid::new_v4()));
+        let mut store = FailureLessonsStore::load(dir.join("lessons.json"));
+        store.record(
+            "/proj",
+            "run_build",
+            "error[E0308]: mismatched types\n --> src/parser.rs:42:9",
+        );
+        let lessons = store.lessons_for("/proj", 10);
+        assert_eq!(lessons[0].file.as_deref(), Some("src/parser.rs"));
+        assert_eq!(lessons[0].line, Some(42));
+        let prompt = store.format_for_prompt("/proj");
+        assert!(
+            prompt.contains("src/parser.rs:42"),
+            "injected lesson should name the file:line, got: {prompt}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

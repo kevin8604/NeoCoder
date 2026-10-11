@@ -1460,6 +1460,8 @@ export interface FailureLesson {
   signature: string;
   tool: string;
   snippet: string;
+  file?: string | null;
+  line?: number | null;
   count: number;
   first_seen: string;
   last_seen: string;
