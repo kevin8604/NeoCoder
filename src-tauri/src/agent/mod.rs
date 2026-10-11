@@ -1,6 +1,7 @@
 pub mod checkpoint;
 pub mod cloud;
 pub mod context;
+pub mod cost;
 pub mod definition;
 pub mod eval;
 pub mod failure_lessons;
@@ -400,6 +401,8 @@ pub struct AgentInstance {
     /// Actual token usage from LLM API (accumulated across iterations)
     total_prompt_tokens: usize,
     total_completion_tokens: usize,
+    /// Estimated USD cost (per-model pricing × real per-call tokens).
+    total_cost_usd: f64,
 
     /// Failed calls cache: (tool_name, args_hash) → error_message.
     /// When the same (tool, args) pair is called again, the cached error is returned
@@ -672,6 +675,7 @@ impl AgentInstance {
             extend_count: 0,
             total_prompt_tokens: 0,
             total_completion_tokens: 0,
+            total_cost_usd: 0.0,
             mock_llm_responses: None,
             failed_calls_cache: HashMap::new(),
             thinking_enabled,
@@ -907,6 +911,7 @@ impl AgentInstance {
                 total_completion_tokens: self.total_completion_tokens,
                 duration_ms,
                 error_message: error_message.map(|s| s.to_string()),
+                cost_usd: self.total_cost_usd,
             });
         }
     }
@@ -1472,6 +1477,11 @@ impl AgentInstance {
                 self.total_prompt_tokens += u.prompt_tokens;
                 self.total_completion_tokens += u.completion_tokens;
                 self.total_tokens_est = self.total_prompt_tokens + self.total_completion_tokens;
+                self.total_cost_usd += cost::estimate_cost_usd(
+                    &self.select_model(iteration),
+                    u.prompt_tokens,
+                    u.completion_tokens,
+                );
             } else {
                 // Estimate tokens: roughly ~4 chars per token for response
                 let response_size = match &response {
@@ -2571,6 +2581,11 @@ impl AgentInstance {
                 self.total_prompt_tokens += u.prompt_tokens;
                 self.total_completion_tokens += u.completion_tokens;
                 self.total_tokens_est = self.total_prompt_tokens + self.total_completion_tokens;
+                self.total_cost_usd += cost::estimate_cost_usd(
+                    &self.select_model(iteration),
+                    u.prompt_tokens,
+                    u.completion_tokens,
+                );
             } else {
                 let response_size = match &response {
                     llm::LlmResponse::Text(t) => t.len(),

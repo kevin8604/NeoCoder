@@ -49,6 +49,8 @@ pub enum TelemetryEvent {
         total_completion_tokens: usize,
         duration_ms: u64,
         error_message: Option<String>,
+        /// Estimated USD cost of the session (per-model pricing × real tokens).
+        cost_usd: f64,
     },
     /// A tool was invoked
     #[serde(rename = "tool_call")]
@@ -414,6 +416,7 @@ mod tests {
             total_completion_tokens: 500,
             duration_ms: 30000,
             error_message: None,
+            cost_usd: 0.0,
         });
 
         // Check summary

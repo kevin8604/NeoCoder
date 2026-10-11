@@ -89,12 +89,17 @@ export default function InsightsPanel() {
     setLogLoading(false);
   };
 
+  const totalCostUsd = events
+    .filter((e) => e.type === "session_end")
+    .reduce((a, e) => a + (Number(e.cost_usd) || 0), 0);
+
   const cards = summary
     ? [
         { label: "Agent 会话", value: fmtNum(summary.total_sessions), sub: `${summary.successful_sessions} 成功 / ${summary.failed_sessions} 失败 / ${summary.cancelled_sessions} 取消` },
         { label: "成功率", value: `${(summary.success_rate * 100).toFixed(1)}%`, sub: `平均 ${summary.avg_iterations.toFixed(1)} 轮/会话` },
         { label: "工具调用", value: fmtNum(summary.total_tool_calls), sub: `${summary.total_tool_failures} 次失败 (${(summary.tool_failure_rate * 100).toFixed(1)}%)` },
         { label: "Token 消耗", value: fmtNum(summary.total_prompt_tokens + summary.total_completion_tokens), sub: `prompt ${fmtNum(summary.total_prompt_tokens)} / completion ${fmtNum(summary.total_completion_tokens)}` },
+        { label: "预估成本", value: `$${totalCostUsd.toFixed(4)}`, sub: `近 ${events.filter((e) => e.type === "session_end").length} 次会话合计` },
         { label: "内联补全", value: fmtNum(summary.total_inline_edits), sub: "Inline Edit 次数" },
       ]
     : [];
@@ -200,7 +205,7 @@ export default function InsightsPanel() {
                 <span className="insights-log-detail">
                   {ev.type === "tool_call" && `${String(ev.tool ?? "")} · ${fmtDuration(Number(ev.duration_ms ?? 0))}${ev.success ? "" : " · 失败"}`}
                   {ev.type === "session_start" && String(ev.model ?? "")}
-                  {ev.type === "session_end" && `${String(ev.outcome ?? "")} · ${ev.iterations ?? ""} 轮 · ${fmtDuration(Number(ev.duration_ms ?? 0))}`}
+                  {ev.type === "session_end" && `${String(ev.outcome ?? "")} · ${ev.iterations ?? ""} 轮 · ${fmtDuration(Number(ev.duration_ms ?? 0))} · $${(Number(ev.cost_usd) || 0).toFixed(4)}`}
                 </span>
               </div>
             ))}
