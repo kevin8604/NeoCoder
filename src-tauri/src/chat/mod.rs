@@ -82,6 +82,18 @@ pub enum ChatEvent {
         result: String,
         duration_ms: u64,
     },
+    /// One LLM round-trip completed — carries wall-clock latency and token
+    /// counts so the trajectory view can show where time went (model vs tools).
+    ModelCall {
+        session_id: String,
+        agent_id: Option<String>,
+        iteration: u32,
+        duration_ms: u64,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        prompt_chars: u32,
+        prompt_sections: Vec<PromptSection>,
+    },
     ToolRetry {
         session_id: String,
         agent_id: Option<String>,
@@ -176,6 +188,12 @@ pub enum ChatEvent {
     PlanRejected {
         plan: PlanRejected,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptSection {
+    pub title: String,
+    pub chars: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

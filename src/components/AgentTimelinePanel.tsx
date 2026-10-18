@@ -11,9 +11,10 @@ import {
   FileDiff,
   Map,
   Loader2,
+  Cpu,
 } from "lucide-react";
 
-type EntryKind = "tool" | "status" | "thinking" | "checkpoint" | "edit" | "plan";
+type EntryKind = "tool" | "model" | "status" | "thinking" | "checkpoint" | "edit" | "plan";
 type EntryStatus = "running" | "done" | "error" | "info";
 
 interface TimelineEntry {
@@ -32,6 +33,15 @@ interface TimelinePayload {
     tool_call: { id: string; tool_name: string; arguments: Record<string, any> };
   };
   ToolResult?: { session_id: string; result: string; duration_ms?: number };
+  ModelCall?: {
+    session_id: string;
+    iteration: number;
+    duration_ms: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    prompt_chars?: number;
+    prompt_sections?: { title: string; chars: number }[];
+  };
   ToolRetry?: { session_id: string; tool_name: string; attempt: number; error: string };
   AgentStatus?: {
     session_id: string;
@@ -76,6 +86,7 @@ function statusIcon(status: EntryStatus, kind: EntryKind) {
     return <Wrench size={13} />;
   }
   switch (kind) {
+    case "model": return <Cpu size={13} />;
     case "thinking": return <Brain size={13} />;
     case "checkpoint": return <GitCommit size={13} />;
     case "edit": return <FileDiff size={13} />;
@@ -161,6 +172,22 @@ export default function AgentTimelinePanel() {
           status: "error",
           title: `${payload.ToolRetry.tool_name} · retry #${payload.ToolRetry.attempt}`,
           detail: payload.ToolRetry.error.replace(/\s+/g, " ").slice(0, 160),
+          time: now,
+        });
+      }
+
+      if (payload.ModelCall) {
+        const mc = payload.ModelCall;
+        const secs = (mc.prompt_sections || [])
+          .map((s) => `${s.title} ${s.chars >= 1000 ? (s.chars / 1000).toFixed(1) + "k" : s.chars}`)
+          .join(" · ");
+        push({
+          id: `mc-${now}-${seq++}`,
+          kind: "model",
+          status: "info",
+          title: `model · turn ${mc.iteration + 1}`,
+          detail: `${mc.prompt_tokens}→${mc.completion_tokens} tok${secs ? ` · prompt: ${secs}` : ""}`,
+          durationMs: mc.duration_ms,
           time: now,
         });
       }
@@ -286,12 +313,26 @@ export default function AgentTimelinePanel() {
   const formatTime = (t: number) =>
     new Date(t).toLocaleTimeString("en-US", { hour12: false });
 
+  const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`);
+  const modelMs = entries
+    .filter((e) => e.kind === "model")
+    .reduce((a, e) => a + (e.durationMs || 0), 0);
+  const toolMs = entries
+    .filter((e) => e.kind === "tool")
+    .reduce((a, e) => a + (e.durationMs || 0), 0);
+
   return (
     <div className="cloud-agent-panel">
       <div className="cloud-agent-header">
         <h3>
           <Activity size={15} /> Agent Timeline
         </h3>
+        {(modelMs > 0 || toolMs > 0) && (
+          <span className="timeline-timing" title="模型调用 / 工具执行 累计墙钟时长">
+            <Cpu size={12} /> {fmtMs(modelMs)}
+            <Wrench size={12} /> {fmtMs(toolMs)}
+          </span>
+        )}
         <div className="timeline-header-actions">
           <button
             className="file-explorer-action-btn"

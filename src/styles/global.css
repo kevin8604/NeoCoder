@@ -5907,6 +5907,26 @@ textarea:focus-visible {
   flex: 1;
 }
 
+/* ── Timeline duration summary (model vs tools) ───────────────────────── */
+.timeline-timing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+
+.timeline-timing svg {
+  margin-left: 6px;
+}
+
+.timeline-timing svg:first-child {
+  margin-left: 0;
+}
+
 .lessons-age {
   color: var(--text-muted);
   font-size: 11px;

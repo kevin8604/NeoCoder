@@ -12,6 +12,7 @@ pub mod task_summarizer;
 pub mod tdd;
 pub mod token_count;
 pub mod tools;
+pub mod trace;
 pub mod utils;
 
 use crate::agent::definition::AgentDefinition;
@@ -1427,16 +1428,20 @@ impl AgentInstance {
                 self.execution_phase
             );
 
+            let system_prompt = self.build_system_prompt();
+            let prompt_sections = trace::prompt_sections(&system_prompt);
+            let prompt_chars = system_prompt.chars().count() as u32;
             let request = llm::ChatRequestParams {
                 model: self.select_model(iteration),
                 messages: self.messages.clone(),
-                system: self.build_system_prompt(),
+                system: system_prompt,
                 max_tokens: self.max_tokens,
                 temperature: self.temperature,
                 thinking_enabled: self.thinking_enabled,
                 thinking_budget: self.thinking_budget,
             };
 
+            let model_start = Instant::now();
             let (response, usage) = if let Some(ref mut queue) = self.mock_llm_responses {
                 // Test mode: consume from mock queue instead of calling real LLM
                 (
@@ -1471,6 +1476,24 @@ impl AgentInstance {
                 )
                 .await?
             };
+
+            let (pt, ct) = usage
+                .as_ref()
+                .map(|u| (u.prompt_tokens as u32, u.completion_tokens as u32))
+                .unwrap_or((0, 0));
+            let _ = self.app.emit(
+                "chat-event",
+                ChatEvent::ModelCall {
+                    session_id: self.session_id.clone(),
+                    agent_id: Some(self.agent_id.clone()),
+                    iteration: iteration as u32,
+                    duration_ms: model_start.elapsed().as_millis() as u64,
+                    prompt_tokens: pt,
+                    completion_tokens: ct,
+                    prompt_chars,
+                    prompt_sections,
+                },
+            );
 
             // Track actual token usage from API, fall back to estimate
             if let Some(ref u) = usage {
@@ -2532,16 +2555,20 @@ impl AgentInstance {
             }
             self.api_call_count += 1;
 
+            let system_prompt = self.build_system_prompt();
+            let prompt_sections = trace::prompt_sections(&system_prompt);
+            let prompt_chars = system_prompt.chars().count() as u32;
             let request = llm::ChatRequestParams {
                 model: self.select_model(iteration),
                 messages: self.messages.clone(),
-                system: self.build_system_prompt(),
+                system: system_prompt,
                 max_tokens: self.max_tokens,
                 temperature: self.temperature,
                 thinking_enabled: self.thinking_enabled,
                 thinking_budget: self.thinking_budget,
             };
 
+            let model_start = Instant::now();
             let (response, usage) = if let Some(ref mut queue) = self.mock_llm_responses {
                 (
                     queue
@@ -2575,6 +2602,24 @@ impl AgentInstance {
                 )
                 .await?
             };
+
+            let (pt, ct) = usage
+                .as_ref()
+                .map(|u| (u.prompt_tokens as u32, u.completion_tokens as u32))
+                .unwrap_or((0, 0));
+            let _ = self.app.emit(
+                "chat-event",
+                ChatEvent::ModelCall {
+                    session_id: self.session_id.clone(),
+                    agent_id: Some(self.agent_id.clone()),
+                    iteration: iteration as u32,
+                    duration_ms: model_start.elapsed().as_millis() as u64,
+                    prompt_tokens: pt,
+                    completion_tokens: ct,
+                    prompt_chars,
+                    prompt_sections,
+                },
+            );
 
             // Track actual token usage from API, fall back to estimate
             if let Some(ref u) = usage {
