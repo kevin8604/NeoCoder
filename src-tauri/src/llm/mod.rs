@@ -813,6 +813,11 @@ pub struct TokenUsage {
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
     pub total_tokens: usize,
+    /// Prompt tokens served from the provider's cache (OpenAI
+    /// `prompt_tokens_details.cached_tokens`, DeepSeek
+    /// `prompt_cache_hit_tokens`, Anthropic `cache_read_input_tokens`). 0 when
+    /// the provider doesn't report it.
+    pub cached_tokens: usize,
 }
 
 #[derive(Debug)]
@@ -951,17 +956,27 @@ pub async fn chat_with_tools_openai(
     let elapsed_ms = request_start.elapsed().as_millis();
 
     // Parse token usage from API response
-    let usage = data.get("usage").map(|u| TokenUsage {
-        prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as usize,
-        completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as usize,
-        total_tokens: u["total_tokens"].as_u64().unwrap_or(0) as usize,
+    let usage = data.get("usage").map(|u| {
+        // Cached-prompt tokens are reported under different keys per provider.
+        let cached = u["prompt_tokens_details"]["cached_tokens"]
+            .as_u64()
+            .or_else(|| u["prompt_cache_hit_tokens"].as_u64())
+            .or_else(|| u["cache_read_input_tokens"].as_u64())
+            .unwrap_or(0) as usize;
+        TokenUsage {
+            prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as usize,
+            completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as usize,
+            total_tokens: u["total_tokens"].as_u64().unwrap_or(0) as usize,
+            cached_tokens: cached,
+        }
     });
     if let Some(ref u) = usage {
         log::info!(
-            "[LLM] Token usage: prompt={}, completion={}, total={}",
+            "[LLM] Token usage: prompt={}, completion={}, total={}, cached={}",
             u.prompt_tokens,
             u.completion_tokens,
-            u.total_tokens
+            u.total_tokens,
+            u.cached_tokens
         );
     }
 

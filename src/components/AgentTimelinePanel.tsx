@@ -39,6 +39,7 @@ interface TimelinePayload {
     duration_ms: number;
     prompt_tokens: number;
     completion_tokens: number;
+    cached_tokens?: number;
     prompt_chars?: number;
     prompt_sections?: { title: string; chars: number }[];
   };
@@ -181,12 +182,20 @@ export default function AgentTimelinePanel() {
         const secs = (mc.prompt_sections || [])
           .map((s) => `${s.title} ${s.chars >= 1000 ? (s.chars / 1000).toFixed(1) + "k" : s.chars}`)
           .join(" · ");
+        const tps = mc.duration_ms > 0 ? mc.completion_tokens / (mc.duration_ms / 1000) : 0;
+        const cachePct =
+          mc.prompt_tokens > 0 && mc.cached_tokens
+            ? Math.round((mc.cached_tokens / mc.prompt_tokens) * 100)
+            : 0;
         push({
           id: `mc-${now}-${seq++}`,
           kind: "model",
           status: "info",
           title: `model · turn ${mc.iteration + 1}`,
-          detail: `${mc.prompt_tokens}→${mc.completion_tokens} tok${secs ? ` · prompt: ${secs}` : ""}`,
+          detail:
+            `${mc.prompt_tokens}→${mc.completion_tokens} tok · ${tps.toFixed(0)} tok/s` +
+            (cachePct ? ` · cache ${cachePct}%` : "") +
+            (secs ? ` · prompt: ${secs}` : ""),
           durationMs: mc.duration_ms,
           time: now,
         });

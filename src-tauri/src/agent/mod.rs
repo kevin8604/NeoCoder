@@ -402,6 +402,8 @@ pub struct AgentInstance {
     /// Actual token usage from LLM API (accumulated across iterations)
     total_prompt_tokens: usize,
     total_completion_tokens: usize,
+    /// Prompt tokens served from provider cache (for cache-hit rate).
+    total_cached_tokens: usize,
     /// Estimated USD cost (per-model pricing × real per-call tokens).
     total_cost_usd: f64,
 
@@ -676,6 +678,7 @@ impl AgentInstance {
             extend_count: 0,
             total_prompt_tokens: 0,
             total_completion_tokens: 0,
+            total_cached_tokens: 0,
             total_cost_usd: 0.0,
             mock_llm_responses: None,
             failed_calls_cache: HashMap::new(),
@@ -1477,10 +1480,16 @@ impl AgentInstance {
                 .await?
             };
 
-            let (pt, ct) = usage
+            let (pt, ct, cached) = usage
                 .as_ref()
-                .map(|u| (u.prompt_tokens as u32, u.completion_tokens as u32))
-                .unwrap_or((0, 0));
+                .map(|u| {
+                    (
+                        u.prompt_tokens as u32,
+                        u.completion_tokens as u32,
+                        u.cached_tokens as u32,
+                    )
+                })
+                .unwrap_or((0, 0, 0));
             let _ = self.app.emit(
                 "chat-event",
                 ChatEvent::ModelCall {
@@ -1490,6 +1499,7 @@ impl AgentInstance {
                     duration_ms: model_start.elapsed().as_millis() as u64,
                     prompt_tokens: pt,
                     completion_tokens: ct,
+                    cached_tokens: cached,
                     prompt_chars,
                     prompt_sections,
                 },
@@ -1499,6 +1509,7 @@ impl AgentInstance {
             if let Some(ref u) = usage {
                 self.total_prompt_tokens += u.prompt_tokens;
                 self.total_completion_tokens += u.completion_tokens;
+                self.total_cached_tokens += u.cached_tokens;
                 self.total_tokens_est = self.total_prompt_tokens + self.total_completion_tokens;
                 self.total_cost_usd += cost::estimate_cost_usd(
                     &self.select_model(iteration),
@@ -2603,10 +2614,16 @@ impl AgentInstance {
                 .await?
             };
 
-            let (pt, ct) = usage
+            let (pt, ct, cached) = usage
                 .as_ref()
-                .map(|u| (u.prompt_tokens as u32, u.completion_tokens as u32))
-                .unwrap_or((0, 0));
+                .map(|u| {
+                    (
+                        u.prompt_tokens as u32,
+                        u.completion_tokens as u32,
+                        u.cached_tokens as u32,
+                    )
+                })
+                .unwrap_or((0, 0, 0));
             let _ = self.app.emit(
                 "chat-event",
                 ChatEvent::ModelCall {
@@ -2616,6 +2633,7 @@ impl AgentInstance {
                     duration_ms: model_start.elapsed().as_millis() as u64,
                     prompt_tokens: pt,
                     completion_tokens: ct,
+                    cached_tokens: cached,
                     prompt_chars,
                     prompt_sections,
                 },
@@ -2625,6 +2643,7 @@ impl AgentInstance {
             if let Some(ref u) = usage {
                 self.total_prompt_tokens += u.prompt_tokens;
                 self.total_completion_tokens += u.completion_tokens;
+                self.total_cached_tokens += u.cached_tokens;
                 self.total_tokens_est = self.total_prompt_tokens + self.total_completion_tokens;
                 self.total_cost_usd += cost::estimate_cost_usd(
                     &self.select_model(iteration),

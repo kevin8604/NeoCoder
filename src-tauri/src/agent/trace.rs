@@ -49,6 +49,16 @@ pub fn prompt_char_count(prompt: &str) -> usize {
     prompt.chars().count()
 }
 
+/// Fraction of prompt tokens served from the provider cache, clamped to 0..=1.
+/// Returns 0.0 when there were no prompt tokens (avoids divide-by-zero).
+pub fn cache_hit_rate(cached_tokens: usize, prompt_tokens: usize) -> f64 {
+    if prompt_tokens == 0 {
+        0.0
+    } else {
+        (cached_tokens as f64 / prompt_tokens as f64).min(1.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,5 +103,15 @@ mod tests {
     fn char_count_counts_codepoints() {
         assert_eq!(prompt_char_count("héllo"), 5);
         assert_eq!(prompt_char_count("你好"), 2, "CJK counted per character");
+    }
+
+    #[test]
+    fn cache_hit_rate_basics() {
+        assert_eq!(cache_hit_rate(0, 0), 0.0, "no prompt tokens → 0");
+        assert!((cache_hit_rate(500, 1000) - 0.5).abs() < 1e-9);
+        assert!(
+            (cache_hit_rate(2000, 1000) - 1.0).abs() < 1e-9,
+            "clamped to 1.0"
+        );
     }
 }

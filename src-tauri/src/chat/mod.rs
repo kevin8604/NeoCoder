@@ -91,6 +91,7 @@ pub enum ChatEvent {
         duration_ms: u64,
         prompt_tokens: u32,
         completion_tokens: u32,
+        cached_tokens: u32,
         prompt_chars: u32,
         prompt_sections: Vec<PromptSection>,
     },
